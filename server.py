@@ -59,16 +59,60 @@ mcp = FastMCP("Quantified Self")
 
 
 # ---------------------------------------------------------------------------
+# Database schemas (mirrored from init_db.py so the server can self-bootstrap
+# an empty DB in containerised / first-run environments)
+# ---------------------------------------------------------------------------
+HEALTH_SCHEMA = """
+CREATE TABLE IF NOT EXISTS daily_metrics (
+    date                TEXT PRIMARY KEY,
+    steps               INTEGER,
+    sleep_hours         REAL,
+    resting_heart_rate  INTEGER
+);
+"""
+
+FINANCE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS expenses (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    date         TEXT NOT NULL,
+    category     TEXT NOT NULL,
+    amount       REAL NOT NULL,
+    description  TEXT
+);
+"""
+
+_SCHEMA_MAP: dict[Path, str] = {
+    HEALTH_DB_PATH: HEALTH_SCHEMA,
+    FINANCE_DB_PATH: FINANCE_SCHEMA,
+}
+
+
+def _ensure_db(db_path: Path) -> None:
+    """Create the database with an empty schema if it doesn't exist yet.
+
+    This allows the server to start cleanly in containerised or first-run
+    environments (e.g. Glama) where init_db.py has not been run. Tools will
+    return zero rows with a helpful note rather than crashing.
+    """
+    if db_path.exists():
+        return
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    schema = _SCHEMA_MAP.get(db_path, "")
+    conn = sqlite3.connect(str(db_path))
+    if schema:
+        conn.executescript(schema)
+        conn.commit()
+    conn.close()
+    logger.info("Created empty database at %s — run init_db.py to populate it.", db_path)
+
+
+# ---------------------------------------------------------------------------
 # Small helpers shared by both tools
 # ---------------------------------------------------------------------------
 @contextmanager
 def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
     """Open db_path in SQLite's read-only mode, so this process can never write to it."""
-    if not db_path.exists():
-        raise FileNotFoundError(
-            f"No database found at {db_path}. Run init_db.py first to create it "
-            f"from a CSV export (see README.md)."
-        )
+    _ensure_db(db_path)
     uri = db_path.resolve().as_uri() + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row

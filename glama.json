@@ -1,0 +1,15 @@
+{
+  "baseImage": "debian:trixie-slim",
+  "buildSteps": [
+    "pip install fastmcp>=3.0,<4.0"
+  ],
+  "cmdArguments": [
+    "mcp-proxy",
+    "--",
+    "python",
+    "./server.py"
+  ],
+  "pythonVersion": "3.14",
+  "pinnedCommit": null,
+  "placeholderArguments": {}
+}
