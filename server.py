@@ -155,17 +155,30 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
     """
     Read daily steps, sleep hours, and resting heart rate from the local health database.
 
+    This server is intentionally read-only by design (see README "Privacy model") —
+    there is no corresponding write tool.
+
     Args:
         start_date: First day to include, formatted YYYY-MM-DD.
                     Defaults to 30 days before end_date.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
 
+    Example:
+        read_health_data(start_date="2026-07-01", end_date="2026-07-31")
+
     Returns:
         A JSON string with:
           - "range": the start/end dates actually used
           - "rows": one entry per day that has data (date, steps, sleep_hours,
-            resting_heart_rate) — days with no recorded data are simply absent
-          - "summary": days_with_data plus avg/min/max for each metric over the range
+            resting_heart_rate) — days with no recorded data are simply absent,
+            not returned as nulls
+          - "summary": days_with_data plus avg/min/max for each metric over the range.
+            If the database is empty or has no rows in range, "rows" is [] and all
+            summary stats are None — this is not an error condition.
+
+    Raises:
+        ValueError: if start_date or end_date is not formatted YYYY-MM-DD,
+            or if start_date is after end_date.
     """
     start, end = _resolve_range(start_date, end_date, default_days=30)
 
@@ -199,18 +212,33 @@ def read_finance_data(
     """
     Read categorized expenses from the local finance ledger database.
 
+    This server is intentionally read-only by design (see README "Privacy model") —
+    there is no corresponding write tool.
+
     Args:
         start_date: First day to include, formatted YYYY-MM-DD.
                     Defaults to 90 days before end_date.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
         category: Optional category name to filter to (case-insensitive,
-                  exact match — e.g. "Groceries"). Omit to include all categories.
+                  exact match — e.g. "Groceries"). A category with no matching
+                  rows returns an empty "transactions" list, not an error — this
+                  usually means a typo or a category that isn't in the ledger.
+                  Omit to include all categories.
+
+    Example:
+        read_finance_data(start_date="2026-06-01", category="Groceries")
 
     Returns:
         A JSON string with:
           - "range": the start/end dates actually used
-          - "transactions": matching ledger rows (date, category, amount, description)
-          - "summary": total_spent, plus totals broken down by category and by month
+          - "transactions": matching ledger rows (date, category, amount, description),
+            in date order. "description" may be null if it wasn't provided at import.
+          - "summary": total_spent, plus totals broken down by category and by month.
+            If no transactions match, total_spent is 0.0 and both breakdowns are {}.
+
+    Raises:
+        ValueError: if start_date or end_date is not formatted YYYY-MM-DD,
+            or if start_date is after end_date.
     """
     start, end = _resolve_range(start_date, end_date, default_days=90)
 
