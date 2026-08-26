@@ -1,13 +1,14 @@
 {
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": ["Thecimal"],
   "baseImage": "debian:trixie-slim",
   "buildSteps": [
-    "ln -s $(uv python find) /usr/local/bin/python || true",
-    "uv pip install --system pip"
+    "uv venv /app/.venv && uv pip install --python /app/.venv -r requirements.txt"
   ],
   "cmdArguments": [
     "mcp-proxy",
     "--",
-    "python",
+    "/app/.venv/bin/python",
     "./server.py"
   ],
   "pythonVersion": "3.12",
