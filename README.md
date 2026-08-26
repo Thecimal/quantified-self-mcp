@@ -4,6 +4,7 @@ A local [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server t
 
 ## Registry & Demo
 [![quantified-self-mcp MCP server](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/card.svg)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
+
 *View server health, inspector tools, and configuration options on Glama.*
 
 ## What's included
