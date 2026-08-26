@@ -1,7 +1,11 @@
 # Quantified Self MCP Server
 
 A local [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that lets an LLM — e.g. Claude Desktop — query your personal health and finance data. Everything is stored in two local SQLite files and read directly off disk by a Python process you control. No cloud database, no dashboard, no third-party service.
+
+## Registry & Demo
 [![quantified-self-mcp MCP server](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/card.svg)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
+*View server health, inspector tools, and configuration options on Glama.*
+
 ## What's included
 
 ```
