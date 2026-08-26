@@ -1,7 +1,8 @@
 {
   "baseImage": "debian:trixie-slim",
   "buildSteps": [
-    "uv pip install --system -r requirements.txt"
+    "ln -s $(uv python find) /usr/local/bin/python || true",
+    "uv pip install --system pip"
   ],
   "cmdArguments": [
     "mcp-proxy",
