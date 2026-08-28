@@ -35,17 +35,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from logic import HEALTH_SCHEMA
+
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = BASE_DIR / "data"
-
-HEALTH_SCHEMA = """
-CREATE TABLE IF NOT EXISTS daily_metrics (
-    date TEXT PRIMARY KEY,
-    steps INTEGER,
-    sleep_hours REAL,
-    resting_heart_rate INTEGER
-);
-"""
 
 REQUIRED_COLUMNS = ["date", "steps", "sleep_hours", "resting_heart_rate"]
 

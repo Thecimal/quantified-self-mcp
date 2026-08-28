@@ -10,8 +10,8 @@ Tool exposed:
 
 Reads from a local SQLite file under ./data/ (created by init_db.py — see
 README.md). This file makes no network calls, and the database connection
-is opened in SQLite's read-only mode, so this process is physically
-incapable of modifying your data or sending it anywhere.
+is opened read-only whenever possible, so this process cannot modify your
+data or send it anywhere.
 
 Test it on its own with the MCP Inspector:
     fastmcp dev inspector server.py
@@ -23,7 +23,7 @@ such as Claude Desktop, which talks to it over stdio — see README.md.
 
 Note: finance support (read_finance_data) has been removed for now to keep
 this server focused on health data. It's still in git history if you want
-to bring it back later — see the commit that introduced this note.
+to bring it back later.
 """
 
 import json
@@ -32,11 +32,13 @@ import os
 import sqlite3
 import sys
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Iterator, Optional
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
+
+from logic import HEALTH_SCHEMA, MAX_ROWS_RETURNED, numeric_stats, resolve_range
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -58,29 +60,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger("quantified-self-mcp")
 
-mcp = FastMCP("Quantified Self")
+# mask_error_details=True: an unexpected internal error (corrupt DB, disk
+# issue, etc.) is reduced to a generic message instead of leaking a raw
+# Python traceback — including local file paths — to whatever LLM is
+# calling this tool. Errors the model can actually act on (bad date format,
+# a too-wide range, a locked database) are raised as ToolError below, and
+# ToolError messages are always delivered to the client in full regardless
+# of this setting.
+mcp = FastMCP("Quantified Self", mask_error_details=True)
 
 # ---------------------------------------------------------------------------
-# Database schema (mirrored from init_db.py so the server can self-bootstrap
-# an empty DB in containerised / first-run environments)
+# Database bootstrap
 # ---------------------------------------------------------------------------
-
-HEALTH_SCHEMA = """
-CREATE TABLE IF NOT EXISTS daily_metrics (
-    date TEXT PRIMARY KEY,
-    steps INTEGER,
-    sleep_hours REAL,
-    resting_heart_rate INTEGER
-);
-"""
 
 
 def _ensure_db(db_path: Path) -> None:
     """Create the database with an empty schema if it doesn't exist yet.
 
     This allows the server to start cleanly in containerised or first-run
-    environments (e.g. Glama) where init_db.py has not been run. Tools will
-    return zero rows with a helpful note rather than crashing.
+    environments (e.g. Glama) where init_db.py has not been run. The tool
+    will return zero rows with a helpful note rather than crashing.
     """
     if db_path.exists():
         return
@@ -92,16 +91,30 @@ def _ensure_db(db_path: Path) -> None:
     logger.info("Created empty database at %s — run init_db.py to populate it.", db_path)
 
 
-# ---------------------------------------------------------------------------
-# Small helpers
-# ---------------------------------------------------------------------------
-
 @contextmanager
 def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
-    """Open db_path in SQLite's read-only mode, so this process can never write to it."""
+    """Open db_path read-only so this process cannot write to it.
+
+    Prefers SQLite's URI mode=ro, which enforces this at the driver level.
+    Falls back to a normal connection guarded by PRAGMA query_only if
+    mode=ro fails to open the file — which happens if a previous write left
+    a WAL/journal file pending recovery, something SQLite refuses to do
+    while read-only. The fallback still blocks writes, just via SQL rather
+    than the OS-level open flag.
+    """
     _ensure_db(db_path)
     uri = db_path.resolve().as_uri() + "?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
+    try:
+        conn = sqlite3.connect(uri, uri=True)
+        conn.execute("SELECT 1")  # force the open now, not on the caller's first real query
+    except sqlite3.OperationalError:
+        logger.warning(
+            "Could not open %s read-only (likely a pending WAL/journal); "
+            "falling back to a query_only connection.",
+            db_path,
+        )
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("PRAGMA query_only = ON")
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -109,34 +122,10 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def _parse_date(value: str, field_name: str) -> date:
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    except ValueError as exc:
-        raise ValueError(f"{field_name} must be formatted YYYY-MM-DD, got {value!r}") from exc
-
-
-def _resolve_range(
-    start_date: Optional[str], end_date: Optional[str], default_days: int
-) -> tuple[date, date]:
-    """Fill in sensible defaults for an open-ended date range and validate it."""
-    end = _parse_date(end_date, "end_date") if end_date else date.today()
-    start = _parse_date(start_date, "start_date") if start_date else end - timedelta(days=default_days)
-    if start > end:
-        raise ValueError(f"start_date ({start}) is after end_date ({end})")
-    return start, end
-
-
-def _numeric_stats(rows: list[dict[str, Any]], key: str) -> dict[str, Optional[float]]:
-    values = [r[key] for r in rows if r.get(key) is not None]
-    if not values:
-        return {"avg": None, "min": None, "max": None}
-    return {"avg": round(sum(values) / len(values), 1), "min": min(values), "max": max(values)}
-
-
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
@@ -145,33 +134,51 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
 
     Args:
         start_date: First day to include, formatted YYYY-MM-DD.
-            Defaults to 30 days before end_date.
+            Defaults to 30 days before end_date. Ranges over ~10 years are rejected.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
 
     Returns:
         A JSON string with:
         - "range": the start/end dates actually used
         - "rows": one entry per day that has data (date, steps, sleep_hours,
-          resting_heart_rate) — days with no recorded data are simply absent
-        - "summary": days_with_data plus avg/min/max for each metric over the range
+          resting_heart_rate) — days with no recorded data are simply absent.
+          Capped at the most recent 400 matching days; see "truncated".
+        - "truncated": true if more matching days existed than were returned in "rows"
+        - "summary": days_with_data plus avg/min/max for each metric, computed
+          over *all* matching days even when "rows" is truncated
     """
-    start, end = _resolve_range(start_date, end_date, default_days=30)
-    with _readonly_connection(HEALTH_DB_PATH) as conn:
-        cursor = conn.execute(
-            "SELECT date, steps, sleep_hours, resting_heart_rate "
-            "FROM daily_metrics WHERE date BETWEEN ? AND ? ORDER BY date",
-            (start.isoformat(), end.isoformat()),
-        )
-        rows = [dict(row) for row in cursor.fetchall()]
+    try:
+        start, end = resolve_range(start_date, end_date, default_days=30)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+    try:
+        with _readonly_connection(HEALTH_DB_PATH) as conn:
+            cursor = conn.execute(
+                "SELECT date, steps, sleep_hours, resting_heart_rate "
+                "FROM daily_metrics WHERE date BETWEEN ? AND ? ORDER BY date",
+                (start.isoformat(), end.isoformat()),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+    except sqlite3.Error as exc:
+        logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
+        raise ToolError(
+            "Could not read the health database — it may be locked by another "
+            "process, or missing/corrupt. Try again, or re-run init_db.py."
+        ) from exc
+
+    truncated = len(rows) > MAX_ROWS_RETURNED
+    returned_rows = rows[-MAX_ROWS_RETURNED:] if truncated else rows
 
     result = {
         "range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
-        "rows": rows,
+        "rows": returned_rows,
+        "truncated": truncated,
         "summary": {
             "days_with_data": len(rows),
-            "steps": _numeric_stats(rows, "steps"),
-            "sleep_hours": _numeric_stats(rows, "sleep_hours"),
-            "resting_heart_rate": _numeric_stats(rows, "resting_heart_rate"),
+            "steps": numeric_stats(rows, "steps"),
+            "sleep_hours": numeric_stats(rows, "sleep_hours"),
+            "resting_heart_rate": numeric_stats(rows, "resting_heart_rate"),
         },
     }
     return json.dumps(result, indent=2)
