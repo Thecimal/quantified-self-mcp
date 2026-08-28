@@ -1,0 +1,443 @@
+diff --git a/README.md b/README.md
+index 0466184..54892c7 100644
+--- a/README.md
++++ b/README.md
+@@ -1,30 +1,30 @@
+ # Quantified Self MCP Server
+ 
+-A local [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that lets an LLM — e.g. Claude Desktop — query your personal health and finance data. Everything is stored in two local SQLite files and read directly off disk by a Python process you control. No cloud database, no dashboard, no third-party service.
++A local [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that lets an LLM — e.g. Claude Desktop — query your personal health data. Everything is stored in a local SQLite file and read directly off disk by a Python process you control. No cloud database, no dashboard, no third-party service.
++
++> Finance tracking has been removed for now so this project can focus on doing one thing (health data) well. It's still available in git history if you want to bring it back.
+ 
+ ## What's included
+ 
+ ```
+ quantified-self-mcp/
+-├── server.py              # the MCP server (FastMCP) — 2 tools
++├── server.py              # the MCP server (FastMCP) — 1 tool
+ ├── init_db.py              # loads a CSV file into the local SQLite database
+ ├── requirements.txt
+ ├── .gitignore              # keeps data/ and .db files out of version control
+ └── sample_data/
+-    ├── health_sample.csv   # 30 days of sample data, so you can try it immediately
+-    └── finance_sample.csv  # ~2 months of sample expenses
++    └── health_sample.csv   # 30 days of sample data, so you can try it immediately
+ ```
+ 
+-Running `init_db.py` creates a `data/` folder next to `server.py` containing `health.db` and `finance.db` — that folder is not included here, since it's generated on your machine from your own data.
++Running `init_db.py` creates a `data/` folder next to `server.py` containing `health.db` — that folder is not included here, since it's generated on your machine from your own data.
+ 
+ ## Tools exposed
+ 
+-| Tool                | Returns                                      | Parameters (all optional)                                                           |
+-| ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------ |
+-| `read_health_data`  | Daily steps, sleep hours, resting heart rate | `start_date`, `end_date` (ISO `YYYY-MM-DD`; defaults to the last 30 days)             |
+-| `read_finance_data` | Categorized expense ledger, with totals      | `start_date`, `end_date`, `category` (defaults to the last 90 days, every category)  |
++| Tool               | Returns                                      | Parameters (all optional)                                                |
++| ------------------ | --------------------------------------------- | -------------------------------------------------------------------------- |
++| `read_health_data` | Daily steps, sleep hours, resting heart rate | `start_date`, `end_date` (ISO `YYYY-MM-DD`; defaults to the last 30 days) |
+ 
+-Both tools return the matching rows *plus* computed summaries (averages/min/max for health, totals per category for finance), so the model doesn't have to do its own aggregation across many rows.
++The tool returns the matching rows *plus* a computed summary (averages/min/max for each metric), so the model doesn't have to do its own aggregation across many rows.
+ 
+ ## 1. Set up the environment
+ 
+@@ -39,21 +39,21 @@ pip install -r requirements.txt
+ 
+ ## 2. Load your data
+ 
+-Try it immediately with the included samples:
++Try it immediately with the included sample:
+ 
+ ```
+-python init_db.py health  sample_data/health_sample.csv
+-python init_db.py finance sample_data/finance_sample.csv
++python init_db.py sample_data/health_sample.csv
+ ```
+ 
+-To use your own data, export it to CSV with these columns, then run the same commands against your files instead:
++To use your own data, export it to CSV with these columns, then run the same command against your file instead:
+ 
+ - **health CSV**: `date, steps, sleep_hours, resting_heart_rate`
+-- **finance CSV**: `date, category, amount, description` (`description` is optional)
+ 
+-Dates should be ISO format (`2026-08-23`); `MM/DD/YYYY` is also accepted and converted. Amounts/numbers may include `$` and `,` (e.g. `$1,234.56`) — those are stripped automatically. A row with a problem (bad date, non-numeric amount, missing category, etc.) is skipped with a warning rather than aborting the whole import; the last line printed always tells you how many rows loaded vs. were skipped.
++Dates should be ISO format (`2026-08-23`); `MM/DD/YYYY` is also accepted and converted. Numbers may include `$` and `,` — those are stripped automatically. A row with a problem (bad date, non-numeric value, etc.) is skipped with a warning rather than aborting the whole import; the last line printed always tells you how many rows loaded vs. were skipped.
++
++Running `init_db.py` again upserts by date, so it's safe to re-run as you add days. Add `--replace` to wipe the table first instead.
+ 
+-Running `init_db.py health` again upserts by date (safe to re-run as you add days); `init_db.py finance` appends new rows each time, since a ledger has no natural unique key. Add `--replace` to either command to wipe the table first instead.
++> **Note:** the CLI dropped its `health`/`finance` dataset argument since there's only one dataset now — `python init_db.py path/to/health.csv`, not `python init_db.py health path/to/health.csv`. Update any scripts or aliases that called the old form.
+ 
+ ## 3. (Optional) test it on its own
+ 
+@@ -107,21 +107,21 @@ FastMCP also ships a CLI shortcut that edits this file for you — `fastmcp inst
+ 
+ Worth being precise about this, since it's the whole point of the project:
+ 
+-- Both SQLite databases live only on your disk, inside this project's `data/` folder. The server makes no network calls, has no telemetry, and syncs nowhere.
+-- `server.py` opens both databases in SQLite's read-only mode (not just "doesn't issue writes" — the connection is physically unable to). Even a buggy or malicious prompt can't get either tool to modify your data; only `init_db.py`, run by you from the terminal, ever writes to them.
++- The SQLite database lives only on your disk, inside this project's `data/` folder. The server makes no network calls, has no telemetry, and syncs nowhere.
++- `server.py` opens the database in SQLite's read-only mode (not just "doesn't issue writes" — the connection is physically unable to). Even a buggy or malicious prompt can't get the tool to modify your data; only `init_db.py`, run by you from the terminal, ever writes to it.
+ - When an MCP client calls one of these tools, *the specific rows returned for that query* become part of the conversation sent to whatever model is answering — that's the mechanism MCP uses to give a model information. If you're using Claude Desktop with a hosted model, that means whatever slice of data you ask about is sent to Anthropic for that turn, same as anything else you type into the chat.
+ - So "local" here means: your full dataset is never stored in, or synced to, any third-party database, and nothing is transmitted unless a tool is actually invoked — and even then, only the rows that specific call returns, not the whole database. It does not mean fully offline end-to-end. For that, you'd need a fully local model runtime (e.g. Ollama) paired with an MCP-compatible client.
+ 
+ ## Troubleshooting
+ 
+ - **Server doesn't show up in Claude Desktop**: check `command` and `args` use absolute paths, confirm the venv's Python path actually exists, and confirm you fully quit and reopened the app. Logs live at `~/Library/Logs/Claude` (macOS) or `%APPDATA%\Claude\logs` (Windows) — `mcp-server-quantified-self.log` will show stderr from this server specifically.
+-- **"No health/finance database found" from a tool**: run `init_db.py` for that dataset first — the tools intentionally don't auto-create empty databases, so you don't get silently empty answers.
++- **"No health database found" from the tool**: run `init_db.py` first — the tool intentionally doesn't auto-create an empty database, so you don't get silently empty answers.
+ - **Edits to `server.py` don't seem to take effect**: restart Claude Desktop; it starts the server process once per app session, not per message.
+ 
+ ## Extending this
+ 
+ A few natural next steps, if you want them — none of this is built, just where the pattern leads:
+ 
+-- Write tools (`log_expense`, `log_daily_metric`) so entries can be added through the LLM instead of the CSV/SQL directly.
++- Write tools (`log_daily_metric`) so entries can be added through the LLM instead of the CSV/SQL directly.
+ - More metrics — weight, workouts, mood, water intake — each is just another table and another read tool.
+-- A budget-vs-actual tool that compares `read_finance_data` totals against targets you define.
++- Bring back finance tracking (`read_finance_data`, `expenses` table) — it's in git history from before this project narrowed to health only.
+diff --git a/init_db.py b/init_db.py
+index 705834f..7da9792 100644
+--- a/init_db.py
++++ b/init_db.py
+@@ -1,26 +1,28 @@
+ """
+ init_db.py
+ ==========
+-Initializes one of the two local SQLite databases used by the Quantified
+-Self MCP server (server.py), from a plain CSV file.
++Initializes the local SQLite database used by the Quantified Self MCP
++server (server.py), from a plain CSV file of health data.
+ 
+ Usage:
+-    python init_db.py health  path/to/health.csv
+-    python init_db.py finance path/to/finance.csv
++    python init_db.py path/to/health.csv
+ 
+ Expected CSV columns (header names are matched case-insensitively):
+-    health:  date, steps, sleep_hours, resting_heart_rate
+-    finance: date, category, amount, description (description is optional)
+-
+-Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Amounts/numbers
+-may include "$" and "," (e.g. "$1,234.56") — those are stripped automatically.
+-
+-Re-running for health data upserts by date (safe to re-run as you add more
+-days); re-running for finance data appends new rows, since a ledger has no
+-natural unique key. Pass --replace to either to clear the table first
+-instead. Rows with a problem (bad date, non-numeric amount, etc.) are
+-skipped with a warning rather than aborting the whole import — the final
+-line printed always tells you how many rows loaded vs. were skipped.
++    date, steps, sleep_hours, resting_heart_rate
++
++Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Numbers may
++include "$" and "," (stripped automatically, kept for consistency with
++the shared parsing helpers).
++
++Re-running upserts by date, so it's safe to re-run as you add more days.
++Pass --replace to clear the table first instead. Rows with a problem (bad
++date, non-numeric value, etc.) are skipped with a warning rather than
++aborting the whole import — the final line printed always tells you how
++many rows loaded vs. were skipped.
++
++Note: finance support (`init_db.py finance ...`) has been removed for now
++to keep this project focused on health data. It's still in git history if
++you want to bring it back later.
+ """
+ 
+ from __future__ import annotations
+@@ -45,20 +47,7 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
+ );
+ """
+ 
+-FINANCE_SCHEMA = """
+-CREATE TABLE IF NOT EXISTS expenses (
+-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+-    date TEXT NOT NULL,
+-    category TEXT NOT NULL,
+-    amount REAL NOT NULL,
+-    description TEXT
+-);
+-"""
+-
+-REQUIRED_COLUMNS = {
+-    "health": ["date", "steps", "sleep_hours", "resting_heart_rate"],
+-    "finance": ["date", "category", "amount"],
+-}
++REQUIRED_COLUMNS = ["date", "steps", "sleep_hours", "resting_heart_rate"]
+ 
+ DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y"]
+ 
+@@ -101,14 +90,14 @@ def _to_float(raw: str) -> Optional[float]:
+         raise RowError(f"expected a number, got {raw!r}")
+ 
+ 
+-def _read_csv(csv_path: Path, dataset: str) -> list[dict[str, str]]:
++def _read_csv(csv_path: Path) -> list[dict[str, str]]:
+     """Read csv_path, matching required column names case-insensitively."""
+     with csv_path.open(newline="", encoding="utf-8-sig") as f:
+         reader = csv.DictReader(f)
+         if reader.fieldnames is None:
+             sys.exit(f"Error: {csv_path} appears to be empty.")
+         header_map = {name.strip().lower(): name for name in reader.fieldnames}
+-        missing = [c for c in REQUIRED_COLUMNS[dataset] if c not in header_map]
++        missing = [c for c in REQUIRED_COLUMNS if c not in header_map]
+         if missing:
+             sys.exit(
+                 f"Error: {csv_path} is missing required column(s): {', '.join(missing)}. "
+@@ -121,7 +110,7 @@ def _read_csv(csv_path: Path, dataset: str) -> list[dict[str, str]]:
+ 
+ 
+ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
+-    raw_rows = _read_csv(csv_path, "health")
++    raw_rows = _read_csv(csv_path)
+     parsed_rows, skipped = [], 0
+     for i, row in enumerate(raw_rows, start=2):  # +2: header is line 1
+         try:
+@@ -162,54 +151,11 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
+     print(f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped.")
+ 
+ 
+-def init_finance_db(csv_path: Path, db_path: Path, replace: bool) -> None:
+-    raw_rows = _read_csv(csv_path, "finance")
+-    parsed_rows, skipped = [], 0
+-    for i, row in enumerate(raw_rows, start=2):
+-        try:
+-            date_val = (row.get("date") or "").strip()
+-            category_val = (row.get("category") or "").strip()
+-            if not date_val:
+-                raise RowError("missing date")
+-            if not category_val:
+-                raise RowError("missing category")
+-            amount_val = _to_float(row.get("amount") or "")
+-            if amount_val is None:
+-                raise RowError("missing amount")
+-            parsed_rows.append(
+-                {
+-                    "date": _normalize_date(date_val),
+-                    "category": category_val,
+-                    "amount": amount_val,
+-                    "description": (row.get("description") or "").strip() or None,
+-                }
+-            )
+-        except RowError as exc:
+-            print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)
+-            skipped += 1
+-
+-    conn = sqlite3.connect(str(db_path))
+-    try:
+-        conn.execute(FINANCE_SCHEMA)
+-        if replace:
+-            conn.execute("DELETE FROM expenses")
+-        conn.executemany(
+-            "INSERT INTO expenses (date, category, amount, description) "
+-            "VALUES (:date, :category, :amount, :description)",
+-            parsed_rows,
+-        )
+-        conn.commit()
+-    finally:
+-        conn.close()
+-    print(f"Finance DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped.")
+-
+-
+ def main() -> None:
+     parser = argparse.ArgumentParser(
+-        description="Load a CSV export into a Quantified Self SQLite database."
++        description="Load a CSV export into the Quantified Self health SQLite database."
+     )
+-    parser.add_argument("dataset", choices=["health", "finance"], help="Which dataset this CSV holds.")
+-    parser.add_argument("csv_path", type=Path, help="Path to the source CSV file.")
++    parser.add_argument("csv_path", type=Path, help="Path to the source health CSV file.")
+     parser.add_argument(
+         "--replace",
+         action="store_true",
+@@ -221,10 +167,7 @@ def main() -> None:
+         sys.exit(f"Error: CSV file not found at {args.csv_path}")
+ 
+     DATA_DIR.mkdir(parents=True, exist_ok=True)
+-    if args.dataset == "health":
+-        init_health_db(args.csv_path, DATA_DIR / "health.db", args.replace)
+-    else:
+-        init_finance_db(args.csv_path, DATA_DIR / "finance.db", args.replace)
++    init_health_db(args.csv_path, DATA_DIR / "health.db", args.replace)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/sample_data/finance_sample.csv b/sample_data/finance_sample.csv
+deleted file mode 100644
+index f8b70ab..0000000
+--- a/sample_data/finance_sample.csv
++++ /dev/null
+@@ -1,2 +0,0 @@
+-date,category,amount,description
+-2026-07-01,Groceries,54.20,Trader Joes
+diff --git a/server.py b/server.py
+index c81d439..75e2386 100644
+--- a/server.py
++++ b/server.py
+@@ -3,17 +3,15 @@ Quantified Self MCP Server
+ ===========================
+ 
+ A local Model Context Protocol (MCP) server that lets an LLM query your own
+-health and finance data — without any of it leaving your machine.
++health data — without any of it leaving your machine.
+ 
+-Tools exposed:
++Tool exposed:
+ - read_health_data: daily steps, sleep hours, resting heart rate
+-- read_finance_data: a categorized ledger of expenses, with totals
+ 
+-Both tools read from local SQLite files under ./data/ (created by
+-init_db.py — see README.md). This file makes no network calls, and both
+-database connections are opened in SQLite's read-only mode, so this
+-process is physically incapable of modifying your data or sending it
+-anywhere.
++Reads from a local SQLite file under ./data/ (created by init_db.py — see
++README.md). This file makes no network calls, and the database connection
++is opened in SQLite's read-only mode, so this process is physically
++incapable of modifying your data or sending it anywhere.
+ 
+ Test it on its own with the MCP Inspector:
+     fastmcp dev inspector server.py
+@@ -22,6 +20,10 @@ regardless of which MCP framework a server is built with.)
+ 
+ In normal use, this file is launched as a subprocess by an MCP client
+ such as Claude Desktop, which talks to it over stdio — see README.md.
++
++Note: finance support (read_finance_data) has been removed for now to keep
++this server focused on health data. It's still in git history if you want
++to bring it back later — see the commit that introduced this note.
+ """
+ 
+ import json
+@@ -40,12 +42,11 @@ from fastmcp import FastMCP
+ # Configuration
+ # ---------------------------------------------------------------------------
+ 
+-# Both paths can be overridden with environment variables — handy if you'd
+-# rather point this at data living somewhere else on disk. Set these in the
+-# "env" block of your Claude Desktop config if you need to (see README.md).
++# Can be overridden with an environment variable — handy if you'd rather
++# point this at data living somewhere else on disk. Set this in the "env"
++# block of your Claude Desktop config if you need to (see README.md).
+ BASE_DIR = Path(__file__).resolve().parent
+ HEALTH_DB_PATH = Path(os.environ.get("HEALTH_DB_PATH", BASE_DIR / "data" / "health.db")).expanduser()
+-FINANCE_DB_PATH = Path(os.environ.get("FINANCE_DB_PATH", BASE_DIR / "data" / "finance.db")).expanduser()
+ 
+ # This server talks to its client over stdio. Anything written to stdout
+ # (e.g. a stray print()) would corrupt that channel and break the
+@@ -60,7 +61,7 @@ logger = logging.getLogger("quantified-self-mcp")
+ mcp = FastMCP("Quantified Self")
+ 
+ # ---------------------------------------------------------------------------
+-# Database schemas (mirrored from init_db.py so the server can self-bootstrap
++# Database schema (mirrored from init_db.py so the server can self-bootstrap
+ # an empty DB in containerised / first-run environments)
+ # ---------------------------------------------------------------------------
+ 
+@@ -73,21 +74,6 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
+ );
+ """
+ 
+-FINANCE_SCHEMA = """
+-CREATE TABLE IF NOT EXISTS expenses (
+-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+-    date TEXT NOT NULL,
+-    category TEXT NOT NULL,
+-    amount REAL NOT NULL,
+-    description TEXT
+-);
+-"""
+-
+-_SCHEMA_MAP: dict[Path, str] = {
+-    HEALTH_DB_PATH: HEALTH_SCHEMA,
+-    FINANCE_DB_PATH: FINANCE_SCHEMA,
+-}
+-
+ 
+ def _ensure_db(db_path: Path) -> None:
+     """Create the database with an empty schema if it doesn't exist yet.
+@@ -99,17 +85,15 @@ def _ensure_db(db_path: Path) -> None:
+     if db_path.exists():
+         return
+     db_path.parent.mkdir(parents=True, exist_ok=True)
+-    schema = _SCHEMA_MAP.get(db_path, "")
+     conn = sqlite3.connect(str(db_path))
+-    if schema:
+-        conn.executescript(schema)
++    conn.executescript(HEALTH_SCHEMA)
+     conn.commit()
+     conn.close()
+     logger.info("Created empty database at %s — run init_db.py to populate it.", db_path)
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# Small helpers shared by both tools
++# Small helpers
+ # ---------------------------------------------------------------------------
+ 
+ @contextmanager
+@@ -193,61 +177,5 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
+     return json.dumps(result, indent=2)
+ 
+ 
+-@mcp.tool
+-def read_finance_data(
+-    start_date: Optional[str] = None,
+-    end_date: Optional[str] = None,
+-    category: Optional[str] = None,
+-) -> str:
+-    """
+-    Read categorized expenses from the local finance ledger database.
+-
+-    Args:
+-        start_date: First day to include, formatted YYYY-MM-DD.
+-            Defaults to 90 days before end_date.
+-        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
+-        category: Optional category name to filter to (case-insensitive,
+-            exact match — e.g. "Groceries"). Omit to include all categories.
+-
+-    Returns:
+-        A JSON string with:
+-        - "range": the start/end dates actually used
+-        - "transactions": matching ledger rows (date, category, amount, description)
+-        - "summary": total_spent, plus totals broken down by category and by month
+-    """
+-    start, end = _resolve_range(start_date, end_date, default_days=90)
+-
+-    query = "SELECT date, category, amount, description FROM expenses WHERE date BETWEEN ? AND ?"
+-    params: list[Any] = [start.isoformat(), end.isoformat()]
+-    if category:
+-        query += " AND category = ? COLLATE NOCASE"
+-        params.append(category)
+-    query += " ORDER BY date"
+-
+-    with _readonly_connection(FINANCE_DB_PATH) as conn:
+-        cursor = conn.execute(query, params)
+-        transactions = [dict(row) for row in cursor.fetchall()]
+-
+-    total = 0.0
+-    by_category_raw: dict[str, float] = {}
+-    by_month_raw: dict[str, float] = {}
+-    for tx in transactions:
+-        total += tx["amount"]
+-        by_category_raw[tx["category"]] = by_category_raw.get(tx["category"], 0.0) + tx["amount"]
+-        month_key = tx["date"][:7]  # "YYYY-MM"
+-        by_month_raw[month_key] = by_month_raw.get(month_key, 0.0) + tx["amount"]
+-
+-    result = {
+-        "range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
+-        "transactions": transactions,
+-        "summary": {
+-            "total_spent": round(total, 2),
+-            "by_category": {k: round(v, 2) for k, v in sorted(by_category_raw.items())},
+-            "by_month": {k: round(v, 2) for k, v in sorted(by_month_raw.items())},
+-        },
+-    }
+-    return json.dumps(result, indent=2)
+-
+-
+ if __name__ == "__main__":
+     mcp.run()

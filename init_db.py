@@ -1,26 +1,28 @@
 """
 init_db.py
 ==========
-Initializes one of the two local SQLite databases used by the Quantified
-Self MCP server (server.py), from a plain CSV file.
+Initializes the local SQLite database used by the Quantified Self MCP
+server (server.py), from a plain CSV file of health data.
 
 Usage:
-    python init_db.py health  path/to/health.csv
-    python init_db.py finance path/to/finance.csv
+    python init_db.py path/to/health.csv
 
 Expected CSV columns (header names are matched case-insensitively):
-    health:  date, steps, sleep_hours, resting_heart_rate
-    finance: date, category, amount, description   (description is optional)
+    date, steps, sleep_hours, resting_heart_rate
 
-Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Amounts/numbers
-may include "$" and "," (e.g. "$1,234.56") — those are stripped automatically.
+Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Numbers may
+include "$" and "," (stripped automatically, kept for consistency with
+the shared parsing helpers).
 
-Re-running for health data upserts by date (safe to re-run as you add more
-days); re-running for finance data appends new rows, since a ledger has no
-natural unique key. Pass --replace to either to clear the table first
-instead. Rows with a problem (bad date, non-numeric amount, etc.) are
-skipped with a warning rather than aborting the whole import — the final
-line printed always tells you how many rows loaded vs. were skipped.
+Re-running upserts by date, so it's safe to re-run as you add more days.
+Pass --replace to clear the table first instead. Rows with a problem (bad
+date, non-numeric value, etc.) are skipped with a warning rather than
+aborting the whole import — the final line printed always tells you how
+many rows loaded vs. were skipped.
+
+Note: finance support (`init_db.py finance ...`) has been removed for now
+to keep this project focused on health data. It's still in git history if
+you want to bring it back later.
 """
 
 from __future__ import annotations
@@ -38,27 +40,14 @@ DATA_DIR = BASE_DIR / "data"
 
 HEALTH_SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_metrics (
-    date                TEXT PRIMARY KEY,
-    steps               INTEGER,
-    sleep_hours         REAL,
-    resting_heart_rate  INTEGER
+    date TEXT PRIMARY KEY,
+    steps INTEGER,
+    sleep_hours REAL,
+    resting_heart_rate INTEGER
 );
 """
 
-FINANCE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS expenses (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    date         TEXT NOT NULL,
-    category     TEXT NOT NULL,
-    amount       REAL NOT NULL,
-    description  TEXT
-);
-"""
-
-REQUIRED_COLUMNS = {
-    "health": ["date", "steps", "sleep_hours", "resting_heart_rate"],
-    "finance": ["date", "category", "amount"],
-}
+REQUIRED_COLUMNS = ["date", "steps", "sleep_hours", "resting_heart_rate"]
 
 DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y"]
 
@@ -101,30 +90,27 @@ def _to_float(raw: str) -> Optional[float]:
         raise RowError(f"expected a number, got {raw!r}")
 
 
-def _read_csv(csv_path: Path, dataset: str) -> list[dict[str, str]]:
+def _read_csv(csv_path: Path) -> list[dict[str, str]]:
     """Read csv_path, matching required column names case-insensitively."""
     with csv_path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
             sys.exit(f"Error: {csv_path} appears to be empty.")
-
         header_map = {name.strip().lower(): name for name in reader.fieldnames}
-        missing = [c for c in REQUIRED_COLUMNS[dataset] if c not in header_map]
+        missing = [c for c in REQUIRED_COLUMNS if c not in header_map]
         if missing:
             sys.exit(
                 f"Error: {csv_path} is missing required column(s): {', '.join(missing)}. "
                 f"Found columns: {', '.join(reader.fieldnames)}"
             )
-
         rows = []
         for raw_row in reader:
             rows.append({canonical: raw_row.get(original) for canonical, original in header_map.items()})
-        return rows
+    return rows
 
 
 def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
-    raw_rows = _read_csv(csv_path, "health")
-
+    raw_rows = _read_csv(csv_path)
     parsed_rows, skipped = [], 0
     for i, row in enumerate(raw_rows, start=2):  # +2: header is line 1
         try:
@@ -162,60 +148,14 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
         conn.commit()
     finally:
         conn.close()
-
     print(f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped.")
-
-
-def init_finance_db(csv_path: Path, db_path: Path, replace: bool) -> None:
-    raw_rows = _read_csv(csv_path, "finance")
-
-    parsed_rows, skipped = [], 0
-    for i, row in enumerate(raw_rows, start=2):
-        try:
-            date_val = (row.get("date") or "").strip()
-            category_val = (row.get("category") or "").strip()
-            if not date_val:
-                raise RowError("missing date")
-            if not category_val:
-                raise RowError("missing category")
-            amount_val = _to_float(row.get("amount") or "")
-            if amount_val is None:
-                raise RowError("missing amount")
-            parsed_rows.append(
-                {
-                    "date": _normalize_date(date_val),
-                    "category": category_val,
-                    "amount": amount_val,
-                    "description": (row.get("description") or "").strip() or None,
-                }
-            )
-        except RowError as exc:
-            print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)
-            skipped += 1
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        conn.execute(FINANCE_SCHEMA)
-        if replace:
-            conn.execute("DELETE FROM expenses")
-        conn.executemany(
-            "INSERT INTO expenses (date, category, amount, description) "
-            "VALUES (:date, :category, :amount, :description)",
-            parsed_rows,
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    print(f"Finance DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Load a CSV export into a Quantified Self SQLite database."
+        description="Load a CSV export into the Quantified Self health SQLite database."
     )
-    parser.add_argument("dataset", choices=["health", "finance"], help="Which dataset this CSV holds.")
-    parser.add_argument("csv_path", type=Path, help="Path to the source CSV file.")
+    parser.add_argument("csv_path", type=Path, help="Path to the source health CSV file.")
     parser.add_argument(
         "--replace",
         action="store_true",
@@ -227,11 +167,7 @@ def main() -> None:
         sys.exit(f"Error: CSV file not found at {args.csv_path}")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    if args.dataset == "health":
-        init_health_db(args.csv_path, DATA_DIR / "health.db", args.replace)
-    else:
-        init_finance_db(args.csv_path, DATA_DIR / "finance.db", args.replace)
+    init_health_db(args.csv_path, DATA_DIR / "health.db", args.replace)
 
 
 if __name__ == "__main__":

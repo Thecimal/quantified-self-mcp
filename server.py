@@ -1,18 +1,17 @@
 """
 Quantified Self MCP Server
 ===========================
+
 A local Model Context Protocol (MCP) server that lets an LLM query your own
-health and finance data — without any of it leaving your machine.
+health data — without any of it leaving your machine.
 
-Tools exposed:
-    - read_health_data:  daily steps, sleep hours, resting heart rate
-    - read_finance_data: a categorized ledger of expenses, with totals
+Tool exposed:
+- read_health_data: daily steps, sleep hours, resting heart rate
 
-Both tools read from local SQLite files under ./data/ (created by
-init_db.py — see README.md). This file makes no network calls, and both
-database connections are opened in SQLite's read-only mode, so this
-process is physically incapable of modifying your data or sending it
-anywhere.
+Reads from a local SQLite file under ./data/ (created by init_db.py — see
+README.md). This file makes no network calls, and the database connection
+is opened in SQLite's read-only mode, so this process is physically
+incapable of modifying your data or sending it anywhere.
 
 Test it on its own with the MCP Inspector:
     fastmcp dev inspector server.py
@@ -21,6 +20,10 @@ regardless of which MCP framework a server is built with.)
 
 In normal use, this file is launched as a subprocess by an MCP client
 such as Claude Desktop, which talks to it over stdio — see README.md.
+
+Note: finance support (read_finance_data) has been removed for now to keep
+this server focused on health data. It's still in git history if you want
+to bring it back later — see the commit that introduced this note.
 """
 
 import json
@@ -38,12 +41,12 @@ from fastmcp import FastMCP
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-# Both paths can be overridden with environment variables — handy if you'd
-# rather point this at data living somewhere else on disk. Set these in the
-# "env" block of your Claude Desktop config if you need to (see README.md).
+
+# Can be overridden with an environment variable — handy if you'd rather
+# point this at data living somewhere else on disk. Set this in the "env"
+# block of your Claude Desktop config if you need to (see README.md).
 BASE_DIR = Path(__file__).resolve().parent
 HEALTH_DB_PATH = Path(os.environ.get("HEALTH_DB_PATH", BASE_DIR / "data" / "health.db")).expanduser()
-FINANCE_DB_PATH = Path(os.environ.get("FINANCE_DB_PATH", BASE_DIR / "data" / "finance.db")).expanduser()
 
 # This server talks to its client over stdio. Anything written to stdout
 # (e.g. a stray print()) would corrupt that channel and break the
@@ -57,34 +60,19 @@ logger = logging.getLogger("quantified-self-mcp")
 
 mcp = FastMCP("Quantified Self")
 
-
 # ---------------------------------------------------------------------------
-# Database schemas (mirrored from init_db.py so the server can self-bootstrap
+# Database schema (mirrored from init_db.py so the server can self-bootstrap
 # an empty DB in containerised / first-run environments)
 # ---------------------------------------------------------------------------
+
 HEALTH_SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_metrics (
-    date                TEXT PRIMARY KEY,
-    steps               INTEGER,
-    sleep_hours         REAL,
-    resting_heart_rate  INTEGER
+    date TEXT PRIMARY KEY,
+    steps INTEGER,
+    sleep_hours REAL,
+    resting_heart_rate INTEGER
 );
 """
-
-FINANCE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS expenses (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    date         TEXT NOT NULL,
-    category     TEXT NOT NULL,
-    amount       REAL NOT NULL,
-    description  TEXT
-);
-"""
-
-_SCHEMA_MAP: dict[Path, str] = {
-    HEALTH_DB_PATH: HEALTH_SCHEMA,
-    FINANCE_DB_PATH: FINANCE_SCHEMA,
-}
 
 
 def _ensure_db(db_path: Path) -> None:
@@ -97,18 +85,17 @@ def _ensure_db(db_path: Path) -> None:
     if db_path.exists():
         return
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    schema = _SCHEMA_MAP.get(db_path, "")
     conn = sqlite3.connect(str(db_path))
-    if schema:
-        conn.executescript(schema)
-        conn.commit()
+    conn.executescript(HEALTH_SCHEMA)
+    conn.commit()
     conn.close()
     logger.info("Created empty database at %s — run init_db.py to populate it.", db_path)
 
 
 # ---------------------------------------------------------------------------
-# Small helpers shared by both tools
+# Small helpers
 # ---------------------------------------------------------------------------
+
 @contextmanager
 def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
     """Open db_path in SQLite's read-only mode, so this process can never write to it."""
@@ -150,38 +137,25 @@ def _numeric_stats(rows: list[dict[str, Any]], key: str) -> dict[str, Optional[f
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+
 @mcp.tool
 def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
     """
     Read daily steps, sleep hours, and resting heart rate from the local health database.
 
-    This server is intentionally read-only by design (see README "Privacy model") —
-    there is no corresponding write tool.
-
     Args:
         start_date: First day to include, formatted YYYY-MM-DD.
-                    Defaults to 30 days before end_date.
+            Defaults to 30 days before end_date.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
-
-    Example:
-        read_health_data(start_date="2026-07-01", end_date="2026-07-31")
 
     Returns:
         A JSON string with:
-          - "range": the start/end dates actually used
-          - "rows": one entry per day that has data (date, steps, sleep_hours,
-            resting_heart_rate) — days with no recorded data are simply absent,
-            not returned as nulls
-          - "summary": days_with_data plus avg/min/max for each metric over the range.
-            If the database is empty or has no rows in range, "rows" is [] and all
-            summary stats are None — this is not an error condition.
-
-    Raises:
-        ValueError: if start_date or end_date is not formatted YYYY-MM-DD,
-            or if start_date is after end_date.
+        - "range": the start/end dates actually used
+        - "rows": one entry per day that has data (date, steps, sleep_hours,
+          resting_heart_rate) — days with no recorded data are simply absent
+        - "summary": days_with_data plus avg/min/max for each metric over the range
     """
     start, end = _resolve_range(start_date, end_date, default_days=30)
-
     with _readonly_connection(HEALTH_DB_PATH) as conn:
         cursor = conn.execute(
             "SELECT date, steps, sleep_hours, resting_heart_rate "
@@ -198,77 +172,6 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
             "steps": _numeric_stats(rows, "steps"),
             "sleep_hours": _numeric_stats(rows, "sleep_hours"),
             "resting_heart_rate": _numeric_stats(rows, "resting_heart_rate"),
-        },
-    }
-    return json.dumps(result, indent=2)
-
-
-@mcp.tool
-def read_finance_data(
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    category: Optional[str] = None,
-) -> str:
-    """
-    Read categorized expenses from the local finance ledger database.
-
-    This server is intentionally read-only by design (see README "Privacy model") —
-    there is no corresponding write tool.
-
-    Args:
-        start_date: First day to include, formatted YYYY-MM-DD.
-                    Defaults to 90 days before end_date.
-        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
-        category: Optional category name to filter to (case-insensitive,
-                  exact match — e.g. "Groceries"). A category with no matching
-                  rows returns an empty "transactions" list, not an error — this
-                  usually means a typo or a category that isn't in the ledger.
-                  Omit to include all categories.
-
-    Example:
-        read_finance_data(start_date="2026-06-01", category="Groceries")
-
-    Returns:
-        A JSON string with:
-          - "range": the start/end dates actually used
-          - "transactions": matching ledger rows (date, category, amount, description),
-            in date order. "description" may be null if it wasn't provided at import.
-          - "summary": total_spent, plus totals broken down by category and by month.
-            If no transactions match, total_spent is 0.0 and both breakdowns are {}.
-
-    Raises:
-        ValueError: if start_date or end_date is not formatted YYYY-MM-DD,
-            or if start_date is after end_date.
-    """
-    start, end = _resolve_range(start_date, end_date, default_days=90)
-
-    query = "SELECT date, category, amount, description FROM expenses WHERE date BETWEEN ? AND ?"
-    params: list[Any] = [start.isoformat(), end.isoformat()]
-    if category:
-        query += " AND category = ? COLLATE NOCASE"
-        params.append(category)
-    query += " ORDER BY date"
-
-    with _readonly_connection(FINANCE_DB_PATH) as conn:
-        cursor = conn.execute(query, params)
-        transactions = [dict(row) for row in cursor.fetchall()]
-
-    total = 0.0
-    by_category_raw: dict[str, float] = {}
-    by_month_raw: dict[str, float] = {}
-    for tx in transactions:
-        total += tx["amount"]
-        by_category_raw[tx["category"]] = by_category_raw.get(tx["category"], 0.0) + tx["amount"]
-        month_key = tx["date"][:7]  # "YYYY-MM"
-        by_month_raw[month_key] = by_month_raw.get(month_key, 0.0) + tx["amount"]
-
-    result = {
-        "range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
-        "transactions": transactions,
-        "summary": {
-            "total_spent": round(total, 2),
-            "by_category": {k: round(v, 2) for k, v in sorted(by_category_raw.items())},
-            "by_month": {k: round(v, 2) for k, v in sorted(by_month_raw.items())},
         },
     }
     return json.dumps(result, indent=2)
