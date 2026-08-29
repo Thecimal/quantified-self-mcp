@@ -105,6 +105,19 @@ Pure Python (`python:3.12-slim`), no Node.js required. Mount `data/` to persist 
 - The server is intentionally read-only; `init_db.py` is the only component that writes to the databases
 - Use a local model runtime if you need fully offline inference
 
+## Repo security (Dependabot, CodeQL)
+
+Two things run automatically on GitHub, separate from anything the server does at runtime:
+
+- **Dependabot** (`.github/dependabot.yml`) opens a PR whenever a pip dependency (or a GitHub Action used in CI) has a newer version — weekly, capped at 5 open PRs at a time.
+- **CodeQL** (`.github/workflows/codeql.yml`) statically scans the Python code for common vulnerability patterns on every push/PR to `main`, plus a weekly scheduled run so a newly-published CodeQL query still catches something already sitting in the codebase.
+
+Two related things are **not** files and have to be turned on once in the repo itself, under **Settings → Code security**:
+- **Dependabot alerts** — surfaces known CVEs in your dependencies (this is what "vulnerability alerts" refers to on directories like Glama).
+- **Dependabot security updates** — auto-opens a fix PR specifically when an alert fires, distinct from the routine weekly update PRs above.
+
+Results from both show up under the repo's **Security** tab once enabled and after the workflows have run at least once.
+
 ## Troubleshooting
 
 - **Server not showing up in Claude Desktop** — check the Python path is absolute, the venv exists, dependencies are installed, and you've fully restarted the app
