@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check server.py syntax
+        run: python -m py_compile server.py && echo "server.py OK"
+
+      - name: Check init_db.py syntax
+        run: python -m py_compile init_db.py && echo "init_db.py OK"
+
+      - name: Test database initialization
+        run: |
+          python init_db.py health sample_data/health_sample.csv
+          python -c "
+          import sqlite3
+          conn = sqlite3.connect('data/health.db')
+          count = conn.execute('SELECT COUNT(*) FROM daily_metrics').fetchone()[0]
+          assert count > 0, 'No rows loaded'
+          print(f'health.db OK — {count} rows')
+          "
+
+      - name: Test server imports cleanly
+        run: python -c "import server; print('server imports OK')"
