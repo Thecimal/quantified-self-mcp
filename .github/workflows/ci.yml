@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +29,7 @@ jobs:
 
       - name: Test database initialization
         run: |
-          python init_db.py health sample_data/health_sample.csv
+          python init_db.py sample_data/health_sample.csv
           python -c "
           import sqlite3
           conn = sqlite3.connect('data/health.db')
