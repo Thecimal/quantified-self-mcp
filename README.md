@@ -1,139 +1,94 @@
-# Quantified Self MCP Server
+# Quantified Self MCP
 
-A **local-first Model Context Protocol (MCP) server** for querying your personal health and finance data with an AI assistant.
+[![Glama MCP Server](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badge)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
 
-Exposes your own SQLite databases (steps, sleep, resting heart rate, expenses) through MCP. Works with cloud models like Claude, or fully local models via Ollama. **No cloud database. No dashboard. No telemetry.**
+**A private, local-first MCP server that lets LLMs access your personal health data.**
 
-## Registry & Demo
-[![quantified-self-mcp MCP server](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/card.svg)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
+Quantified Self MCP connects an LLM to health data stored on your computer using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
 
-*View server health, inspector tools, and configuration options on Glama.*
+It is **not limited to Claude**. It can work with local LLMs as well as cloud-based models that support MCP.
 
-## Features
+## Privacy first
 
-- **Local-first** — your data never leaves your machine unless your chosen AI model is cloud-hosted
-- **Read-only** — the server opens databases in read-only mode; it cannot modify your data
-- **SQLite storage** — simple, portable
-- **CSV import** with upsert (health) and append (finance) modes
-- **Docker support**, MCP Inspector support for standalone testing
+Your health data is stored locally in SQLite, and the MCP server runs entirely on your computer.
 
-## Privacy Model
+```text
+Your Health Data
+      ↓
+ Local SQLite
+      ↓
+  MCP Server
+      ↓
+   LLM
+```
 
-Three layers, each independently controlled:
+For maximum privacy, use a local LLM so everything stays on your machine.
 
-| Layer | Where it runs | Notes |
-|---|---|---|
-| SQLite data | Your machine | Never uploaded or synced |
-| MCP server | Your machine/container | Read-only access only |
-| AI model | Local or cloud | **This is what determines where your data goes** |
+Cloud LLMs such as Claude can also be used. In that case, your database and MCP server remain local, but the data returned to the model may be sent to the cloud provider.
 
-With Claude Desktop, tool results are sent to Anthropic as part of the conversation. For a fully local, offline setup, pair this server with **Ollama** (or another local runtime) through an MCP client that supports it.
+## Current functionality
 
-## Quick Start
+The server currently provides:
+
+**`read_health_data`**
+
+It can access:
+
+* Daily steps
+* Sleep duration
+* Resting heart rate
+* Data for a selected date range
+
+Access through the MCP tool is **read-only**.
+
+## Installation
 
 ```bash
 git clone https://github.com/Thecimal/quantified-self-mcp.git
 cd quantified-self-mcp
-python3 -m venv .venv && source .venv/bin/activate
+
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-
-# Load sample data
-python init_db.py health sample_data/health_sample.csv
-python init_db.py finance sample_data/finance_sample.csv
 ```
 
-Test it standalone with `fastmcp dev inspector server.py`, or connect it to an MCP-compatible client (see below).
-
-## Using Your Own Data
-
-**Health CSV** — columns: `date, steps, sleep_hours, resting_heart_rate`
-**Finance CSV** — columns: `date, category, amount, description` (description optional)
+Initialize the database:
 
 ```bash
-python init_db.py health /path/to/health.csv
-python init_db.py finance /path/to/finance.csv
+python init_db.py sample_data/health_sample.csv
 ```
 
-- Dates: ISO (`YYYY-MM-DD`) or `MM/DD/YYYY`; amounts may include `$` and commas
-- Invalid rows are skipped with a warning, not an aborted import
-- Health data upserts by date (safe to re-run); finance data appends
-- Add `--replace` to wipe and reload a dataset from scratch
+## Using it with LLMs
 
-## MCP Tools
+Use it with any MCP-compatible client and model.
 
-| Tool | Purpose | Parameters | Default range |
-|---|---|---|---|
-| `read_health_data` | Steps, sleep, resting HR + min/max/avg | `start_date`, `end_date` | Last 30 days |
-| `read_finance_data` | Expenses, categories, totals by category | `start_date`, `end_date`, `category` | Last 90 days |
+Examples:
 
-All parameters optional. Example prompts: *"How has my sleep changed over the last 30 days?"*, *"How much did I spend on food this month?"*
+* Local LLMs
+* Claude
+* Other MCP-compatible LLMs
 
-## Using Claude Desktop
+Example:
 
-Add to your config file (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\Claude\claude_desktop_config.json`, Linux: `~/.config/Claude/claude_desktop_config.json`, or via Settings → Developer → Edit Config):
+> How has my sleep changed over the last 30 days?
 
-```json
-{
-  "mcpServers": {
-    "quantified-self": {
-      "command": "/absolute/path/to/quantified-self-mcp/.venv/bin/python3",
-      "args": ["/absolute/path/to/quantified-self-mcp/server.py"]
-    }
-  }
-}
+The LLM retrieves the relevant data through MCP and analyzes it.
+
+## Project structure
+
+```text
+server.py      # MCP server
+logic.py       # Data validation and analysis
+init_db.py     # Database initialization
+sample_data/   # Example health data
 ```
 
-Use the venv's Python path, not a bare `"python"` — Claude Desktop may not inherit your shell's `PATH`. Fully restart Claude Desktop after editing.
+## Philosophy
 
-## Using Local Models (Ollama)
+**Your data stays yours.**
 
-This server doesn't require Claude. Install Ollama, pull a model (e.g. `ollama pull qwen3:14b`), and connect it to this server through any MCP client that supports local model runtimes. For a fully offline setup: **Ollama (model) → MCP client → this server → local SQLite** — no cloud API involved.
+Keep your personal data local, give the LLM controlled access, and choose whether the model runs locally or in the cloud.
 
-## Docker
+## License
 
-```bash
-docker build -t quantified-self-mcp .
-docker run -i --rm -v "$PWD/data:/app/data" quantified-self-mcp
-```
-
-Pure Python (`python:3.12-slim`), no Node.js required. Mount `data/` to persist your databases outside the container. Configurable via `HEALTH_DB_PATH` / `FINANCE_DB_PATH` env vars (defaults: `/data/health.db`, `/data/finance.db`).
-
-## Security Notes
-
-- Don't commit `data/*.db` or personal CSV exports (already gitignored)
-- Treat MCP clients as trusted applications
-- The server is intentionally read-only; `init_db.py` is the only component that writes to the databases
-- Use a local model runtime if you need fully offline inference
-
-## Repo security (Dependabot, CodeQL)
-
-Two things run automatically on GitHub, separate from anything the server does at runtime:
-
-- **Dependabot** (`.github/dependabot.yml`) opens a PR whenever a pip dependency (or a GitHub Action used in CI) has a newer version — weekly, capped at 5 open PRs at a time.
-- **CodeQL** (`.github/workflows/codeql.yml`) statically scans the Python code for common vulnerability patterns on every push/PR to `main`, plus a weekly scheduled run so a newly-published CodeQL query still catches something already sitting in the codebase.
-
-Two related things are **not** files and have to be turned on once in the repo itself, under **Settings → Code security**:
-- **Dependabot alerts** — surfaces known CVEs in your dependencies (this is what "vulnerability alerts" refers to on directories like Glama).
-- **Dependabot security updates** — auto-opens a fix PR specifically when an alert fires, distinct from the routine weekly update PRs above.
-
-Results from both show up under the repo's **Security** tab once enabled and after the workflows have run at least once.
-
-## Troubleshooting
-
-- **Server not showing up in Claude Desktop** — check the Python path is absolute, the venv exists, dependencies are installed, and you've fully restarted the app
-- **"No health database found"** — run `init_db.py` first; the server won't auto-create empty databases
-- **Changes to `server.py` not taking effect** — restart your MCP client, since most start the server process once per session
-
-## Extending
-
-Planned/possible additions: more metrics (weight, workouts, mood, nutrition...), analytical tools (trends, correlations, budget vs. actual), and eventually write tools (`log_expense`, `log_daily_metric`) — though these would need their own validation/authorization layer, kept separate from the current read-only design.
-
-## Links
-
-- [GitHub repository](https://github.com/Thecimal/quantified-self-mcp)
-- [Glama listing](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
-
----
-
-*Your data should be queryable by AI without handing the underlying dataset to a third party. MCP provides the interface, SQLite provides the storage, you choose the model.*
-
+MIT
