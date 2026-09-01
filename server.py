@@ -20,10 +20,6 @@ regardless of which MCP framework a server is built with.)
 
 In normal use, this file is launched as a subprocess by an MCP client
 such as Claude Desktop, which talks to it over stdio — see README.md.
-
-Note: finance support (read_finance_data) has been removed for now to keep
-this server focused on health data. It's still in git history if you want
-to bring it back later.
 """
 
 import json

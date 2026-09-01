@@ -19,10 +19,6 @@ Pass --replace to clear the table first instead. Rows with a problem (bad
 date, non-numeric value, etc.) are skipped with a warning rather than
 aborting the whole import — the final line printed always tells you how
 many rows loaded vs. were skipped.
-
-Note: finance support (`init_db.py finance ...`) has been removed for now
-to keep this project focused on health data. It's still in git history if
-you want to bring it back later.
 """
 
 from __future__ import annotations
