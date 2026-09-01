@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from logic import ensure_schema
+from logic import ensure_schema, upsert_metrics
 
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = BASE_DIR / "data"
@@ -127,7 +127,6 @@ _OPTIONAL_PARSERS = {
 
 def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
     raw_rows, present_optional = _read_csv(csv_path)
-    columns = REQUIRED_COLUMNS + present_optional
 
     parsed_rows, skipped = [], 0
     for i, row in enumerate(raw_rows, start=2):  # +2: header is line 1
@@ -153,19 +152,7 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
         ensure_schema(conn)
         if replace:
             conn.execute("DELETE FROM daily_metrics")
-        insert_cols = ", ".join(columns)
-        placeholders = ", ".join(f":{c}" for c in columns)
-        update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "date")
-        conn.executemany(
-            f"""
-            INSERT INTO daily_metrics ({insert_cols})
-            VALUES ({placeholders})
-            ON CONFLICT(date) DO UPDATE SET
-                {update_clause}
-            """,
-            parsed_rows,
-        )
-        conn.commit()
+        upsert_metrics(conn, parsed_rows)
     finally:
         conn.close()
 

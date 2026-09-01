@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from logic import ADDED_COLUMNS, ensure_schema, numeric_stats, parse_date, resolve_range  # noqa: E402
+from logic import ADDED_COLUMNS, ensure_schema, numeric_stats, parse_date, resolve_range, upsert_metrics  # noqa: E402
 
 
 def test_parse_date_valid():
@@ -98,3 +98,48 @@ def test_ensure_schema_migrates_older_table_missing_new_columns():
     # Pre-existing row survives the migration, with new columns defaulting to NULL.
     row = conn.execute("SELECT steps, weight_kg FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
     assert row == (5000, None)
+
+
+def _conn_with_schema():
+    conn = sqlite3.connect(":memory:")
+    ensure_schema(conn)
+    return conn
+
+
+def test_upsert_metrics_inserts_new_row():
+    conn = _conn_with_schema()
+    upsert_metrics(conn, [{"date": "2026-08-01", "steps": 8000, "mood": 4}])
+    row = conn.execute("SELECT steps, mood, weight_kg FROM daily_metrics WHERE date = '2026-08-01'").fetchone()
+    assert row == (8000, 4, None)
+
+
+def test_upsert_metrics_leaves_unmentioned_columns_untouched():
+    conn = _conn_with_schema()
+    upsert_metrics(conn, [{"date": "2026-08-01", "steps": 8000, "mood": 4}])
+    # A second upsert for the same date, only setting a different column.
+    upsert_metrics(conn, [{"date": "2026-08-01", "weight_kg": 70.5}])
+    row = conn.execute("SELECT steps, mood, weight_kg FROM daily_metrics WHERE date = '2026-08-01'").fetchone()
+    assert row == (8000, 4, 70.5)
+
+
+def test_upsert_metrics_handles_rows_with_different_column_sets_in_one_call():
+    conn = _conn_with_schema()
+    upsert_metrics(
+        conn,
+        [
+            {"date": "2026-08-01", "steps": 8000},
+            {"date": "2026-08-02", "mood": 3, "water_ml": 2000},
+        ],
+    )
+    rows = {
+        r[0]: r[1:]
+        for r in conn.execute("SELECT date, steps, mood, water_ml FROM daily_metrics ORDER BY date")
+    }
+    assert rows["2026-08-01"] == (8000, None, None)
+    assert rows["2026-08-02"] == (None, 3, 2000)
+
+
+def test_upsert_metrics_rejects_row_without_date():
+    conn = _conn_with_schema()
+    with pytest.raises(ValueError):
+        upsert_metrics(conn, [{"steps": 1000}])

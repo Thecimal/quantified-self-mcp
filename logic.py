@@ -60,6 +60,37 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def upsert_metrics(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    """Upsert one or more daily_metrics rows by date.
+
+    Each row dict must include "date" plus any subset of the metric
+    columns. A column a row doesn't include is left untouched for that
+    date rather than cleared — e.g. upserting only {"date": ..., "mood":
+    4} never blanks out that day's steps. Rows are grouped by their exact
+    set of columns before executemany-ing each group, since a single
+    INSERT needs a fixed column list. Requires a writable connection;
+    commits before returning. Shared by init_db.py (batch import from a
+    CSV) and server.py's log_daily_metric tool (a single row at a time).
+    """
+    if not rows:
+        return
+    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for row in rows:
+        if "date" not in row:
+            raise ValueError("Each row passed to upsert_metrics must include 'date'.")
+        groups.setdefault(tuple(sorted(row)), []).append(row)
+
+    for columns_key, group_rows in groups.items():
+        columns = list(columns_key)
+        insert_cols = ", ".join(columns)
+        placeholders = ", ".join(f":{c}" for c in columns)
+        update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "date")
+        sql = f"INSERT INTO daily_metrics ({insert_cols}) VALUES ({placeholders})"
+        sql += f" ON CONFLICT(date) DO UPDATE SET {update_clause}" if update_clause else " ON CONFLICT(date) DO NOTHING"
+        conn.executemany(sql, group_rows)
+    conn.commit()
+
+
 def parse_date(value: str, field_name: str) -> date:
     """Parse a YYYY-MM-DD string, raising a clear, client-facing ValueError otherwise."""
     try:

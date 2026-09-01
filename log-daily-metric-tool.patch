@@ -1,0 +1,296 @@
+diff --git a/README.md b/README.md
+index 05e1e33..d9ddc37 100644
+--- a/README.md
++++ b/README.md
+@@ -30,9 +30,9 @@ Cloud LLMs such as Claude can also be used. In that case, your database and MCP
+ 
+ ## Current functionality
+ 
+-The server currently provides:
++The server currently provides two tools:
+ 
+-**`read_health_data`**
++**`read_health_data`** — read-only
+ 
+ It can access:
+ 
+@@ -45,7 +45,11 @@ It can access:
+ * Water intake (ml)
+ * Data for a selected date range
+ 
+-Every field is optional per day — log just the metrics you actually track. Access through the MCP tool is **read-only**.
++Every field is optional per day — log just the metrics you actually track.
++
++**`log_daily_metric`** — write
++
++Lets the LLM record any of the metrics above for a given day, without you touching a CSV or SQLite directly. Pass just the fields you're logging (e.g. only `mood`) and the rest of that day's data is left exactly as it was — nothing is ever cleared, only set. It's a plain per-date upsert into `daily_metrics`; there's no way for it (or anything else in this server) to run arbitrary SQL.
+ 
+ ## Installation
+ 
+diff --git a/init_db.py b/init_db.py
+index 6a11c2c..4b2d2bd 100644
+--- a/init_db.py
++++ b/init_db.py
+@@ -38,7 +38,7 @@ from datetime import datetime
+ from pathlib import Path
+ from typing import Optional
+ 
+-from logic import ensure_schema
++from logic import ensure_schema, upsert_metrics
+ 
+ BASE_DIR = Path(__file__).parent.resolve()
+ DATA_DIR = BASE_DIR / "data"
+@@ -127,7 +127,6 @@ _OPTIONAL_PARSERS = {
+ 
+ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
+     raw_rows, present_optional = _read_csv(csv_path)
+-    columns = REQUIRED_COLUMNS + present_optional
+ 
+     parsed_rows, skipped = [], 0
+     for i, row in enumerate(raw_rows, start=2):  # +2: header is line 1
+@@ -153,19 +152,7 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
+         ensure_schema(conn)
+         if replace:
+             conn.execute("DELETE FROM daily_metrics")
+-        insert_cols = ", ".join(columns)
+-        placeholders = ", ".join(f":{c}" for c in columns)
+-        update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "date")
+-        conn.executemany(
+-            f"""
+-            INSERT INTO daily_metrics ({insert_cols})
+-            VALUES ({placeholders})
+-            ON CONFLICT(date) DO UPDATE SET
+-                {update_clause}
+-            """,
+-            parsed_rows,
+-        )
+-        conn.commit()
++        upsert_metrics(conn, parsed_rows)
+     finally:
+         conn.close()
+ 
+diff --git a/logic.py b/logic.py
+index 5c5671d..f5933b4 100644
+--- a/logic.py
++++ b/logic.py
+@@ -60,6 +60,37 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
+     conn.commit()
+ 
+ 
++def upsert_metrics(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
++    """Upsert one or more daily_metrics rows by date.
++
++    Each row dict must include "date" plus any subset of the metric
++    columns. A column a row doesn't include is left untouched for that
++    date rather than cleared — e.g. upserting only {"date": ..., "mood":
++    4} never blanks out that day's steps. Rows are grouped by their exact
++    set of columns before executemany-ing each group, since a single
++    INSERT needs a fixed column list. Requires a writable connection;
++    commits before returning. Shared by init_db.py (batch import from a
++    CSV) and server.py's log_daily_metric tool (a single row at a time).
++    """
++    if not rows:
++        return
++    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
++    for row in rows:
++        if "date" not in row:
++            raise ValueError("Each row passed to upsert_metrics must include 'date'.")
++        groups.setdefault(tuple(sorted(row)), []).append(row)
++
++    for columns_key, group_rows in groups.items():
++        columns = list(columns_key)
++        insert_cols = ", ".join(columns)
++        placeholders = ", ".join(f":{c}" for c in columns)
++        update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "date")
++        sql = f"INSERT INTO daily_metrics ({insert_cols}) VALUES ({placeholders})"
++        sql += f" ON CONFLICT(date) DO UPDATE SET {update_clause}" if update_clause else " ON CONFLICT(date) DO NOTHING"
++        conn.executemany(sql, group_rows)
++    conn.commit()
++
++
+ def parse_date(value: str, field_name: str) -> date:
+     """Parse a YYYY-MM-DD string, raising a clear, client-facing ValueError otherwise."""
+     try:
+diff --git a/server.py b/server.py
+index c0b8786..8c3d358 100644
+--- a/server.py
++++ b/server.py
+@@ -5,14 +5,18 @@ Quantified Self MCP Server
+ A local Model Context Protocol (MCP) server that lets an LLM query your own
+ health data — without any of it leaving your machine.
+ 
+-Tool exposed:
++Tools exposed:
+ - read_health_data: daily steps, sleep hours, resting heart rate, weight,
+   workout minutes, mood, and water intake
++- log_daily_metric: record one or more of those metrics for a given day
+ 
+ Reads from a local SQLite file under ./data/ (created by init_db.py — see
+-README.md). This file makes no network calls, and the database connection
+-is opened read-only whenever possible, so this process cannot modify your
+-data or send it anywhere.
++README.md). This file makes no network calls, so nothing you log or read
++ever leaves your machine. read_health_data's connection is opened
++read-only whenever possible, so that tool specifically cannot modify your
++data; log_daily_metric is the one deliberate exception, and only ever
++touches the daily_metrics table via a plain per-date upsert — there is no
++way for either tool to run arbitrary SQL.
+ 
+ Test it on its own with the MCP Inspector:
+     fastmcp dev inspector server.py
+@@ -35,7 +39,7 @@ from typing import Iterator, Optional
+ from fastmcp import FastMCP
+ from fastmcp.exceptions import ToolError
+ 
+-from logic import MAX_ROWS_RETURNED, ensure_schema, numeric_stats, resolve_range
++from logic import MAX_ROWS_RETURNED, ensure_schema, numeric_stats, parse_date, resolve_range, upsert_metrics
+ 
+ # All non-date columns in daily_metrics, in the order they're selected and
+ # reported — the single place to touch when another metric is added.
+@@ -202,5 +206,84 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
+     return json.dumps(result, indent=2)
+ 
+ 
++@mcp.tool
++def log_daily_metric(
++    date: str,
++    steps: Optional[int] = None,
++    sleep_hours: Optional[float] = None,
++    resting_heart_rate: Optional[int] = None,
++    weight_kg: Optional[float] = None,
++    workout_minutes: Optional[int] = None,
++    mood: Optional[int] = None,
++    water_ml: Optional[int] = None,
++) -> str:
++    """
++    Record one or more health metrics for a single day, creating that
++    day's row if it doesn't already have one.
++
++    Only the metrics you pass are written — anything left as null is not
++    touched, so logging just today's mood doesn't erase today's steps if
++    they were set earlier. To intentionally blank out a metric that was
++    logged by mistake, re-run init_db.py with a corrected CSV instead;
++    this tool has no way to clear a value, only set one.
++
++    Args:
++        date: The day to log, formatted YYYY-MM-DD.
++        steps: Step count for the day.
++        sleep_hours: Hours of sleep.
++        resting_heart_rate: Resting heart rate in bpm.
++        weight_kg: Body weight in kilograms.
++        workout_minutes: Minutes of exercise.
++        mood: Mood rating, on whatever scale you've been using (e.g. 1-5).
++        water_ml: Water intake in millilitres.
++
++    Returns:
++        A JSON string with "logged" (just the fields this call set) and
++        "row" (the day's full current state across all metrics, including
++        any set previously).
++    """
++    try:
++        day = parse_date(date, "date")
++    except ValueError as exc:
++        raise ToolError(str(exc)) from exc
++
++    provided = {
++        k: v
++        for k, v in {
++            "steps": steps,
++            "sleep_hours": sleep_hours,
++            "resting_heart_rate": resting_heart_rate,
++            "weight_kg": weight_kg,
++            "workout_minutes": workout_minutes,
++            "mood": mood,
++            "water_ml": water_ml,
++        }.items()
++        if v is not None
++    }
++    if not provided:
++        raise ToolError("Provide at least one metric to log alongside the date.")
++
++    try:
++        conn = sqlite3.connect(str(HEALTH_DB_PATH))
++        try:
++            ensure_schema(conn)
++            upsert_metrics(conn, [{"date": day.isoformat(), **provided}])
++            conn.row_factory = sqlite3.Row
++            row = conn.execute(
++                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
++                (day.isoformat(),),
++            ).fetchone()
++        finally:
++            conn.close()
++    except sqlite3.Error as exc:
++        logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
++        raise ToolError(
++            "Could not write to the health database — it may be locked by "
++            "another process. Try again in a moment."
++        ) from exc
++
++    return json.dumps({"logged": provided, "row": dict(row)}, indent=2)
++
++
+ if __name__ == "__main__":
+     mcp.run()
+diff --git a/tests/test_logic.py b/tests/test_logic.py
+index ec021d6..4325d83 100644
+--- a/tests/test_logic.py
++++ b/tests/test_logic.py
+@@ -16,7 +16,7 @@ import pytest
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ 
+-from logic import ADDED_COLUMNS, ensure_schema, numeric_stats, parse_date, resolve_range  # noqa: E402
++from logic import ADDED_COLUMNS, ensure_schema, numeric_stats, parse_date, resolve_range, upsert_metrics  # noqa: E402
+ 
+ 
+ def test_parse_date_valid():
+@@ -98,3 +98,48 @@ def test_ensure_schema_migrates_older_table_missing_new_columns():
+     # Pre-existing row survives the migration, with new columns defaulting to NULL.
+     row = conn.execute("SELECT steps, weight_kg FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
+     assert row == (5000, None)
++
++
++def _conn_with_schema():
++    conn = sqlite3.connect(":memory:")
++    ensure_schema(conn)
++    return conn
++
++
++def test_upsert_metrics_inserts_new_row():
++    conn = _conn_with_schema()
++    upsert_metrics(conn, [{"date": "2026-08-01", "steps": 8000, "mood": 4}])
++    row = conn.execute("SELECT steps, mood, weight_kg FROM daily_metrics WHERE date = '2026-08-01'").fetchone()
++    assert row == (8000, 4, None)
++
++
++def test_upsert_metrics_leaves_unmentioned_columns_untouched():
++    conn = _conn_with_schema()
++    upsert_metrics(conn, [{"date": "2026-08-01", "steps": 8000, "mood": 4}])
++    # A second upsert for the same date, only setting a different column.
++    upsert_metrics(conn, [{"date": "2026-08-01", "weight_kg": 70.5}])
++    row = conn.execute("SELECT steps, mood, weight_kg FROM daily_metrics WHERE date = '2026-08-01'").fetchone()
++    assert row == (8000, 4, 70.5)
++
++
++def test_upsert_metrics_handles_rows_with_different_column_sets_in_one_call():
++    conn = _conn_with_schema()
++    upsert_metrics(
++        conn,
++        [
++            {"date": "2026-08-01", "steps": 8000},
++            {"date": "2026-08-02", "mood": 3, "water_ml": 2000},
++        ],
++    )
++    rows = {
++        r[0]: r[1:]
++        for r in conn.execute("SELECT date, steps, mood, water_ml FROM daily_metrics ORDER BY date")
++    }
++    assert rows["2026-08-01"] == (8000, None, None)
++    assert rows["2026-08-02"] == (None, 3, 2000)
++
++
++def test_upsert_metrics_rejects_row_without_date():
++    conn = _conn_with_schema()
++    with pytest.raises(ValueError):
++        upsert_metrics(conn, [{"steps": 1000}])

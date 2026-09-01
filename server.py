@@ -5,14 +5,18 @@ Quantified Self MCP Server
 A local Model Context Protocol (MCP) server that lets an LLM query your own
 health data — without any of it leaving your machine.
 
-Tool exposed:
+Tools exposed:
 - read_health_data: daily steps, sleep hours, resting heart rate, weight,
   workout minutes, mood, and water intake
+- log_daily_metric: record one or more of those metrics for a given day
 
 Reads from a local SQLite file under ./data/ (created by init_db.py — see
-README.md). This file makes no network calls, and the database connection
-is opened read-only whenever possible, so this process cannot modify your
-data or send it anywhere.
+README.md). This file makes no network calls, so nothing you log or read
+ever leaves your machine. read_health_data's connection is opened
+read-only whenever possible, so that tool specifically cannot modify your
+data; log_daily_metric is the one deliberate exception, and only ever
+touches the daily_metrics table via a plain per-date upsert — there is no
+way for either tool to run arbitrary SQL.
 
 Test it on its own with the MCP Inspector:
     fastmcp dev inspector server.py
@@ -35,7 +39,7 @@ from typing import Iterator, Optional
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from logic import MAX_ROWS_RETURNED, ensure_schema, numeric_stats, resolve_range
+from logic import MAX_ROWS_RETURNED, ensure_schema, numeric_stats, parse_date, resolve_range, upsert_metrics
 
 # All non-date columns in daily_metrics, in the order they're selected and
 # reported — the single place to touch when another metric is added.
@@ -200,6 +204,85 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
         },
     }
     return json.dumps(result, indent=2)
+
+
+@mcp.tool
+def log_daily_metric(
+    date: str,
+    steps: Optional[int] = None,
+    sleep_hours: Optional[float] = None,
+    resting_heart_rate: Optional[int] = None,
+    weight_kg: Optional[float] = None,
+    workout_minutes: Optional[int] = None,
+    mood: Optional[int] = None,
+    water_ml: Optional[int] = None,
+) -> str:
+    """
+    Record one or more health metrics for a single day, creating that
+    day's row if it doesn't already have one.
+
+    Only the metrics you pass are written — anything left as null is not
+    touched, so logging just today's mood doesn't erase today's steps if
+    they were set earlier. To intentionally blank out a metric that was
+    logged by mistake, re-run init_db.py with a corrected CSV instead;
+    this tool has no way to clear a value, only set one.
+
+    Args:
+        date: The day to log, formatted YYYY-MM-DD.
+        steps: Step count for the day.
+        sleep_hours: Hours of sleep.
+        resting_heart_rate: Resting heart rate in bpm.
+        weight_kg: Body weight in kilograms.
+        workout_minutes: Minutes of exercise.
+        mood: Mood rating, on whatever scale you've been using (e.g. 1-5).
+        water_ml: Water intake in millilitres.
+
+    Returns:
+        A JSON string with "logged" (just the fields this call set) and
+        "row" (the day's full current state across all metrics, including
+        any set previously).
+    """
+    try:
+        day = parse_date(date, "date")
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+    provided = {
+        k: v
+        for k, v in {
+            "steps": steps,
+            "sleep_hours": sleep_hours,
+            "resting_heart_rate": resting_heart_rate,
+            "weight_kg": weight_kg,
+            "workout_minutes": workout_minutes,
+            "mood": mood,
+            "water_ml": water_ml,
+        }.items()
+        if v is not None
+    }
+    if not provided:
+        raise ToolError("Provide at least one metric to log alongside the date.")
+
+    try:
+        conn = sqlite3.connect(str(HEALTH_DB_PATH))
+        try:
+            ensure_schema(conn)
+            upsert_metrics(conn, [{"date": day.isoformat(), **provided}])
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
+                (day.isoformat(),),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
+        raise ToolError(
+            "Could not write to the health database — it may be locked by "
+            "another process. Try again in a moment."
+        ) from exc
+
+    return json.dumps({"logged": provided, "row": dict(row)}, indent=2)
 
 
 if __name__ == "__main__":

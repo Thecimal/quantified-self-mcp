@@ -30,9 +30,9 @@ Cloud LLMs such as Claude can also be used. In that case, your database and MCP 
 
 ## Current functionality
 
-The server currently provides:
+The server currently provides two tools:
 
-**`read_health_data`**
+**`read_health_data`** — read-only
 
 It can access:
 
@@ -45,7 +45,11 @@ It can access:
 * Water intake (ml)
 * Data for a selected date range
 
-Every field is optional per day — log just the metrics you actually track. Access through the MCP tool is **read-only**.
+Every field is optional per day — log just the metrics you actually track.
+
+**`log_daily_metric`** — write
+
+Lets the LLM record any of the metrics above for a given day, without you touching a CSV or SQLite directly. Pass just the fields you're logging (e.g. only `mood`) and the rest of that day's data is left exactly as it was — nothing is ever cleared, only set. It's a plain per-date upsert into `daily_metrics`; there's no way for it (or anything else in this server) to run arbitrary SQL.
 
 ## Installation
 
