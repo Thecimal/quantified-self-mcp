@@ -7,6 +7,7 @@ These only exercise the framework-free helpers in logic.py, so they run
 without fastmcp installed — server.py itself is not imported here.
 """
 
+import sqlite3
 import sys
 from datetime import date
 from pathlib import Path
@@ -15,7 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from logic import numeric_stats, parse_date, resolve_range  # noqa: E402
+from logic import ADDED_COLUMNS, ensure_schema, numeric_stats, parse_date, resolve_range  # noqa: E402
 
 
 def test_parse_date_valid():
@@ -56,3 +57,44 @@ def test_numeric_stats_empty():
 def test_numeric_stats_ignores_none_but_keeps_zero():
     rows = [{"steps": 0}, {"steps": None}, {"steps": 10000}]
     assert numeric_stats(rows, "steps") == {"avg": 5000.0, "min": 0, "max": 10000}
+
+
+def test_ensure_schema_creates_table_with_all_columns():
+    conn = sqlite3.connect(":memory:")
+    ensure_schema(conn)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
+    assert columns == {
+        "date",
+        "steps",
+        "sleep_hours",
+        "resting_heart_rate",
+        *ADDED_COLUMNS,
+    }
+
+
+def test_ensure_schema_migrates_older_table_missing_new_columns():
+    conn = sqlite3.connect(":memory:")
+    # Simulate a database created before weight/workout/mood/water existed.
+    conn.executescript(
+        """
+        CREATE TABLE daily_metrics (
+            date TEXT PRIMARY KEY,
+            steps INTEGER,
+            sleep_hours REAL,
+            resting_heart_rate INTEGER
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO daily_metrics (date, steps, sleep_hours, resting_heart_rate) VALUES (?, ?, ?, ?)",
+        ("2026-01-01", 5000, 7.0, 60),
+    )
+    conn.commit()
+
+    ensure_schema(conn)
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
+    assert set(ADDED_COLUMNS).issubset(columns)
+    # Pre-existing row survives the migration, with new columns defaulting to NULL.
+    row = conn.execute("SELECT steps, weight_kg FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
+    assert row == (5000, None)

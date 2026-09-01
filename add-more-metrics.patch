@@ -1,0 +1,504 @@
+diff --git a/README.md b/README.md
+index e7dae5a..05e1e33 100644
+--- a/README.md
++++ b/README.md
+@@ -39,9 +39,13 @@ It can access:
+ * Daily steps
+ * Sleep duration
+ * Resting heart rate
++* Weight (kg)
++* Workout minutes
++* Mood (whatever scale you log — e.g. 1–5)
++* Water intake (ml)
+ * Data for a selected date range
+ 
+-Access through the MCP tool is **read-only**.
++Every field is optional per day — log just the metrics you actually track. Access through the MCP tool is **read-only**.
+ 
+ ## Installation
+ 
+@@ -60,6 +64,14 @@ Initialize the database:
+ python init_db.py sample_data/health_sample.csv
+ ```
+ 
++CSV columns: `date, steps, sleep_hours, resting_heart_rate` are required;
++`weight_kg, workout_minutes, mood, water_ml` are optional — include any
++subset of them. Re-running `init_db.py` upserts by date, and a CSV that
++omits an optional column leaves that column's existing values alone
++rather than clearing them, so you can add a new metric later without
++disturbing what's already logged. An existing database is migrated
++automatically, so upgrading never requires deleting it.
++
+ ## Using it with LLMs
+ 
+ Use it with any MCP-compatible client and model.
+diff --git a/init_db.py b/init_db.py
+index 064e5eb..6a11c2c 100644
+--- a/init_db.py
++++ b/init_db.py
+@@ -7,18 +7,25 @@ server (server.py), from a plain CSV file of health data.
+ Usage:
+     python init_db.py path/to/health.csv
+ 
+-Expected CSV columns (header names are matched case-insensitively):
++Required CSV columns (header names are matched case-insensitively):
+     date, steps, sleep_hours, resting_heart_rate
+ 
++Optional CSV columns — include any subset of these; omitted ones are left
++alone (see the upsert note below), not cleared:
++    weight_kg, workout_minutes, mood, water_ml
++
+ Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Numbers may
+ include "$" and "," (stripped automatically, kept for consistency with
+ the shared parsing helpers).
+ 
+-Re-running upserts by date, so it's safe to re-run as you add more days.
+-Pass --replace to clear the table first instead. Rows with a problem (bad
+-date, non-numeric value, etc.) are skipped with a warning rather than
+-aborting the whole import — the final line printed always tells you how
+-many rows loaded vs. were skipped.
++Re-running upserts by date, so it's safe to re-run as you add more days —
++or to add optional columns later: a CSV with only date/weight_kg, say,
++updates just that column and leaves steps/sleep_hours/etc. for that date
++untouched, rather than blanking them out. Pass --replace to clear the
++table first instead. Rows with a problem (bad date, non-numeric value,
++etc.) are skipped with a warning rather than aborting the whole import —
++the final line printed always tells you how many rows loaded vs. were
++skipped.
+ """
+ 
+ from __future__ import annotations
+@@ -31,13 +38,17 @@ from datetime import datetime
+ from pathlib import Path
+ from typing import Optional
+ 
+-from logic import HEALTH_SCHEMA
++from logic import ensure_schema
+ 
+ BASE_DIR = Path(__file__).parent.resolve()
+ DATA_DIR = BASE_DIR / "data"
+ 
+ REQUIRED_COLUMNS = ["date", "steps", "sleep_hours", "resting_heart_rate"]
+ 
++# Optional columns and the parser each one needs. Only the ones actually
++# present in a given CSV's header are read, inserted, or upserted.
++OPTIONAL_COLUMNS = ["weight_kg", "workout_minutes", "mood", "water_ml"]
++
+ DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y"]
+ 
+ 
+@@ -79,8 +90,13 @@ def _to_float(raw: str) -> Optional[float]:
+         raise RowError(f"expected a number, got {raw!r}")
+ 
+ 
+-def _read_csv(csv_path: Path) -> list[dict[str, str]]:
+-    """Read csv_path, matching required column names case-insensitively."""
++def _read_csv(csv_path: Path) -> tuple[list[dict[str, str]], list[str]]:
++    """Read csv_path, matching column names case-insensitively.
++
++    Returns (rows, present_optional_columns) — the latter is whichever of
++    OPTIONAL_COLUMNS actually appeared in this CSV's header, so the caller
++    knows which columns to insert/upsert versus leave untouched.
++    """
+     with csv_path.open(newline="", encoding="utf-8-sig") as f:
+         reader = csv.DictReader(f)
+         if reader.fieldnames is None:
+@@ -92,51 +108,69 @@ def _read_csv(csv_path: Path) -> list[dict[str, str]]:
+                 f"Error: {csv_path} is missing required column(s): {', '.join(missing)}. "
+                 f"Found columns: {', '.join(reader.fieldnames)}"
+             )
++        present_optional = [c for c in OPTIONAL_COLUMNS if c in header_map]
++        wanted = {**{c: header_map[c] for c in REQUIRED_COLUMNS}, **{c: header_map[c] for c in present_optional}}
+         rows = []
+         for raw_row in reader:
+-            rows.append({canonical: raw_row.get(original) for canonical, original in header_map.items()})
+-    return rows
++            rows.append({canonical: raw_row.get(original) for canonical, original in wanted.items()})
++    return rows, present_optional
++
++
++# Parser for each optional column's raw CSV string.
++_OPTIONAL_PARSERS = {
++    "weight_kg": _to_float,
++    "workout_minutes": _to_int,
++    "mood": _to_int,
++    "water_ml": _to_int,
++}
+ 
+ 
+ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
+-    raw_rows = _read_csv(csv_path)
++    raw_rows, present_optional = _read_csv(csv_path)
++    columns = REQUIRED_COLUMNS + present_optional
++
+     parsed_rows, skipped = [], 0
+     for i, row in enumerate(raw_rows, start=2):  # +2: header is line 1
+         try:
+             date_val = (row.get("date") or "").strip()
+             if not date_val:
+                 raise RowError("missing date")
+-            parsed_rows.append(
+-                {
+-                    "date": _normalize_date(date_val),
+-                    "steps": _to_int(row.get("steps") or ""),
+-                    "sleep_hours": _to_float(row.get("sleep_hours") or ""),
+-                    "resting_heart_rate": _to_int(row.get("resting_heart_rate") or ""),
+-                }
+-            )
++            parsed = {
++                "date": _normalize_date(date_val),
++                "steps": _to_int(row.get("steps") or ""),
++                "sleep_hours": _to_float(row.get("sleep_hours") or ""),
++                "resting_heart_rate": _to_int(row.get("resting_heart_rate") or ""),
++            }
++            for col in present_optional:
++                parsed[col] = _OPTIONAL_PARSERS[col](row.get(col) or "")
++            parsed_rows.append(parsed)
+         except RowError as exc:
+             print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)
+             skipped += 1
+ 
+     conn = sqlite3.connect(str(db_path))
+     try:
+-        conn.execute(HEALTH_SCHEMA)
++        ensure_schema(conn)
+         if replace:
+             conn.execute("DELETE FROM daily_metrics")
++        insert_cols = ", ".join(columns)
++        placeholders = ", ".join(f":{c}" for c in columns)
++        update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "date")
+         conn.executemany(
+-            """
+-            INSERT INTO daily_metrics (date, steps, sleep_hours, resting_heart_rate)
+-            VALUES (:date, :steps, :sleep_hours, :resting_heart_rate)
++            f"""
++            INSERT INTO daily_metrics ({insert_cols})
++            VALUES ({placeholders})
+             ON CONFLICT(date) DO UPDATE SET
+-                steps = excluded.steps,
+-                sleep_hours = excluded.sleep_hours,
+-                resting_heart_rate = excluded.resting_heart_rate
++                {update_clause}
+             """,
+             parsed_rows,
+         )
+         conn.commit()
+     finally:
+         conn.close()
++
++    if present_optional:
++        print(f"Also loaded: {', '.join(present_optional)}")
+     print(f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped.")
+ 
+ 
+diff --git a/logic.py b/logic.py
+index 595d90e..5c5671d 100644
+--- a/logic.py
++++ b/logic.py
+@@ -10,6 +10,7 @@ and unit-tested without installing fastmcp — see tests/test_logic.py.
+ 
+ from __future__ import annotations
+ 
++import sqlite3
+ from datetime import date, datetime, timedelta
+ from typing import Any, Optional
+ 
+@@ -18,15 +19,47 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
+     date TEXT PRIMARY KEY,
+     steps INTEGER,
+     sleep_hours REAL,
+-    resting_heart_rate INTEGER
++    resting_heart_rate INTEGER,
++    weight_kg REAL,
++    workout_minutes INTEGER,
++    mood INTEGER,
++    water_ml INTEGER
+ );
+ """
+ 
++# Columns added after the original release. Kept separate from HEALTH_SCHEMA
++# (rather than just relying on CREATE TABLE) because CREATE TABLE IF NOT
++# EXISTS does nothing for a daily_metrics table that already exists from an
++# older version of this project — ensure_schema() below adds these to any
++# such table so upgrading never requires deleting your database.
++ADDED_COLUMNS = {
++    "weight_kg": "REAL",
++    "workout_minutes": "INTEGER",
++    "mood": "INTEGER",
++    "water_ml": "INTEGER",
++}
++
+ # Guardrails for read_health_data (server.py).
+ MAX_RANGE_DAYS = 3660  # ~10 years — a wider request is almost certainly a mistake
+ MAX_ROWS_RETURNED = 400  # ~13 months of daily rows; "summary" still covers the full range
+ 
+ 
++def ensure_schema(conn: sqlite3.Connection) -> None:
++    """Create daily_metrics if it doesn't exist, and add any columns that
++    were introduced after the table may have first been created.
++
++    Safe and cheap to call on every startup/import — CREATE TABLE IF NOT
++    EXISTS and the ALTER TABLE calls are both no-ops once already applied.
++    Requires a writable connection; commits before returning.
++    """
++    conn.executescript(HEALTH_SCHEMA)
++    existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
++    for name, sqltype in ADDED_COLUMNS.items():
++        if name not in existing:
++            conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {name} {sqltype}")
++    conn.commit()
++
++
+ def parse_date(value: str, field_name: str) -> date:
+     """Parse a YYYY-MM-DD string, raising a clear, client-facing ValueError otherwise."""
+     try:
+diff --git a/sample_data/health_sample.csv b/sample_data/health_sample.csv
+index 3ce222e..50f8979 100644
+--- a/sample_data/health_sample.csv
++++ b/sample_data/health_sample.csv
+@@ -1,31 +1,31 @@
+-date,steps,sleep_hours,resting_heart_rate
+-2026-07-25,5624,5.5,58
+-2026-07-26,7812,6.1,65
+-2026-07-27,5479,7.6,68
+-2026-07-28,12735,5.7,60
+-2026-07-29,4320,5.5,57
+-2026-07-30,7611,7.0,54
+-2026-07-31,12995,6.0,64
+-2026-08-01,12728,6.7,61
+-2026-08-02,8357,8.0,54
+-2026-08-03,6415,7.6,59
+-2026-08-04,8352,5.9,66
+-2026-08-05,9314,5.7,60
+-2026-08-06,5384,6.5,59
+-2026-08-07,8133,8.0,65
+-2026-08-08,11327,7.1,68
+-2026-08-09,10001,5.7,58
+-2026-08-10,9725,7.2,65
+-2026-08-11,4939,5.5,57
+-2026-08-12,8541,8.6,67
+-2026-08-13,7614,8.2,60
+-2026-08-14,8354,6.9,67
+-2026-08-15,9777,5.9,59
+-2026-08-16,7232,7.5,65
+-2026-08-17,4969,7.3,56
+-2026-08-18,12551,7.7,56
+-2026-08-19,11373,6.6,68
+-2026-08-20,12925,6.1,59
+-2026-08-21,4716,6.1,54
+-2026-08-22,8968,6.7,55
+-2026-08-23,7256,8.3,63
++date,steps,sleep_hours,resting_heart_rate,weight_kg,workout_minutes,mood,water_ml
++2026-07-25,5624,5.5,58,78.1,0,4,1701
++2026-07-26,7812,6.1,65,77.9,0,2,2409
++2026-07-27,5479,7.6,68,77.9,0,2,1647
++2026-07-28,12735,5.7,60,77.8,45,2,2349
++2026-07-29,4320,5.5,57,77.7,30,5,1651
++2026-07-30,7611,7.0,54,77.7,0,2,2754
++2026-07-31,12995,6.0,64,77.8,60,5,1896
++2026-08-01,12728,6.7,61,77.7,0,4,1409
++2026-08-02,8357,8.0,54,77.5,0,4,1904
++2026-08-03,6415,7.6,59,77.6,0,5,2298
++2026-08-04,8352,5.9,66,77.4,30,2,2330
++2026-08-05,9314,5.7,60,77.3,60,4,2382
++2026-08-06,5384,6.5,59,77.2,0,2,2554
++2026-08-07,8133,8.0,65,77.1,20,2,1676
++2026-08-08,11327,7.1,68,77.3,30,4,2128
++2026-08-09,10001,5.7,58,77.3,20,3,1958
++2026-08-10,9725,7.2,65,77.3,60,4,2637
++2026-08-11,4939,5.5,57,77.4,0,3,2293
++2026-08-12,8541,8.6,67,77.5,0,5,1977
++2026-08-13,7614,8.2,60,77.4,30,3,2602
++2026-08-14,8354,6.9,67,77.4,0,3,1265
++2026-08-15,9777,5.9,59,77.5,30,4,1335
++2026-08-16,7232,7.5,65,77.4,30,4,1635
++2026-08-17,4969,7.3,56,77.4,20,5,1492
++2026-08-18,12551,7.7,56,77.3,0,4,2729
++2026-08-19,11373,6.6,68,77.4,45,5,1941
++2026-08-20,12925,6.1,59,77.3,0,5,1386
++2026-08-21,4716,6.1,54,77.4,0,3,2485
++2026-08-22,8968,6.7,55,77.2,60,5,2421
++2026-08-23,7256,8.3,63,77.0,20,5,2283
+diff --git a/server.py b/server.py
+index 98cdb6b..c0b8786 100644
+--- a/server.py
++++ b/server.py
+@@ -6,7 +6,8 @@ A local Model Context Protocol (MCP) server that lets an LLM query your own
+ health data — without any of it leaving your machine.
+ 
+ Tool exposed:
+-- read_health_data: daily steps, sleep hours, resting heart rate
++- read_health_data: daily steps, sleep hours, resting heart rate, weight,
++  workout minutes, mood, and water intake
+ 
+ Reads from a local SQLite file under ./data/ (created by init_db.py — see
+ README.md). This file makes no network calls, and the database connection
+@@ -34,7 +35,19 @@ from typing import Iterator, Optional
+ from fastmcp import FastMCP
+ from fastmcp.exceptions import ToolError
+ 
+-from logic import HEALTH_SCHEMA, MAX_ROWS_RETURNED, numeric_stats, resolve_range
++from logic import MAX_ROWS_RETURNED, ensure_schema, numeric_stats, resolve_range
++
++# All non-date columns in daily_metrics, in the order they're selected and
++# reported — the single place to touch when another metric is added.
++METRIC_COLUMNS = [
++    "steps",
++    "sleep_hours",
++    "resting_heart_rate",
++    "weight_kg",
++    "workout_minutes",
++    "mood",
++    "water_ml",
++]
+ 
+ # ---------------------------------------------------------------------------
+ # Configuration
+@@ -71,20 +84,26 @@ mcp = FastMCP("Quantified Self", mask_error_details=True)
+ 
+ 
+ def _ensure_db(db_path: Path) -> None:
+-    """Create the database with an empty schema if it doesn't exist yet.
++    """Create the database if it doesn't exist yet, and migrate it to the
++    current schema either way (adds any columns introduced since the file
++    was first created — see logic.ensure_schema).
+ 
+     This allows the server to start cleanly in containerised or first-run
+     environments (e.g. Glama) where init_db.py has not been run. The tool
+-    will return zero rows with a helpful note rather than crashing.
++    will return zero rows with a helpful note rather than crashing. It also
++    means upgrading this project never requires deleting an existing
++    database — old rows keep their values, new columns just read as null
++    until you log data for them.
+     """
+-    if db_path.exists():
+-        return
++    is_new = not db_path.exists()
+     db_path.parent.mkdir(parents=True, exist_ok=True)
+     conn = sqlite3.connect(str(db_path))
+-    conn.executescript(HEALTH_SCHEMA)
+-    conn.commit()
+-    conn.close()
+-    logger.info("Created empty database at %s — run init_db.py to populate it.", db_path)
++    try:
++        ensure_schema(conn)
++    finally:
++        conn.close()
++    if is_new:
++        logger.info("Created empty database at %s — run init_db.py to populate it.", db_path)
+ 
+ 
+ @contextmanager
+@@ -126,7 +145,9 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
+ @mcp.tool
+ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
+     """
+-    Read daily steps, sleep hours, and resting heart rate from the local health database.
++    Read daily health metrics from the local database: steps, sleep hours,
++    resting heart rate, weight (kg), workout minutes, mood, and water
++    intake (ml).
+ 
+     Args:
+         start_date: First day to include, formatted YYYY-MM-DD.
+@@ -136,9 +157,12 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
+     Returns:
+         A JSON string with:
+         - "range": the start/end dates actually used
+-        - "rows": one entry per day that has data (date, steps, sleep_hours,
+-          resting_heart_rate) — days with no recorded data are simply absent.
+-          Capped at the most recent 400 matching days; see "truncated".
++        - "rows": one entry per day that has at least one recorded metric
++          (date plus whichever of steps, sleep_hours, resting_heart_rate,
++          weight_kg, workout_minutes, mood, water_ml were logged for that
++          day — fields with no data are null, not absent). Days with no
++          data at all are simply absent from "rows". Capped at the most
++          recent 400 matching days; see "truncated".
+         - "truncated": true if more matching days existed than were returned in "rows"
+         - "summary": days_with_data plus avg/min/max for each metric, computed
+           over *all* matching days even when "rows" is truncated
+@@ -151,7 +175,7 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
+     try:
+         with _readonly_connection(HEALTH_DB_PATH) as conn:
+             cursor = conn.execute(
+-                "SELECT date, steps, sleep_hours, resting_heart_rate "
++                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " "
+                 "FROM daily_metrics WHERE date BETWEEN ? AND ? ORDER BY date",
+                 (start.isoformat(), end.isoformat()),
+             )
+@@ -172,9 +196,7 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
+         "truncated": truncated,
+         "summary": {
+             "days_with_data": len(rows),
+-            "steps": numeric_stats(rows, "steps"),
+-            "sleep_hours": numeric_stats(rows, "sleep_hours"),
+-            "resting_heart_rate": numeric_stats(rows, "resting_heart_rate"),
++            **{metric: numeric_stats(rows, metric) for metric in METRIC_COLUMNS},
+         },
+     }
+     return json.dumps(result, indent=2)
+diff --git a/tests/test_logic.py b/tests/test_logic.py
+index b30eb24..ec021d6 100644
+--- a/tests/test_logic.py
++++ b/tests/test_logic.py
+@@ -7,6 +7,7 @@ These only exercise the framework-free helpers in logic.py, so they run
+ without fastmcp installed — server.py itself is not imported here.
+ """
+ 
++import sqlite3
+ import sys
+ from datetime import date
+ from pathlib import Path
+@@ -15,7 +16,7 @@ import pytest
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ 
+-from logic import numeric_stats, parse_date, resolve_range  # noqa: E402
++from logic import ADDED_COLUMNS, ensure_schema, numeric_stats, parse_date, resolve_range  # noqa: E402
+ 
+ 
+ def test_parse_date_valid():
+@@ -56,3 +57,44 @@ def test_numeric_stats_empty():
+ def test_numeric_stats_ignores_none_but_keeps_zero():
+     rows = [{"steps": 0}, {"steps": None}, {"steps": 10000}]
+     assert numeric_stats(rows, "steps") == {"avg": 5000.0, "min": 0, "max": 10000}
++
++
++def test_ensure_schema_creates_table_with_all_columns():
++    conn = sqlite3.connect(":memory:")
++    ensure_schema(conn)
++    columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
++    assert columns == {
++        "date",
++        "steps",
++        "sleep_hours",
++        "resting_heart_rate",
++        *ADDED_COLUMNS,
++    }
++
++
++def test_ensure_schema_migrates_older_table_missing_new_columns():
++    conn = sqlite3.connect(":memory:")
++    # Simulate a database created before weight/workout/mood/water existed.
++    conn.executescript(
++        """
++        CREATE TABLE daily_metrics (
++            date TEXT PRIMARY KEY,
++            steps INTEGER,
++            sleep_hours REAL,
++            resting_heart_rate INTEGER
++        );
++        """
++    )
++    conn.execute(
++        "INSERT INTO daily_metrics (date, steps, sleep_hours, resting_heart_rate) VALUES (?, ?, ?, ?)",
++        ("2026-01-01", 5000, 7.0, 60),
++    )
++    conn.commit()
++
++    ensure_schema(conn)
++
++    columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
++    assert set(ADDED_COLUMNS).issubset(columns)
++    # Pre-existing row survives the migration, with new columns defaulting to NULL.
++    row = conn.execute("SELECT steps, weight_kg FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
++    assert row == (5000, None)

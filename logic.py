@@ -10,6 +10,7 @@ and unit-tested without installing fastmcp — see tests/test_logic.py.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
@@ -18,13 +19,45 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
     date TEXT PRIMARY KEY,
     steps INTEGER,
     sleep_hours REAL,
-    resting_heart_rate INTEGER
+    resting_heart_rate INTEGER,
+    weight_kg REAL,
+    workout_minutes INTEGER,
+    mood INTEGER,
+    water_ml INTEGER
 );
 """
+
+# Columns added after the original release. Kept separate from HEALTH_SCHEMA
+# (rather than just relying on CREATE TABLE) because CREATE TABLE IF NOT
+# EXISTS does nothing for a daily_metrics table that already exists from an
+# older version of this project — ensure_schema() below adds these to any
+# such table so upgrading never requires deleting your database.
+ADDED_COLUMNS = {
+    "weight_kg": "REAL",
+    "workout_minutes": "INTEGER",
+    "mood": "INTEGER",
+    "water_ml": "INTEGER",
+}
 
 # Guardrails for read_health_data (server.py).
 MAX_RANGE_DAYS = 3660  # ~10 years — a wider request is almost certainly a mistake
 MAX_ROWS_RETURNED = 400  # ~13 months of daily rows; "summary" still covers the full range
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create daily_metrics if it doesn't exist, and add any columns that
+    were introduced after the table may have first been created.
+
+    Safe and cheap to call on every startup/import — CREATE TABLE IF NOT
+    EXISTS and the ALTER TABLE calls are both no-ops once already applied.
+    Requires a writable connection; commits before returning.
+    """
+    conn.executescript(HEALTH_SCHEMA)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
+    for name, sqltype in ADDED_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {name} {sqltype}")
+    conn.commit()
 
 
 def parse_date(value: str, field_name: str) -> date:

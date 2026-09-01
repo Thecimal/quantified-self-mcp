@@ -6,7 +6,8 @@ A local Model Context Protocol (MCP) server that lets an LLM query your own
 health data — without any of it leaving your machine.
 
 Tool exposed:
-- read_health_data: daily steps, sleep hours, resting heart rate
+- read_health_data: daily steps, sleep hours, resting heart rate, weight,
+  workout minutes, mood, and water intake
 
 Reads from a local SQLite file under ./data/ (created by init_db.py — see
 README.md). This file makes no network calls, and the database connection
@@ -34,7 +35,19 @@ from typing import Iterator, Optional
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from logic import HEALTH_SCHEMA, MAX_ROWS_RETURNED, numeric_stats, resolve_range
+from logic import MAX_ROWS_RETURNED, ensure_schema, numeric_stats, resolve_range
+
+# All non-date columns in daily_metrics, in the order they're selected and
+# reported — the single place to touch when another metric is added.
+METRIC_COLUMNS = [
+    "steps",
+    "sleep_hours",
+    "resting_heart_rate",
+    "weight_kg",
+    "workout_minutes",
+    "mood",
+    "water_ml",
+]
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -71,20 +84,26 @@ mcp = FastMCP("Quantified Self", mask_error_details=True)
 
 
 def _ensure_db(db_path: Path) -> None:
-    """Create the database with an empty schema if it doesn't exist yet.
+    """Create the database if it doesn't exist yet, and migrate it to the
+    current schema either way (adds any columns introduced since the file
+    was first created — see logic.ensure_schema).
 
     This allows the server to start cleanly in containerised or first-run
     environments (e.g. Glama) where init_db.py has not been run. The tool
-    will return zero rows with a helpful note rather than crashing.
+    will return zero rows with a helpful note rather than crashing. It also
+    means upgrading this project never requires deleting an existing
+    database — old rows keep their values, new columns just read as null
+    until you log data for them.
     """
-    if db_path.exists():
-        return
+    is_new = not db_path.exists()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
-    conn.executescript(HEALTH_SCHEMA)
-    conn.commit()
-    conn.close()
-    logger.info("Created empty database at %s — run init_db.py to populate it.", db_path)
+    try:
+        ensure_schema(conn)
+    finally:
+        conn.close()
+    if is_new:
+        logger.info("Created empty database at %s — run init_db.py to populate it.", db_path)
 
 
 @contextmanager
@@ -126,7 +145,9 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
 @mcp.tool
 def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
     """
-    Read daily steps, sleep hours, and resting heart rate from the local health database.
+    Read daily health metrics from the local database: steps, sleep hours,
+    resting heart rate, weight (kg), workout minutes, mood, and water
+    intake (ml).
 
     Args:
         start_date: First day to include, formatted YYYY-MM-DD.
@@ -136,9 +157,12 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
     Returns:
         A JSON string with:
         - "range": the start/end dates actually used
-        - "rows": one entry per day that has data (date, steps, sleep_hours,
-          resting_heart_rate) — days with no recorded data are simply absent.
-          Capped at the most recent 400 matching days; see "truncated".
+        - "rows": one entry per day that has at least one recorded metric
+          (date plus whichever of steps, sleep_hours, resting_heart_rate,
+          weight_kg, workout_minutes, mood, water_ml were logged for that
+          day — fields with no data are null, not absent). Days with no
+          data at all are simply absent from "rows". Capped at the most
+          recent 400 matching days; see "truncated".
         - "truncated": true if more matching days existed than were returned in "rows"
         - "summary": days_with_data plus avg/min/max for each metric, computed
           over *all* matching days even when "rows" is truncated
@@ -151,7 +175,7 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
             cursor = conn.execute(
-                "SELECT date, steps, sleep_hours, resting_heart_rate "
+                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " "
                 "FROM daily_metrics WHERE date BETWEEN ? AND ? ORDER BY date",
                 (start.isoformat(), end.isoformat()),
             )
@@ -172,9 +196,7 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
         "truncated": truncated,
         "summary": {
             "days_with_data": len(rows),
-            "steps": numeric_stats(rows, "steps"),
-            "sleep_hours": numeric_stats(rows, "sleep_hours"),
-            "resting_heart_rate": numeric_stats(rows, "resting_heart_rate"),
+            **{metric: numeric_stats(rows, metric) for metric in METRIC_COLUMNS},
         },
     }
     return json.dumps(result, indent=2)

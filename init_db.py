@@ -7,18 +7,25 @@ server (server.py), from a plain CSV file of health data.
 Usage:
     python init_db.py path/to/health.csv
 
-Expected CSV columns (header names are matched case-insensitively):
+Required CSV columns (header names are matched case-insensitively):
     date, steps, sleep_hours, resting_heart_rate
+
+Optional CSV columns — include any subset of these; omitted ones are left
+alone (see the upsert note below), not cleared:
+    weight_kg, workout_minutes, mood, water_ml
 
 Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Numbers may
 include "$" and "," (stripped automatically, kept for consistency with
 the shared parsing helpers).
 
-Re-running upserts by date, so it's safe to re-run as you add more days.
-Pass --replace to clear the table first instead. Rows with a problem (bad
-date, non-numeric value, etc.) are skipped with a warning rather than
-aborting the whole import — the final line printed always tells you how
-many rows loaded vs. were skipped.
+Re-running upserts by date, so it's safe to re-run as you add more days —
+or to add optional columns later: a CSV with only date/weight_kg, say,
+updates just that column and leaves steps/sleep_hours/etc. for that date
+untouched, rather than blanking them out. Pass --replace to clear the
+table first instead. Rows with a problem (bad date, non-numeric value,
+etc.) are skipped with a warning rather than aborting the whole import —
+the final line printed always tells you how many rows loaded vs. were
+skipped.
 """
 
 from __future__ import annotations
@@ -31,12 +38,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from logic import HEALTH_SCHEMA
+from logic import ensure_schema
 
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = BASE_DIR / "data"
 
 REQUIRED_COLUMNS = ["date", "steps", "sleep_hours", "resting_heart_rate"]
+
+# Optional columns and the parser each one needs. Only the ones actually
+# present in a given CSV's header are read, inserted, or upserted.
+OPTIONAL_COLUMNS = ["weight_kg", "workout_minutes", "mood", "water_ml"]
 
 DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y"]
 
@@ -79,8 +90,13 @@ def _to_float(raw: str) -> Optional[float]:
         raise RowError(f"expected a number, got {raw!r}")
 
 
-def _read_csv(csv_path: Path) -> list[dict[str, str]]:
-    """Read csv_path, matching required column names case-insensitively."""
+def _read_csv(csv_path: Path) -> tuple[list[dict[str, str]], list[str]]:
+    """Read csv_path, matching column names case-insensitively.
+
+    Returns (rows, present_optional_columns) — the latter is whichever of
+    OPTIONAL_COLUMNS actually appeared in this CSV's header, so the caller
+    knows which columns to insert/upsert versus leave untouched.
+    """
     with csv_path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
@@ -92,51 +108,69 @@ def _read_csv(csv_path: Path) -> list[dict[str, str]]:
                 f"Error: {csv_path} is missing required column(s): {', '.join(missing)}. "
                 f"Found columns: {', '.join(reader.fieldnames)}"
             )
+        present_optional = [c for c in OPTIONAL_COLUMNS if c in header_map]
+        wanted = {**{c: header_map[c] for c in REQUIRED_COLUMNS}, **{c: header_map[c] for c in present_optional}}
         rows = []
         for raw_row in reader:
-            rows.append({canonical: raw_row.get(original) for canonical, original in header_map.items()})
-    return rows
+            rows.append({canonical: raw_row.get(original) for canonical, original in wanted.items()})
+    return rows, present_optional
+
+
+# Parser for each optional column's raw CSV string.
+_OPTIONAL_PARSERS = {
+    "weight_kg": _to_float,
+    "workout_minutes": _to_int,
+    "mood": _to_int,
+    "water_ml": _to_int,
+}
 
 
 def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
-    raw_rows = _read_csv(csv_path)
+    raw_rows, present_optional = _read_csv(csv_path)
+    columns = REQUIRED_COLUMNS + present_optional
+
     parsed_rows, skipped = [], 0
     for i, row in enumerate(raw_rows, start=2):  # +2: header is line 1
         try:
             date_val = (row.get("date") or "").strip()
             if not date_val:
                 raise RowError("missing date")
-            parsed_rows.append(
-                {
-                    "date": _normalize_date(date_val),
-                    "steps": _to_int(row.get("steps") or ""),
-                    "sleep_hours": _to_float(row.get("sleep_hours") or ""),
-                    "resting_heart_rate": _to_int(row.get("resting_heart_rate") or ""),
-                }
-            )
+            parsed = {
+                "date": _normalize_date(date_val),
+                "steps": _to_int(row.get("steps") or ""),
+                "sleep_hours": _to_float(row.get("sleep_hours") or ""),
+                "resting_heart_rate": _to_int(row.get("resting_heart_rate") or ""),
+            }
+            for col in present_optional:
+                parsed[col] = _OPTIONAL_PARSERS[col](row.get(col) or "")
+            parsed_rows.append(parsed)
         except RowError as exc:
             print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)
             skipped += 1
 
     conn = sqlite3.connect(str(db_path))
     try:
-        conn.execute(HEALTH_SCHEMA)
+        ensure_schema(conn)
         if replace:
             conn.execute("DELETE FROM daily_metrics")
+        insert_cols = ", ".join(columns)
+        placeholders = ", ".join(f":{c}" for c in columns)
+        update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "date")
         conn.executemany(
-            """
-            INSERT INTO daily_metrics (date, steps, sleep_hours, resting_heart_rate)
-            VALUES (:date, :steps, :sleep_hours, :resting_heart_rate)
+            f"""
+            INSERT INTO daily_metrics ({insert_cols})
+            VALUES ({placeholders})
             ON CONFLICT(date) DO UPDATE SET
-                steps = excluded.steps,
-                sleep_hours = excluded.sleep_hours,
-                resting_heart_rate = excluded.resting_heart_rate
+                {update_clause}
             """,
             parsed_rows,
         )
         conn.commit()
     finally:
         conn.close()
+
+    if present_optional:
+        print(f"Also loaded: {', '.join(present_optional)}")
     print(f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped.")
 
 

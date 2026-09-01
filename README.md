@@ -39,9 +39,13 @@ It can access:
 * Daily steps
 * Sleep duration
 * Resting heart rate
+* Weight (kg)
+* Workout minutes
+* Mood (whatever scale you log — e.g. 1–5)
+* Water intake (ml)
 * Data for a selected date range
 
-Access through the MCP tool is **read-only**.
+Every field is optional per day — log just the metrics you actually track. Access through the MCP tool is **read-only**.
 
 ## Installation
 
@@ -59,6 +63,14 @@ Initialize the database:
 ```bash
 python init_db.py sample_data/health_sample.csv
 ```
+
+CSV columns: `date, steps, sleep_hours, resting_heart_rate` are required;
+`weight_kg, workout_minutes, mood, water_ml` are optional — include any
+subset of them. Re-running `init_db.py` upserts by date, and a CSV that
+omits an optional column leaves that column's existing values alone
+rather than clearing them, so you can add a new metric later without
+disturbing what's already logged. An existing database is migrated
+automatically, so upgrading never requires deleting it.
 
 ## Using it with LLMs
 
