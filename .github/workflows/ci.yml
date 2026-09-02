@@ -19,7 +19,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: pytest tests/ -v
 
       - name: Check server.py syntax
         run: python -m py_compile server.py && echo "server.py OK"
