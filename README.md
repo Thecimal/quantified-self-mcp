@@ -125,6 +125,10 @@ sample_data/   # Example health data
 fastmcp.json   # One-command install into Claude Desktop/Cursor/etc.
 ```
 
+## Limitations
+
+**Single machine only, by design.** The database is a plain SQLite file on disk — there's no sync, no server component, no accounts. That's the same choice that keeps your data private: nothing here is built to talk to a network. If you use this on more than one computer, each one has its own independent `data/health.db`; nothing here merges them. Copying the file yourself (e.g. via a synced folder) works but isn't something this project manages or is tested against.
+
 ## Philosophy
 
 **Your data stays yours.**
