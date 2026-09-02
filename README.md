@@ -83,15 +83,33 @@ automatically, so upgrading never requires deleting it.
 
 ## Using it with LLMs
 
-Use it with any MCP-compatible client and model.
+Use it with any MCP-compatible client and model — local LLMs, Claude, or anything else that speaks MCP.
 
-Examples:
+### Claude Desktop
 
-* Local LLMs
-* Claude
-* Other MCP-compatible LLMs
+One command, using the included `fastmcp.json`:
 
-Example:
+```bash
+fastmcp install claude-desktop
+```
+
+This registers the server in Claude Desktop's config, and has `uv` manage an isolated environment with this project's dependencies (no need to have already run `pip install -r requirements.txt` first) — restart Claude Desktop afterwards and look for the 🔨 icon to confirm it loaded.
+
+### Other MCP clients (Cursor, Claude Code, Gemini CLI, etc.)
+
+```bash
+fastmcp install cursor        # or: claude-code, gemini-cli, goose
+```
+
+Any client not directly supported by `fastmcp install` can still use standard MCP JSON config, generated the same way:
+
+```bash
+fastmcp install mcp-json fastmcp.json
+```
+
+Paste the output into that client's config file under its `mcpServers` key.
+
+### Try it
 
 > How has my sleep changed over the last 30 days?
 
@@ -104,6 +122,7 @@ server.py      # MCP server
 logic.py       # Data validation and analysis
 init_db.py     # Database initialization
 sample_data/   # Example health data
+fastmcp.json   # One-command install into Claude Desktop/Cursor/etc.
 ```
 
 ## Philosophy
