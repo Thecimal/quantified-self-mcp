@@ -32,13 +32,12 @@ from __future__ import annotations
 
 import argparse
 import csv
-import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from logic import ensure_schema, upsert_metrics, validate_metrics
+from logic import connect_writable, ensure_schema, upsert_metrics, validate_metrics
 
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = BASE_DIR / "data"
@@ -151,7 +150,7 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
             print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)
             skipped += 1
 
-    conn = sqlite3.connect(str(db_path))
+    conn = connect_writable(db_path)
     try:
         ensure_schema(conn)
         if replace:

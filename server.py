@@ -42,7 +42,9 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from logic import (
+    BUSY_TIMEOUT_MS,
     MAX_ROWS_RETURNED,
+    connect_writable,
     ensure_schema,
     numeric_stats,
     parse_date,
@@ -111,7 +113,7 @@ def _ensure_db(db_path: Path) -> None:
     """
     is_new = not db_path.exists()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = connect_writable(db_path)
     try:
         ensure_schema(conn)
     finally:
@@ -129,7 +131,11 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
     mode=ro fails to open the file — which happens if a previous write left
     a WAL/journal file pending recovery, something SQLite refuses to do
     while read-only. The fallback still blocks writes, just via SQL rather
-    than the OS-level open flag.
+    than the OS-level open flag. Either way, busy_timeout is set so a read
+    landing at the exact instant a write commits waits briefly rather than
+    failing immediately (WAL mode, enabled in logic.ensure_schema, makes
+    this rare in the first place — readers don't normally block on a
+    writer at all).
     """
     _ensure_db(db_path)
     uri = db_path.resolve().as_uri() + "?mode=ro"
@@ -144,6 +150,7 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
         )
         conn = sqlite3.connect(str(db_path))
         conn.execute("PRAGMA query_only = ON")
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -278,7 +285,7 @@ def log_daily_metric(
         raise ToolError(str(exc)) from exc
 
     try:
-        conn = sqlite3.connect(str(HEALTH_DB_PATH))
+        conn = connect_writable(HEALTH_DB_PATH)
         try:
             ensure_schema(conn)
             upsert_metrics(conn, [{"date": day.isoformat(), **provided}])
@@ -327,7 +334,7 @@ def clear_metric(date: str, field: str) -> str:
         raise ToolError(f"field must be one of: {', '.join(METRIC_COLUMNS)} — got {field!r}")
 
     try:
-        conn = sqlite3.connect(str(HEALTH_DB_PATH))
+        conn = connect_writable(HEALTH_DB_PATH)
         try:
             ensure_schema(conn)
             conn.execute(f"UPDATE daily_metrics SET {field} = NULL WHERE date = ?", (day.isoformat(),))

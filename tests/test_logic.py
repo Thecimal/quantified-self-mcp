@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from logic import (
     ADDED_COLUMNS,
+    BUSY_TIMEOUT_MS,
+    connect_writable,
     ensure_schema,
     numeric_stats,
     parse_date,
@@ -173,3 +175,25 @@ def test_validate_metrics_rejects_out_of_range_value():
 def test_validate_metrics_rejects_negative_where_not_allowed():
     with pytest.raises(ValueError, match="resting_heart_rate"):
         validate_metrics({"resting_heart_rate": -5})
+
+
+def test_connect_writable_sets_busy_timeout(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout == BUSY_TIMEOUT_MS
+    finally:
+        conn.close()
+
+
+def test_ensure_schema_enables_wal_mode(tmp_path):
+    # A real file is needed here — :memory: databases can't use WAL, and
+    # ensure_schema silently no-ops there rather than erroring (see the
+    # in-memory tests above, which rely on exactly that behavior).
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+    finally:
+        conn.close()

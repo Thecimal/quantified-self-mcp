@@ -44,14 +44,41 @@ MAX_RANGE_DAYS = 3660  # ~10 years — a wider request is almost certainly a mis
 MAX_ROWS_RETURNED = 400  # ~13 months of daily rows; "summary" still covers the full range
 
 
+# How long a writer waits for a lock before giving up, rather than
+# failing immediately with "database is locked". Long enough to ride out
+# a concurrent writer's transaction (log_daily_metric/clear_metric calls
+# are single-row and fast), short enough that a genuinely stuck lock
+# still surfaces quickly instead of hanging a tool call.
+BUSY_TIMEOUT_MS = 5000
+
+
+def connect_writable(db_path: Any) -> sqlite3.Connection:
+    """Open db_path for writing, with a busy_timeout set so a momentary
+    lock from a concurrent writer causes a short wait instead of an
+    immediate error. Used by every writer: init_db.py, log_daily_metric,
+    clear_metric, and the migration step in server.py's _ensure_db.
+    """
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    return conn
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create daily_metrics if it doesn't exist, and add any columns that
     were introduced after the table may have first been created.
+
+    Also switches the database to WAL journal mode (a no-op if it's a
+    real file already in WAL mode, silently ignored for :memory: databases
+    in tests). WAL lets read_health_data's readers proceed without
+    blocking on a concurrent log_daily_metric/clear_metric write, and vice
+    versa — the two only conflict if two writes land at the exact same
+    instant, which busy_timeout above then covers.
 
     Safe and cheap to call on every startup/import — CREATE TABLE IF NOT
     EXISTS and the ALTER TABLE calls are both no-ops once already applied.
     Requires a writable connection; commits before returning.
     """
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(HEALTH_SCHEMA)
     existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
     for name, sqltype in ADDED_COLUMNS.items():
