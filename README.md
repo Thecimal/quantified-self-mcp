@@ -30,7 +30,7 @@ Cloud LLMs such as Claude can also be used. In that case, your database and MCP 
 
 ## Current functionality
 
-The server currently provides two tools:
+The server currently provides three tools:
 
 **`read_health_data`** — read-only
 
@@ -41,7 +41,7 @@ It can access:
 * Resting heart rate
 * Weight (kg)
 * Workout minutes
-* Mood (whatever scale you log — e.g. 1–5)
+* Mood (1–10 scale)
 * Water intake (ml)
 * Data for a selected date range
 
@@ -49,7 +49,11 @@ Every field is optional per day — log just the metrics you actually track.
 
 **`log_daily_metric`** — write
 
-Lets the LLM record any of the metrics above for a given day, without you touching a CSV or SQLite directly. Pass just the fields you're logging (e.g. only `mood`) and the rest of that day's data is left exactly as it was — nothing is ever cleared, only set. It's a plain per-date upsert into `daily_metrics`; there's no way for it (or anything else in this server) to run arbitrary SQL.
+Lets the LLM record any of the metrics above for a given day, without you touching a CSV or SQLite directly. Pass just the fields you're logging (e.g. only `mood`) and the rest of that day's data is left exactly as it was — nothing is ever cleared, only set. Values are checked against generous sanity bounds before being written (e.g. `mood` 1–10, `resting_heart_rate` 20–250 bpm) — this catches unit mix-ups and typos, not "abnormal" readings. It's a plain per-date upsert into `daily_metrics`; there's no way for it (or anything else in this server) to run arbitrary SQL. The same bounds are applied to CSV imports via `init_db.py`, so a bad value there is skipped with a warning rather than silently loaded.
+
+**`clear_metric`** — write
+
+Blanks out a single metric for a single day, for undoing a bad `log_daily_metric` call (wrong date, wrong units, etc.) without needing to re-run `init_db.py`.
 
 ## Installation
 

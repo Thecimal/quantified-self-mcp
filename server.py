@@ -9,14 +9,16 @@ Tools exposed:
 - read_health_data: daily steps, sleep hours, resting heart rate, weight,
   workout minutes, mood, and water intake
 - log_daily_metric: record one or more of those metrics for a given day
+- clear_metric: blank out a single metric for a given day, undoing a bad
+  log_daily_metric call
 
 Reads from a local SQLite file under ./data/ (created by init_db.py — see
 README.md). This file makes no network calls, so nothing you log or read
 ever leaves your machine. read_health_data's connection is opened
 read-only whenever possible, so that tool specifically cannot modify your
-data; log_daily_metric is the one deliberate exception, and only ever
-touches the daily_metrics table via a plain per-date upsert — there is no
-way for either tool to run arbitrary SQL.
+data; log_daily_metric and clear_metric are the deliberate exceptions, and
+both only ever touch the daily_metrics table via a plain per-date
+upsert/update — there is no way for any of these tools to run arbitrary SQL.
 
 Test it on its own with the MCP Inspector:
     fastmcp dev inspector server.py
@@ -39,7 +41,15 @@ from typing import Iterator, Optional
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from logic import MAX_ROWS_RETURNED, ensure_schema, numeric_stats, parse_date, resolve_range, upsert_metrics
+from logic import (
+    MAX_ROWS_RETURNED,
+    ensure_schema,
+    numeric_stats,
+    parse_date,
+    resolve_range,
+    upsert_metrics,
+    validate_metrics,
+)
 
 # All non-date columns in daily_metrics, in the order they're selected and
 # reported — the single place to touch when another metric is added.
@@ -223,19 +233,18 @@ def log_daily_metric(
 
     Only the metrics you pass are written — anything left as null is not
     touched, so logging just today's mood doesn't erase today's steps if
-    they were set earlier. To intentionally blank out a metric that was
-    logged by mistake, re-run init_db.py with a corrected CSV instead;
-    this tool has no way to clear a value, only set one.
+    they were set earlier. To undo a value logged by mistake, use
+    clear_metric rather than trying to overwrite it with a placeholder.
 
     Args:
         date: The day to log, formatted YYYY-MM-DD.
-        steps: Step count for the day.
-        sleep_hours: Hours of sleep.
-        resting_heart_rate: Resting heart rate in bpm.
-        weight_kg: Body weight in kilograms.
-        workout_minutes: Minutes of exercise.
-        mood: Mood rating, on whatever scale you've been using (e.g. 1-5).
-        water_ml: Water intake in millilitres.
+        steps: Step count for the day. 0-200,000.
+        sleep_hours: Hours of sleep. 0-24.
+        resting_heart_rate: Resting heart rate in bpm. 20-250.
+        weight_kg: Body weight in kilograms. 1-500.
+        workout_minutes: Minutes of exercise. 0-1,440.
+        mood: Mood rating on a 1-10 scale.
+        water_ml: Water intake in millilitres. 0-10,000.
 
     Returns:
         A JSON string with "logged" (just the fields this call set) and
@@ -264,6 +273,11 @@ def log_daily_metric(
         raise ToolError("Provide at least one metric to log alongside the date.")
 
     try:
+        validate_metrics(provided)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+    try:
         conn = sqlite3.connect(str(HEALTH_DB_PATH))
         try:
             ensure_schema(conn)
@@ -283,6 +297,58 @@ def log_daily_metric(
         ) from exc
 
     return json.dumps({"logged": provided, "row": dict(row)}, indent=2)
+
+
+@mcp.tool
+def clear_metric(date: str, field: str) -> str:
+    """
+    Blank out (set to null) a single metric for a single day, without
+    touching that day's other metrics. The counterpart to log_daily_metric
+    for undoing a bad value — e.g. a mood logged for the wrong day, or a
+    weight entered with the wrong units.
+
+    Args:
+        date: The day to clear a field for, formatted YYYY-MM-DD.
+        field: Which metric to blank out. One of: steps, sleep_hours,
+            resting_heart_rate, weight_kg, workout_minutes, mood, water_ml.
+
+    Returns:
+        A JSON string with "cleared" (the field name) and "row" (the
+        day's full current state after clearing). If no row exists yet
+        for that date, "row" is omitted and a "note" explains there was
+        nothing to clear.
+    """
+    try:
+        day = parse_date(date, "date")
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+    if field not in METRIC_COLUMNS:
+        raise ToolError(f"field must be one of: {', '.join(METRIC_COLUMNS)} — got {field!r}")
+
+    try:
+        conn = sqlite3.connect(str(HEALTH_DB_PATH))
+        try:
+            ensure_schema(conn)
+            conn.execute(f"UPDATE daily_metrics SET {field} = NULL WHERE date = ?", (day.isoformat(),))
+            conn.commit()
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
+                (day.isoformat(),),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
+        raise ToolError(
+            "Could not write to the health database — it may be locked by "
+            "another process. Try again in a moment."
+        ) from exc
+
+    if row is None:
+        return json.dumps({"cleared": field, "note": f"No row exists for {day.isoformat()} — nothing to clear."})
+    return json.dumps({"cleared": field, "row": dict(row)}, indent=2)
 
 
 if __name__ == "__main__":

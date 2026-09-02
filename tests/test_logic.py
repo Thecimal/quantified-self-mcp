@@ -16,7 +16,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from logic import ADDED_COLUMNS, ensure_schema, numeric_stats, parse_date, resolve_range, upsert_metrics  # noqa: E402
+from logic import (
+    ADDED_COLUMNS,
+    ensure_schema,
+    numeric_stats,
+    parse_date,
+    resolve_range,
+    upsert_metrics,
+    validate_metrics,
+)  # noqa: E402
 
 
 def test_parse_date_valid():
@@ -143,3 +151,25 @@ def test_upsert_metrics_rejects_row_without_date():
     conn = _conn_with_schema()
     with pytest.raises(ValueError):
         upsert_metrics(conn, [{"steps": 1000}])
+
+
+def test_validate_metrics_accepts_in_range_values():
+    validate_metrics({"steps": 10000, "mood": 5, "weight_kg": 70.0})  # should not raise
+
+
+def test_validate_metrics_ignores_none_values():
+    validate_metrics({"steps": None, "mood": None})  # should not raise
+
+
+def test_validate_metrics_ignores_unrecognized_keys():
+    validate_metrics({"not_a_real_metric": 999999})  # should not raise
+
+
+def test_validate_metrics_rejects_out_of_range_value():
+    with pytest.raises(ValueError, match="mood"):
+        validate_metrics({"mood": 99})
+
+
+def test_validate_metrics_rejects_negative_where_not_allowed():
+    with pytest.raises(ValueError, match="resting_heart_rate"):
+        validate_metrics({"resting_heart_rate": -5})

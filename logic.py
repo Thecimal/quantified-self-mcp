@@ -91,6 +91,37 @@ def upsert_metrics(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None
     conn.commit()
 
 
+# Sanity bounds for each metric: (min, max, human label used in error messages).
+# Deliberately generous — meant to catch obvious mistakes (unit confusion,
+# a slipped decimal point, a fat-fingered extra digit) rather than to police
+# what's "normal". mood is fixed at 1-10 so the scale is consistent across
+# every log_daily_metric call, rather than left to whatever scale a given
+# session happens to use.
+METRIC_BOUNDS = {
+    "steps": (0, 200_000, "steps"),
+    "sleep_hours": (0, 24, "sleep_hours"),
+    "resting_heart_rate": (20, 250, "resting_heart_rate (bpm)"),
+    "weight_kg": (1, 500, "weight_kg"),
+    "workout_minutes": (0, 1440, "workout_minutes"),
+    "mood": (1, 10, "mood (expected on a 1-10 scale)"),
+    "water_ml": (0, 10_000, "water_ml"),
+}
+
+
+def validate_metrics(metrics: dict[str, Any]) -> None:
+    """Raise ValueError if any value in `metrics` (column name -> value,
+    typically from a partial log_daily_metric call or a parsed CSV row)
+    falls outside METRIC_BOUNDS. None values and unrecognized keys are
+    ignored, so this is safe to call on any subset of columns.
+    """
+    for name, value in metrics.items():
+        if value is None or name not in METRIC_BOUNDS:
+            continue
+        low, high, label = METRIC_BOUNDS[name]
+        if not (low <= value <= high):
+            raise ValueError(f"{label} must be between {low} and {high}, got {value}")
+
+
 def parse_date(value: str, field_name: str) -> date:
     """Parse a YYYY-MM-DD string, raising a clear, client-facing ValueError otherwise."""
     try:

@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from logic import ensure_schema, upsert_metrics
+from logic import ensure_schema, upsert_metrics, validate_metrics
 
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = BASE_DIR / "data"
@@ -142,6 +142,10 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
             }
             for col in present_optional:
                 parsed[col] = _OPTIONAL_PARSERS[col](row.get(col) or "")
+            try:
+                validate_metrics({k: v for k, v in parsed.items() if k != "date"})
+            except ValueError as exc:
+                raise RowError(str(exc)) from exc
             parsed_rows.append(parsed)
         except RowError as exc:
             print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)
