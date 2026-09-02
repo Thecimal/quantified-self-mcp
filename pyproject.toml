@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quantified-self-mcp"
+version = "0.1.0"
+description = "Local MCP server for personal health and finance data"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = ["fastmcp>=3.0,<4.0"]
+
+[project.scripts]
+quantified-self-mcp = "server:main"
+quantified-self-init-db = "init_db:main"
+
+[tool.hatch.build.targets.wheel]
+include = ["server.py", "init_db.py"]

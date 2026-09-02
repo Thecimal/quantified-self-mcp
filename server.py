@@ -351,5 +351,9 @@ def clear_metric(date: str, field: str) -> str:
     return json.dumps({"cleared": field, "row": dict(row)}, indent=2)
 
 
-if __name__ == "__main__":
+def main():
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()
