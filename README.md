@@ -1,8 +1,9 @@
 # Quantified Self MCP
+*Try it Live!*
 
 [![Glama MCP Server](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badge)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
 
-*Try it Live!*
+
 
 **A private, local-first MCP server that lets LLMs access your personal health data.**
 
