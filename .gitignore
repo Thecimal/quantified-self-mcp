@@ -8,6 +8,17 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+.pytest_cache/
+
+# Build artifacts — built by .github/workflows/publish.yml on release tags,
+# never meant to be committed (they'd immediately go stale)
+dist/
+build/
+
+# Patch files downloaded to apply locally — meant to be applied and
+# discarded, not committed (git add -A has swept these in by accident
+# more than once)
+*.patch
 
 # OS
 .DS_Store
