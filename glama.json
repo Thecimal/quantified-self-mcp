@@ -1,9 +1,9 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
   "maintainers": ["Thecimal"],
-  "baseImage": "debian:trixie-slim",
+  "baseImage": "python:3.12-slim",
   "buildSteps": [
-    "uv venv /app/.venv && uv pip install --python /app/.venv -r requirements.txt"
+    "python -m venv /app/.venv && /app/.venv/bin/pip install --no-cache-dir -r requirements.txt"
   ],
   "cmdArguments": [
     "mcp-proxy",
