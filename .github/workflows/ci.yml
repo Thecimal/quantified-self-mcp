@@ -43,3 +43,13 @@ jobs:
 
       - name: Test server imports cleanly
         run: python -c "import server; print('server imports OK')"
+
+      - name: Build package
+        run: |
+          pip install build
+          python -m build
+
+      - name: Verify wheel contains all required modules
+        run: |
+          pip install --force-reinstall dist/*.whl
+          python -c "import server, init_db, logic; print('wheel contents OK')"
