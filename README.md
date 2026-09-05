@@ -165,11 +165,12 @@ The LLM retrieves the relevant data through MCP and analyzes it.
 ## Project structure
 
 ```text
-server.py      # MCP server
-logic.py       # Data validation and analysis
-init_db.py     # Database initialization
-sample_data/   # Example health data
-fastmcp.json   # One-command install into Claude Desktop/Cursor/etc.
+server.py       # MCP server
+logic.py        # Data validation and analysis
+init_db.py      # Database initialization
+sample_data/    # Example health data
+fastmcp.json    # One-command install into Claude Desktop/Cursor/etc.
+CHANGELOG.md    # Release history
 ```
 
 ## Limitations
