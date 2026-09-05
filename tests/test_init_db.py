@@ -10,8 +10,8 @@ values, and --db-path/--replace had no test coverage at all.
 """
 
 import os
-import subprocess
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 

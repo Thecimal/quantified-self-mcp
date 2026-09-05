@@ -17,3 +17,19 @@ quantified-self-init-db = "init_db:main"
 
 [tool.hatch.build.targets.wheel]
 include = ["server.py", "init_db.py", "logic.py"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Pinned explicitly rather than relying on ruff's default selection, which
+# varies between versions (some recent versions default to a much broader,
+# noisier set than E4/E7/E9/F).
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # import sorting
+    "UP",  # pyupgrade (modern Python idioms)
+    "B",   # flake8-bugbear (common bug patterns)
+]

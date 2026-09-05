@@ -44,7 +44,6 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from logic import connect_writable, ensure_schema, upsert_metrics, validate_metrics
 
@@ -87,24 +86,24 @@ def _clean_number(raw: str) -> str:
     return raw.strip().replace("$", "").replace(",", "")
 
 
-def _to_int(raw: str) -> Optional[int]:
+def _to_int(raw: str) -> int | None:
     raw = _clean_number(raw)
     if not raw:
         return None
     try:
         return int(float(raw))
-    except ValueError:
-        raise RowError(f"expected a number, got {raw!r}")
+    except ValueError as exc:
+        raise RowError(f"expected a number, got {raw!r}") from exc
 
 
-def _to_float(raw: str) -> Optional[float]:
+def _to_float(raw: str) -> float | None:
     raw = _clean_number(raw)
     if not raw:
         return None
     try:
         return float(raw)
-    except ValueError:
-        raise RowError(f"expected a number, got {raw!r}")
+    except ValueError as exc:
+        raise RowError(f"expected a number, got {raw!r}") from exc
 
 
 def _read_csv(csv_path: Path) -> tuple[list[dict[str, str]], list[str]]:

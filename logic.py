@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 HEALTH_SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_metrics (
@@ -158,7 +158,7 @@ def parse_date(value: str, field_name: str) -> date:
 
 
 def resolve_range(
-    start_date: Optional[str], end_date: Optional[str], default_days: int
+    start_date: str | None, end_date: str | None, default_days: int
 ) -> tuple[date, date]:
     """Fill in sensible defaults for an open-ended date range and validate it."""
     end = parse_date(end_date, "end_date") if end_date else date.today()
@@ -174,7 +174,7 @@ def resolve_range(
     return start, end
 
 
-def numeric_stats(rows: list[dict[str, Any]], key: str) -> dict[str, Optional[float]]:
+def numeric_stats(rows: list[dict[str, Any]], key: str) -> dict[str, float | None]:
     values = [r[key] for r in rows if r.get(key) is not None]
     if not values:
         return {"avg": None, "min": None, "max": None}

@@ -34,9 +34,9 @@ import logging
 import os
 import sqlite3
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -164,7 +164,7 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 
 @mcp.tool
-def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
+def read_health_data(start_date: str | None = None, end_date: str | None = None) -> str:
     """
     Read daily health metrics from the local database: steps, sleep hours,
     resting heart rate, weight (kg), workout minutes, mood, and water
@@ -226,13 +226,13 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
 @mcp.tool
 def log_daily_metric(
     date: str,
-    steps: Optional[int] = None,
-    sleep_hours: Optional[float] = None,
-    resting_heart_rate: Optional[int] = None,
-    weight_kg: Optional[float] = None,
-    workout_minutes: Optional[int] = None,
-    mood: Optional[int] = None,
-    water_ml: Optional[int] = None,
+    steps: int | None = None,
+    sleep_hours: float | None = None,
+    resting_heart_rate: int | None = None,
+    weight_kg: float | None = None,
+    workout_minutes: int | None = None,
+    mood: int | None = None,
+    water_ml: int | None = None,
 ) -> str:
     """
     Record one or more health metrics for a single day, creating that
