@@ -15,19 +15,20 @@ installed via pip, where the default location is inside the installed
 package rather than somewhere obviously writable.
 
 Required CSV columns (header names are matched case-insensitively):
-    date, steps, sleep_hours, resting_heart_rate
+    date
 
-Optional CSV columns — include any subset of these; omitted ones are left
-alone (see the upsert note below), not cleared:
-    weight_kg, workout_minutes, mood, water_ml
+The original columns (steps, sleep_hours, resting_heart_rate) and the
+newer ones (weight_kg, workout_minutes, mood, water_ml) are all read only
+if present in a given CSV's header — this is what makes the incremental
+update described below work for any of them, not just the newer ones.
 
 Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Numbers may
 include "$" and "," (stripped automatically, kept for consistency with
 the shared parsing helpers).
 
 Re-running upserts by date, so it's safe to re-run as you add more days —
-or to add optional columns later: a CSV with only date/weight_kg, say,
-updates just that column and leaves steps/sleep_hours/etc. for that date
+or to add a column later: a CSV with only date and weight_kg, say, updates
+just that column and leaves steps/sleep_hours/etc. for that date
 untouched, rather than blanking them out. Pass --replace to clear the
 table first instead. Rows with a problem (bad date, non-numeric value,
 etc.) are skipped with a warning rather than aborting the whole import —
@@ -54,10 +55,15 @@ DATA_DIR = BASE_DIR / "data"
 # project agree on where the database lives without extra configuration.
 DEFAULT_DB_PATH = Path(os.environ.get("HEALTH_DB_PATH", DATA_DIR / "health.db")).expanduser()
 
-REQUIRED_COLUMNS = ["date", "steps", "sleep_hours", "resting_heart_rate"]
+# "date" is the only column a CSV header must contain. Everything else is
+# read only if present in that particular header (see _read_csv) — this
+# list is the original set of columns from the project's first release,
+# kept separate from METRIC_COLUMNS_ADDED_LATER only for that historical
+# reason, not because either group is more "required" than the other.
+CORE_METRIC_COLUMNS = ["steps", "sleep_hours", "resting_heart_rate"]
 
-# Optional columns and the parser each one needs. Only the ones actually
-# present in a given CSV's header are read, inserted, or upserted.
+# Columns added after the original release. Kept separate from
+# CORE_METRIC_COLUMNS only to document that history; treated identically.
 OPTIONAL_COLUMNS = ["weight_kg", "workout_minutes", "mood", "water_ml"]
 
 DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y"]
@@ -104,31 +110,37 @@ def _to_float(raw: str) -> Optional[float]:
 def _read_csv(csv_path: Path) -> tuple[list[dict[str, str]], list[str]]:
     """Read csv_path, matching column names case-insensitively.
 
-    Returns (rows, present_optional_columns) — the latter is whichever of
-    OPTIONAL_COLUMNS actually appeared in this CSV's header, so the caller
-    knows which columns to insert/upsert versus leave untouched.
+    Returns (rows, present_columns) — the latter is whichever metric
+    columns (core or added-later) actually appeared in this CSV's header,
+    so the caller knows which ones to parse, validate, and upsert versus
+    leave untouched. "date" is the only column required to be in the
+    header at all; a CSV with just date + one metric column is valid.
     """
     with csv_path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
             sys.exit(f"Error: {csv_path} appears to be empty.")
         header_map = {name.strip().lower(): name for name in reader.fieldnames}
-        missing = [c for c in REQUIRED_COLUMNS if c not in header_map]
-        if missing:
+        if "date" not in header_map:
             sys.exit(
-                f"Error: {csv_path} is missing required column(s): {', '.join(missing)}. "
+                f"Error: {csv_path} is missing required column: date. "
                 f"Found columns: {', '.join(reader.fieldnames)}"
             )
-        present_optional = [c for c in OPTIONAL_COLUMNS if c in header_map]
-        wanted = {**{c: header_map[c] for c in REQUIRED_COLUMNS}, **{c: header_map[c] for c in present_optional}}
+        present_columns = [c for c in ALL_METRIC_COLUMNS if c in header_map]
+        wanted = {"date": header_map["date"], **{c: header_map[c] for c in present_columns}}
         rows = []
         for raw_row in reader:
             rows.append({canonical: raw_row.get(original) for canonical, original in wanted.items()})
-    return rows, present_optional
+    return rows, present_columns
 
 
-# Parser for each optional column's raw CSV string.
-_OPTIONAL_PARSERS = {
+ALL_METRIC_COLUMNS = CORE_METRIC_COLUMNS + OPTIONAL_COLUMNS
+
+# Parser for each metric column's raw CSV string.
+_METRIC_PARSERS = {
+    "steps": _to_int,
+    "sleep_hours": _to_float,
+    "resting_heart_rate": _to_int,
     "weight_kg": _to_float,
     "workout_minutes": _to_int,
     "mood": _to_int,
@@ -137,7 +149,7 @@ _OPTIONAL_PARSERS = {
 
 
 def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
-    raw_rows, present_optional = _read_csv(csv_path)
+    raw_rows, present_columns = _read_csv(csv_path)
 
     parsed_rows, skipped = [], 0
     for i, row in enumerate(raw_rows, start=2):  # +2: header is line 1
@@ -145,14 +157,9 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
             date_val = (row.get("date") or "").strip()
             if not date_val:
                 raise RowError("missing date")
-            parsed = {
-                "date": _normalize_date(date_val),
-                "steps": _to_int(row.get("steps") or ""),
-                "sleep_hours": _to_float(row.get("sleep_hours") or ""),
-                "resting_heart_rate": _to_int(row.get("resting_heart_rate") or ""),
-            }
-            for col in present_optional:
-                parsed[col] = _OPTIONAL_PARSERS[col](row.get(col) or "")
+            parsed = {"date": _normalize_date(date_val)}
+            for col in present_columns:
+                parsed[col] = _METRIC_PARSERS[col](row.get(col) or "")
             try:
                 validate_metrics({k: v for k, v in parsed.items() if k != "date"})
             except ValueError as exc:
@@ -171,8 +178,8 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
     finally:
         conn.close()
 
-    if present_optional:
-        print(f"Also loaded: {', '.join(present_optional)}")
+    if present_columns:
+        print(f"Loaded columns: {', '.join(present_columns)}")
     print(f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped.")
 
 

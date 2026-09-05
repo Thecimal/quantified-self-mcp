@@ -100,13 +100,14 @@ Initialize the database:
 python init_db.py sample_data/health_sample.csv
 ```
 
-CSV columns: `date, steps, sleep_hours, resting_heart_rate` are required;
-`weight_kg, workout_minutes, mood, water_ml` are optional — include any
-subset of them. Re-running `init_db.py` upserts by date, and a CSV that
-omits an optional column leaves that column's existing values alone
-rather than clearing them, so you can add a new metric later without
-disturbing what's already logged. An existing database is migrated
-automatically, so upgrading never requires deleting it.
+CSV columns: `date` is the only one required; `steps, sleep_hours,
+resting_heart_rate, weight_kg, workout_minutes, mood, water_ml` are all
+read only if present — include any subset of them. Re-running `init_db.py`
+upserts by date, and a CSV that omits a column leaves that column's
+existing values alone rather than clearing them, so you can add a new
+metric later (even one from the original four) without disturbing what's
+already logged. An existing database is migrated automatically, so
+upgrading never requires deleting it.
 
 ## Using it with LLMs
 
