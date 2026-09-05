@@ -58,6 +58,32 @@ Blanks out a single metric for a single day, for undoing a bad `log_daily_metric
 
 ## Installation
 
+### Option A: from PyPI (recommended)
+
+```bash
+pip install quantified-self-mcp
+```
+
+This installs two commands: `quantified-self-mcp` (the server itself) and
+`quantified-self-init-db` (the CSV loader below). By default both store the
+database inside wherever pip installed the package (not your current
+directory) — run `quantified-self-init-db --help` to confirm the path it
+resolves to on your machine, or see [Limitations](#limitations)
+below if that location isn't writable for you.
+
+Initialize the database:
+
+```bash
+quantified-self-init-db sample_data/health_sample.csv
+```
+
+(No sample CSV handy from a `pip install`? Grab it from the repo:
+`curl -O https://raw.githubusercontent.com/Thecimal/quantified-self-mcp/main/sample_data/health_sample.csv`)
+
+### Option B: from source
+
+Use this if you want to read/modify the code, or run the test suite.
+
 ```bash
 git clone https://github.com/Thecimal/quantified-self-mcp.git
 cd quantified-self-mcp
@@ -87,13 +113,27 @@ Use it with any MCP-compatible client and model — local LLMs, Claude, or anyth
 
 ### Claude Desktop
 
-One command, using the included `fastmcp.json`:
+**If you installed from source**, one command, using the included `fastmcp.json`:
 
 ```bash
 fastmcp install claude-desktop
 ```
 
 This registers the server in Claude Desktop's config, and has `uv` manage an isolated environment with this project's dependencies (no need to have already run `pip install -r requirements.txt` first) — restart Claude Desktop afterwards and look for the 🔨 icon to confirm it loaded.
+
+**If you installed via `pip install quantified-self-mcp`**, edit the config file directly instead — `fastmcp install` expects a source checkout, not a pip package. Find `command` by running `which quantified-self-mcp` (macOS/Linux) or `where quantified-self-mcp` (Windows), then add:
+
+```json
+{
+  "mcpServers": {
+    "quantified-self": {
+      "command": "/absolute/path/from/which/quantified-self-mcp"
+    }
+  }
+}
+```
+
+into the same config file the source-install instructions above point to (**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`, **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`, **Linux**: `~/.config/Claude/claude_desktop_config.json`). Restart Claude Desktop afterwards.
 
 ### Other MCP clients (Cursor, Claude Code, Gemini CLI, etc.)
 
@@ -128,6 +168,8 @@ fastmcp.json   # One-command install into Claude Desktop/Cursor/etc.
 ## Limitations
 
 **Single machine only, by design.** The database is a plain SQLite file on disk — there's no sync, no server component, no accounts. That's the same choice that keeps your data private: nothing here is built to talk to a network. If you use this on more than one computer, each one has its own independent `data/health.db`; nothing here merges them. Copying the file yourself (e.g. via a synced folder) works but isn't something this project manages or is tested against.
+
+**`pip install` default database location.** Both commands currently default to storing `health.db` inside the installed package's own directory (wherever `pip` put it), not your current directory or home folder. `quantified-self-mcp` (the server) can be redirected with the `HEALTH_DB_PATH` environment variable; `quantified-self-init-db` cannot yet be redirected, so if the default location isn't writable on your system (common with system-wide installs), run it from a source checkout instead (`python init_db.py ...`, which uses the same package-relative default but is more transparent about where that is), or install into a user-writable venv. A `--db-path` flag for `quantified-self-init-db` is on the list to fix this properly.
 
 ## Philosophy
 
