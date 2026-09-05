@@ -7,6 +7,13 @@ server (server.py), from a plain CSV file of health data.
 Usage:
     python init_db.py path/to/health.csv
 
+By default the database is created at data/health.db next to this script,
+or wherever the HEALTH_DB_PATH environment variable points (the same
+variable server.py reads, so both agree on the location automatically).
+Pass --db-path to override either of those for a single run — handy when
+installed via pip, where the default location is inside the installed
+package rather than somewhere obviously writable.
+
 Required CSV columns (header names are matched case-insensitively):
     date, steps, sleep_hours, resting_heart_rate
 
@@ -32,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +49,10 @@ from logic import connect_writable, ensure_schema, upsert_metrics, validate_metr
 
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = BASE_DIR / "data"
+
+# Matches server.py's HEALTH_DB_PATH convention, so both halves of the
+# project agree on where the database lives without extra configuration.
+DEFAULT_DB_PATH = Path(os.environ.get("HEALTH_DB_PATH", DATA_DIR / "health.db")).expanduser()
 
 REQUIRED_COLUMNS = ["date", "steps", "sleep_hours", "resting_heart_rate"]
 
@@ -174,13 +186,25 @@ def main() -> None:
         action="store_true",
         help="Clear existing rows in the table first, instead of appending/upserting.",
     )
+    parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help=(
+            "Where to create/update the SQLite database. Defaults to the "
+            "HEALTH_DB_PATH environment variable if set (same variable "
+            "server.py reads), otherwise data/health.db next to this script "
+            f"(currently: {DEFAULT_DB_PATH})."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.csv_path.exists():
         sys.exit(f"Error: CSV file not found at {args.csv_path}")
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    init_health_db(args.csv_path, DATA_DIR / "health.db", args.replace)
+    db_path = args.db_path.expanduser()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    init_health_db(args.csv_path, db_path, args.replace)
 
 
 if __name__ == "__main__":
