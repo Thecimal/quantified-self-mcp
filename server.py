@@ -54,6 +54,26 @@ from logic import (
     validate_metrics,
 )
 
+# The SQLite file never leaves this machine, but the *rows read out of it*
+# do: whatever text a tool returns becomes part of the conversation sent to
+# whichever LLM the MCP client is configured with. If that's a cloud-hosted
+# model (as opposed to one running locally), your health data leaves your
+# machine at that point, same as pasting it into a chat. This is true of any
+# MCP server, not something specific to a bug here — so each tool's own
+# docstring below ends with this exact paragraph (verbatim, so it shows up
+# in the tool description an LLM/agent actually sees, not just in this
+# file's own docs). Kept here too as the single source of truth for that
+# wording, and to let tests/test_server.py assert every tool still carries
+# it word-for-word rather than the warning silently drifting or being
+# dropped by a future edit.
+CLOUD_MODEL_WARNING = (
+    "    Privacy note: this server and its SQLite file are entirely local, but\n"
+    "    the data returned by this tool becomes part of the conversation sent\n"
+    "    to whatever model the calling client is configured with. If that\n"
+    "    model runs in the cloud rather than on your machine, treat this the\n"
+    "    same as pasting the data into a chat with that provider."
+)
+
 # All non-date columns in daily_metrics, in the order they're selected and
 # reported — the single place to touch when another metric is added.
 METRIC_COLUMNS = [
@@ -195,6 +215,12 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
         - "truncated": true if more matching days existed than were returned in "rows"
         - "summary": days_with_data plus avg/min/max for each metric, computed
           over *all* matching days even when "rows" is truncated
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -265,6 +291,12 @@ def log_daily_metric(
         A JSON string with "logged" (just the fields this call set) and
         "row" (the day's full current state across all metrics, including
         any set previously).
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
     """
     try:
         day = parse_date(date, "date")
@@ -332,6 +364,12 @@ def clear_metric(date: str, field: str) -> str:
         day's full current state after clearing). If no row exists yet
         for that date, "row" is omitted and a "note" explains there was
         nothing to clear.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
     """
     try:
         day = parse_date(date, "date")

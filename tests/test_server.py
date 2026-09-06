@@ -85,3 +85,17 @@ def test_clear_metric_on_a_date_with_no_row_reports_nothing_to_clear(health_db):
     result = json.loads(health_db.clear_metric(date="2026-01-07", field="mood"))
     assert "row" not in result
     assert "note" in result
+
+
+def test_every_tool_carries_the_cloud_model_warning(health_db):
+    """Whatever a tool returns is sent to whichever model the MCP client is
+    configured with — if that's a cloud model, the data leaves the machine
+    at that point even though the SQLite file itself never does. Every
+    tool's description (the text an LLM/agent actually sees) must carry
+    this warning verbatim, not just the module's own docs, and this stays
+    true automatically for any tool added later.
+    """
+    tools = (health_db.read_health_data, health_db.log_daily_metric, health_db.clear_metric)
+    assert tools, "expected at least one tool to check"
+    for tool in tools:
+        assert health_db.CLOUD_MODEL_WARNING.strip() in tool.__doc__
