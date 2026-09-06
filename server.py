@@ -188,6 +188,39 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 
 # ---------------------------------------------------------------------------
+# Error semantics
+# ---------------------------------------------------------------------------
+
+# Stable, machine-parseable codes prefixed onto every ToolError message below
+# (as "[code] human message"), so a client or the calling LLM can branch on
+# the failure kind — e.g. retry on "database_locked" but not on
+# "invalid_date" — without parsing free-form English. The human message
+# after the code is still the primary content and is unchanged from before;
+# existing substring-matching tests (e.g. on "mood") keep working since the
+# code is a prefix, not a replacement.
+ERR_INVALID_DATE = "invalid_date"
+ERR_INVALID_RANGE = "invalid_range"
+ERR_MISSING_METRIC = "missing_metric"
+ERR_INVALID_METRIC_VALUE = "invalid_metric_value"
+ERR_INVALID_FIELD = "invalid_field"
+ERR_DATABASE_LOCKED = "database_locked"
+ERR_DATABASE_ERROR = "database_error"
+
+
+def _tool_error(code: str, message: str) -> ToolError:
+    return ToolError(f"[{code}] {message}")
+
+
+def _is_locked_error(exc: sqlite3.Error) -> bool:
+    """True if exc looks like a lock/busy contention error rather than a
+    missing/corrupt database — used to pick database_locked vs
+    database_error so the two failure modes (retry-worthy vs not) are
+    distinguishable by code, not just by re-reading the message text.
+    """
+    return isinstance(exc, sqlite3.OperationalError) and "lock" in str(exc).lower()
+
+
+# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
@@ -233,7 +266,7 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
     except ValueError as exc:
-        raise ToolError(str(exc)) from exc
+        raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
 
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
@@ -245,9 +278,14 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
             rows = [dict(row) for row in cursor.fetchall()]
     except sqlite3.Error as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
-        raise ToolError(
-            "Could not read the health database — it may be locked by another "
-            "process, or missing/corrupt. Try again, or re-run init_db.py."
+        if _is_locked_error(exc):
+            raise _tool_error(
+                ERR_DATABASE_LOCKED,
+                "Could not read the health database — it is locked by another process. Try again in a moment.",
+            ) from exc
+        raise _tool_error(
+            ERR_DATABASE_ERROR,
+            "Could not read the health database — it may be missing or corrupt. Try again, or re-run init_db.py.",
         ) from exc
 
     truncated = len(rows) > MAX_ROWS_RETURNED
@@ -317,7 +355,7 @@ def log_daily_metric(
     try:
         day = parse_date(date, "date")
     except ValueError as exc:
-        raise ToolError(str(exc)) from exc
+        raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
 
     provided = {
         k: v
@@ -333,12 +371,12 @@ def log_daily_metric(
         if v is not None
     }
     if not provided:
-        raise ToolError("Provide at least one metric to log alongside the date.")
+        raise _tool_error(ERR_MISSING_METRIC, "Provide at least one metric to log alongside the date.")
 
     try:
         validate_metrics(provided)
     except ValueError as exc:
-        raise ToolError(str(exc)) from exc
+        raise _tool_error(ERR_INVALID_METRIC_VALUE, str(exc)) from exc
 
     try:
         conn = connect_writable(HEALTH_DB_PATH)
@@ -354,9 +392,10 @@ def log_daily_metric(
             conn.close()
     except sqlite3.Error as exc:
         logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
-        raise ToolError(
-            "Could not write to the health database — it may be locked by "
-            "another process. Try again in a moment."
+        code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
+        raise _tool_error(
+            code,
+            "Could not write to the health database — it may be locked by another process. Try again in a moment.",
         ) from exc
 
     return json.dumps({"logged": provided, "row": dict(row)}, indent=2)
@@ -398,10 +437,10 @@ def clear_metric(date: str, field: str) -> str:
     try:
         day = parse_date(date, "date")
     except ValueError as exc:
-        raise ToolError(str(exc)) from exc
+        raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
 
     if field not in METRIC_COLUMNS:
-        raise ToolError(f"field must be one of: {', '.join(METRIC_COLUMNS)} — got {field!r}")
+        raise _tool_error(ERR_INVALID_FIELD, f"field must be one of: {', '.join(METRIC_COLUMNS)} — got {field!r}")
 
     try:
         conn = connect_writable(HEALTH_DB_PATH)
@@ -418,9 +457,10 @@ def clear_metric(date: str, field: str) -> str:
             conn.close()
     except sqlite3.Error as exc:
         logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
-        raise ToolError(
-            "Could not write to the health database — it may be locked by "
-            "another process. Try again in a moment."
+        code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
+        raise _tool_error(
+            code,
+            "Could not write to the health database — it may be locked by another process. Try again in a moment.",
         ) from exc
 
     if row is None:

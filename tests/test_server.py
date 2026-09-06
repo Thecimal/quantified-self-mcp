@@ -56,17 +56,17 @@ def test_log_daily_metric_does_not_clear_other_fields(health_db):
 
 
 def test_log_daily_metric_rejects_out_of_range_value(health_db):
-    with pytest.raises(ToolError, match="mood"):
+    with pytest.raises(ToolError, match=r"\[invalid_metric_value\].*mood"):
         health_db.log_daily_metric(date="2026-01-03", mood=99)
 
 
 def test_log_daily_metric_requires_at_least_one_metric(health_db):
-    with pytest.raises(ToolError):
+    with pytest.raises(ToolError, match=r"\[missing_metric\]"):
         health_db.log_daily_metric(date="2026-01-04")
 
 
 def test_log_daily_metric_rejects_bad_date(health_db):
-    with pytest.raises(ToolError):
+    with pytest.raises(ToolError, match=r"\[invalid_date\]"):
         health_db.log_daily_metric(date="not-a-date", steps=1000)
 
 
@@ -78,7 +78,7 @@ def test_clear_metric_blanks_only_the_given_field(health_db):
 
 
 def test_clear_metric_rejects_unknown_field(health_db):
-    with pytest.raises(ToolError):
+    with pytest.raises(ToolError, match=r"\[invalid_field\]"):
         health_db.clear_metric(date="2026-01-06", field="not_a_real_field")
 
 
@@ -86,6 +86,28 @@ def test_clear_metric_on_a_date_with_no_row_reports_nothing_to_clear(health_db):
     result = json.loads(health_db.clear_metric(date="2026-01-07", field="mood"))
     assert "row" not in result
     assert "note" in result
+
+
+def test_read_health_data_rejects_inverted_range(health_db):
+    with pytest.raises(ToolError, match=r"\[invalid_range\]"):
+        health_db.read_health_data(start_date="2026-02-01", end_date="2026-01-01")
+
+
+def test_database_locked_error_is_distinguished_from_generic_database_error(health_db, monkeypatch):
+    """A concurrent-writer lock is retry-worthy; a missing/corrupt database
+    isn't. Both used to surface as the same generic message — assert the
+    error code actually tracks which failure occurred, using the real
+    sqlite3.OperationalError('database is locked') a busy connection would
+    raise, not a stand-in exception.
+    """
+    import sqlite3
+
+    def _raise_locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(health_db, "connect_writable", _raise_locked)
+    with pytest.raises(ToolError, match=r"\[database_locked\]"):
+        health_db.log_daily_metric(date="2026-01-08", steps=1000)
 
 
 def test_every_tool_carries_the_cloud_model_warning(health_db):
