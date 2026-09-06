@@ -5,12 +5,6 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions correspond to the [PyPI release history](https://pypi.org/project/quantified-self-mcp/#history).
 
-> **Note on the `v1.0.0` git tag:** it points to an early commit (Aug 29,
-> before write tools, metric validation, PyPI packaging, or WAL hardening
-> existed) and was never published to PyPI — `0.1.0` is the only version
-> that has been. If you see `v1.0.0` in the repo's tag list, ignore it;
-> `0.1.0` below is the actual first (and so far only) release.
-
 ## [Unreleased]
 
 ### Fixed
