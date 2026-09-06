@@ -20,6 +20,7 @@ from logic import (
     ADDED_COLUMNS,
     BUSY_TIMEOUT_MS,
     connect_writable,
+    default_data_dir,
     ensure_schema,
     numeric_stats,
     parse_date,
@@ -197,3 +198,39 @@ def test_ensure_schema_enables_wal_mode(tmp_path):
         assert mode.lower() == "wal"
     finally:
         conn.close()
+
+
+def test_default_data_dir_prefers_writable_source_checkout(tmp_path):
+    # base_dir/data doesn't exist yet, but tmp_path is writable, so it
+    # should be created and used rather than falling back.
+    result = default_data_dir(tmp_path)
+    assert result == tmp_path / "data"
+    assert result.is_dir()
+
+
+def test_default_data_dir_falls_back_when_source_checkout_is_not_writable(tmp_path, monkeypatch):
+    import logic
+
+    # Simulate a system-wide pip install: base_dir/data can't be written
+    # to (e.g. it's inside a read-only site-packages), so this should
+    # fall back to a per-user directory instead of raising or silently
+    # picking an unusable path.
+    monkeypatch.setattr(logic, "_dir_is_writable", lambda path: False)
+    monkeypatch.setattr(logic, "_user_data_dir", lambda: tmp_path / "fake-home-data")
+
+    result = default_data_dir(tmp_path)
+    assert result == tmp_path / "fake-home-data" / "quantified-self-mcp"
+
+
+def test_dir_is_writable_true_for_a_real_writable_path(tmp_path):
+    from logic import _dir_is_writable
+
+    assert _dir_is_writable(tmp_path / "new-subdir") is True
+
+
+def test_dir_is_writable_false_when_path_is_actually_a_file(tmp_path):
+    from logic import _dir_is_writable
+
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("this occupies the path")
+    assert _dir_is_writable(blocker) is False

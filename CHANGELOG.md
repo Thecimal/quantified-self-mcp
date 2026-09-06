@@ -8,6 +8,13 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 ## [Unreleased]
 
 ### Fixed
+- `server.py` and `init_db.py` no longer default to storing `health.db`
+  inside the installed package's own directory on a system-wide `pip
+  install` (usually not writable). Both now detect whether `data/` next
+  to the source is writable and fall back automatically to a per-user
+  data directory (e.g. `~/.local/share/quantified-self-mcp` on Linux) —
+  see `logic.default_data_dir`. `HEALTH_DB_PATH` and `--db-path` still
+  override this either way.
 - `init_db.py` now only requires a `date` column in a CSV's header — it
   previously also required `steps`, `sleep_hours`, and `resting_heart_rate`
   to be present, which broke the documented "add one column later"

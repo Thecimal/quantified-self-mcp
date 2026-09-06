@@ -45,6 +45,7 @@ from logic import (
     BUSY_TIMEOUT_MS,
     MAX_ROWS_RETURNED,
     connect_writable,
+    default_data_dir,
     ensure_schema,
     numeric_stats,
     parse_date,
@@ -72,8 +73,15 @@ METRIC_COLUMNS = [
 # Can be overridden with an environment variable — handy if you'd rather
 # point this at data living somewhere else on disk. Set this in the "env"
 # block of your Claude Desktop config if you need to (see README.md).
+#
+# The default itself adapts to how this project was installed: a source
+# checkout gets data/ next to this file (matching README.md's "Project
+# structure" and what CI expects); a system-wide `pip install` — where
+# this file lives inside site-packages, not writable by an ordinary user
+# — falls back to a per-user data directory instead. See
+# logic.default_data_dir for the exact rule.
 BASE_DIR = Path(__file__).resolve().parent
-HEALTH_DB_PATH = Path(os.environ.get("HEALTH_DB_PATH", BASE_DIR / "data" / "health.db")).expanduser()
+HEALTH_DB_PATH = Path(os.environ.get("HEALTH_DB_PATH", default_data_dir(BASE_DIR) / "health.db")).expanduser()
 
 # This server talks to its client over stdio. Anything written to stdout
 # (e.g. a stray print()) would corrupt that channel and break the

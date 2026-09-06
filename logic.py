@@ -10,8 +10,12 @@ and unit-tested without installing fastmcp — see tests/test_logic.py.
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import sys
+import tempfile
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 HEALTH_SCHEMA = """
@@ -50,6 +54,56 @@ MAX_ROWS_RETURNED = 400  # ~13 months of daily rows; "summary" still covers the 
 # are single-row and fast), short enough that a genuinely stuck lock
 # still surfaces quickly instead of hanging a tool call.
 BUSY_TIMEOUT_MS = 5000
+
+
+def _dir_is_writable(path: Path) -> bool:
+    """Best-effort check that `path` exists (creating it if needed) and
+    that a file can actually be written inside it.
+
+    Used by default_data_dir below to tell a normal source checkout
+    (writable) apart from a system-wide `pip install`, where this
+    project's files live inside site-packages and an ordinary user has
+    no permission to write there.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=path):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def _user_data_dir() -> Path:
+    """A per-user data directory, following each platform's usual
+    convention. Used as the fallback default database location when the
+    source-checkout convention (a data/ folder next to server.py) isn't
+    writable.
+    """
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        return Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+    return Path(xdg_data_home) if xdg_data_home else Path.home() / ".local" / "share"
+
+
+def default_data_dir(base_dir: Path) -> Path:
+    """Pick a sensible default directory for the health database.
+
+    Prefers `data/` next to base_dir (the documented source-checkout
+    layout, and what CI expects). Falls back to a per-user data directory
+    — e.g. ~/.local/share/quantified-self-mcp on Linux — when that isn't
+    writable, which is the common case for a system-wide `pip install`:
+    base_dir then points inside site-packages, which ordinary users can't
+    write to. Either way, HEALTH_DB_PATH or --db-path still override this
+    entirely.
+    """
+    source_checkout_dir = base_dir / "data"
+    if _dir_is_writable(source_checkout_dir):
+        return source_checkout_dir
+    return _user_data_dir() / "quantified-self-mcp"
 
 
 def connect_writable(db_path: Any) -> sqlite3.Connection:

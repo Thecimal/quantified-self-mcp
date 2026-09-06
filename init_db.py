@@ -7,12 +7,14 @@ server (server.py), from a plain CSV file of health data.
 Usage:
     python init_db.py path/to/health.csv
 
-By default the database is created at data/health.db next to this script,
-or wherever the HEALTH_DB_PATH environment variable points (the same
-variable server.py reads, so both agree on the location automatically).
-Pass --db-path to override either of those for a single run — handy when
-installed via pip, where the default location is inside the installed
-package rather than somewhere obviously writable.
+By default the database is created at data/health.db next to this script
+if that's writable, or wherever the HEALTH_DB_PATH environment variable
+points (the same variable server.py reads, so both agree on the location
+automatically). If data/ next to this script isn't writable — the usual
+case for a system-wide `pip install`, where this script lives inside
+site-packages — it falls back to a per-user data directory instead (see
+logic.default_data_dir). Pass --db-path to override any of this for a
+single run.
 
 Required CSV columns (header names are matched case-insensitively):
     date
@@ -45,10 +47,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from logic import connect_writable, ensure_schema, upsert_metrics, validate_metrics
+from logic import connect_writable, default_data_dir, ensure_schema, upsert_metrics, validate_metrics
 
 BASE_DIR = Path(__file__).parent.resolve()
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = default_data_dir(BASE_DIR)
 
 # Matches server.py's HEALTH_DB_PATH convention, so both halves of the
 # project agree on where the database lives without extra configuration.

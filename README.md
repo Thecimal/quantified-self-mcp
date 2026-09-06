@@ -66,16 +66,18 @@ pip install quantified-self-mcp
 
 This installs two commands: `quantified-self-mcp` (the server itself) and
 `quantified-self-init-db` (the CSV loader below). By default both store the
-database inside wherever pip installed the package (not your current
-directory), which usually isn't writable on a system-wide install. Point
-them somewhere you control with the `HEALTH_DB_PATH` environment variable
-(read by both), or pass `--db-path` to `quantified-self-init-db` directly —
-see [Limitations](#limitations) for details.
+database in a per-user data directory (e.g. `~/.local/share/quantified-self-mcp/`
+on Linux, `~/Library/Application Support/quantified-self-mcp/` on macOS,
+`%APPDATA%\quantified-self-mcp\` on Windows) — this is a system-wide `pip
+install`, so the location pip installed the package to usually isn't
+writable, and both commands detect that and fall back automatically. Point
+them somewhere else with the `HEALTH_DB_PATH` environment variable (read
+by both), or pass `--db-path` to `quantified-self-init-db` directly.
 
-Initialize the database:
+Initialize the database (using the default per-user location):
 
 ```bash
-quantified-self-init-db sample_data/health_sample.csv --db-path ~/quantified-self/health.db
+quantified-self-init-db sample_data/health_sample.csv
 ```
 
 (No sample CSV handy from a `pip install`? Grab it from the repo:
@@ -177,7 +179,7 @@ CHANGELOG.md    # Release history
 
 **Single machine only, by design.** The database is a plain SQLite file on disk — there's no sync, no server component, no accounts. That's the same choice that keeps your data private: nothing here is built to talk to a network. If you use this on more than one computer, each one has its own independent `data/health.db`; nothing here merges them. Copying the file yourself (e.g. via a synced folder) works but isn't something this project manages or is tested against.
 
-**`pip install` default database location.** Both commands default to storing `health.db` inside the installed package's own directory (wherever `pip` put it), not your current directory or home folder — that's rarely writable on a system-wide install. Use `HEALTH_DB_PATH` (read by both `quantified-self-mcp` and `quantified-self-init-db`) or `quantified-self-init-db`'s `--db-path` flag to point it somewhere you control, e.g. `~/quantified-self/health.db`.
+**`pip install` default database location.** Both commands store `health.db` in a per-user data directory by default (see [Installation](#installation) above), not your current working directory. Use `HEALTH_DB_PATH` (read by both `quantified-self-mcp` and `quantified-self-init-db`) or `quantified-self-init-db`'s `--db-path` flag if you'd rather point it somewhere else, e.g. `~/quantified-self/health.db`.
 
 ## Philosophy
 
