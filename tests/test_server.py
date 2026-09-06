@@ -7,6 +7,7 @@ its own throwaway database via the health_db fixture, so tests never
 touch ./data/health.db or affect each other.
 """
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -99,3 +100,30 @@ def test_every_tool_carries_the_cloud_model_warning(health_db):
     assert tools, "expected at least one tool to check"
     for tool in tools:
         assert health_db.CLOUD_MODEL_WARNING.strip() in tool.__doc__
+
+
+def test_tool_annotations_reflect_read_write_behavior(health_db):
+    """MCP tool annotations are client-facing hints about a tool's effects
+    (readOnlyHint/destructiveHint/idempotentHint/openWorldHint) — clients
+    can use these to, e.g., ask for confirmation before a destructive call.
+    Assert they match what each tool actually does, not just that they're
+    present, so a future behavior change can't silently leave stale hints.
+    fastmcp's get_tool is async; there's no running event loop in a plain
+    pytest test, so asyncio.run drives it here rather than pulling in
+    pytest-asyncio for a single call site.
+    """
+    get_tool = lambda name: asyncio.run(health_db.mcp.get_tool(name))  # noqa: E731
+
+    read_tool = get_tool("read_health_data")
+    assert read_tool.annotations.readOnlyHint is True
+    assert read_tool.annotations.openWorldHint is False
+
+    log_tool = get_tool("log_daily_metric")
+    assert log_tool.annotations.readOnlyHint is False
+    assert log_tool.annotations.destructiveHint is False  # upserts, never drops data
+    assert log_tool.annotations.idempotentHint is True
+
+    clear_tool = get_tool("clear_metric")
+    assert clear_tool.annotations.readOnlyHint is False
+    assert clear_tool.annotations.destructiveHint is True  # blanks out a value
+    assert clear_tool.annotations.idempotentHint is True

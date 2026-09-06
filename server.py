@@ -40,6 +40,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from mcp.types import ToolAnnotations
 
 from logic import (
     BUSY_TIMEOUT_MS,
@@ -191,7 +192,14 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Read health data",
+        readOnlyHint=True,  # opened via _readonly_connection; cannot write
+        idempotentHint=True,  # same args -> same result, no side effects
+        openWorldHint=False,  # only ever touches the local SQLite file
+    )
+)
 def read_health_data(start_date: str | None = None, end_date: str | None = None) -> str:
     """
     Read daily health metrics from the local database: steps, sleep hours,
@@ -257,7 +265,15 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
     return json.dumps(result, indent=2)
 
 
-@mcp.tool
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Log a daily metric",
+        readOnlyHint=False,
+        destructiveHint=False,  # upserts/overwrites values, never drops a row or column
+        idempotentHint=True,  # re-sending the same values leaves the row unchanged
+        openWorldHint=False,
+    )
+)
 def log_daily_metric(
     date: str,
     steps: int | None = None,
@@ -346,7 +362,15 @@ def log_daily_metric(
     return json.dumps({"logged": provided, "row": dict(row)}, indent=2)
 
 
-@mcp.tool
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Clear a single metric",
+        readOnlyHint=False,
+        destructiveHint=True,  # blanks out a previously logged value
+        idempotentHint=True,  # clearing an already-null field is a no-op
+        openWorldHint=False,
+    )
+)
 def clear_metric(date: str, field: str) -> str:
     """
     Blank out (set to null) a single metric for a single day, without
