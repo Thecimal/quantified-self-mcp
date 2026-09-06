@@ -29,7 +29,6 @@ In normal use, this file is launched as a subprocess by an MCP client
 such as Claude Desktop, which talks to it over stdio — see README.md.
 """
 
-import json
 import logging
 import os
 import sqlite3
@@ -41,6 +40,7 @@ from pathlib import Path
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import BaseModel
 
 from logic import (
     BUSY_TIMEOUT_MS,
@@ -86,6 +86,71 @@ METRIC_COLUMNS = [
     "mood",
     "water_ml",
 ]
+
+# ---------------------------------------------------------------------------
+# Output schemas
+# ---------------------------------------------------------------------------
+#
+# Each tool below returns one of these Pydantic models instead of a
+# hand-built dict passed through json.dumps. FastMCP derives a JSON output
+# schema from the return-type annotation and populates the response's
+# structured_content field to match it, in addition to the usual text
+# content (still a JSON string, for clients that only read that) — so a
+# client can validate/consume the result as a real typed object instead of
+# re-parsing free-form text. See tests/test_server.py for a check of the
+# actual wire-level structured_content via an in-memory fastmcp Client.
+
+
+class DailyMetricsRow(BaseModel):
+    date: str
+    steps: int | None = None
+    sleep_hours: float | None = None
+    resting_heart_rate: int | None = None
+    weight_kg: float | None = None
+    workout_minutes: int | None = None
+    mood: int | None = None
+    water_ml: int | None = None
+
+
+class DateRange(BaseModel):
+    start_date: str
+    end_date: str
+
+
+class MetricStats(BaseModel):
+    avg: float | None = None
+    min: float | None = None
+    max: float | None = None
+
+
+class HealthDataSummary(BaseModel):
+    days_with_data: int
+    steps: MetricStats
+    sleep_hours: MetricStats
+    resting_heart_rate: MetricStats
+    weight_kg: MetricStats
+    workout_minutes: MetricStats
+    mood: MetricStats
+    water_ml: MetricStats
+
+
+class ReadHealthDataResult(BaseModel):
+    range: DateRange
+    rows: list[DailyMetricsRow]
+    truncated: bool
+    summary: HealthDataSummary
+
+
+class LogDailyMetricResult(BaseModel):
+    logged: dict[str, int | float]
+    row: DailyMetricsRow
+
+
+class ClearMetricResult(BaseModel):
+    cleared: str
+    row: DailyMetricsRow | None = None
+    note: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -233,7 +298,7 @@ def _is_locked_error(exc: sqlite3.Error) -> bool:
         openWorldHint=False,  # only ever touches the local SQLite file
     )
 )
-def read_health_data(start_date: str | None = None, end_date: str | None = None) -> str:
+def read_health_data(start_date: str | None = None, end_date: str | None = None) -> ReadHealthDataResult:
     """
     Read daily health metrics from the local database: steps, sleep hours,
     resting heart rate, weight (kg), workout minutes, mood, and water
@@ -245,7 +310,7 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
 
     Returns:
-        A JSON string with:
+        A ReadHealthDataResult with:
         - "range": the start/end dates actually used
         - "rows": one entry per day that has at least one recorded metric
           (date plus whichever of steps, sleep_hours, resting_heart_rate,
@@ -291,16 +356,15 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
     truncated = len(rows) > MAX_ROWS_RETURNED
     returned_rows = rows[-MAX_ROWS_RETURNED:] if truncated else rows
 
-    result = {
-        "range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
-        "rows": returned_rows,
-        "truncated": truncated,
-        "summary": {
-            "days_with_data": len(rows),
-            **{metric: numeric_stats(rows, metric) for metric in METRIC_COLUMNS},
-        },
-    }
-    return json.dumps(result, indent=2)
+    return ReadHealthDataResult(
+        range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
+        rows=[DailyMetricsRow(**row) for row in returned_rows],
+        truncated=truncated,
+        summary=HealthDataSummary(
+            days_with_data=len(rows),
+            **{metric: MetricStats(**numeric_stats(rows, metric)) for metric in METRIC_COLUMNS},
+        ),
+    )
 
 
 @mcp.tool(
@@ -321,7 +385,7 @@ def log_daily_metric(
     workout_minutes: int | None = None,
     mood: int | None = None,
     water_ml: int | None = None,
-) -> str:
+) -> LogDailyMetricResult:
     """
     Record one or more health metrics for a single day, creating that
     day's row if it doesn't already have one.
@@ -342,9 +406,9 @@ def log_daily_metric(
         water_ml: Water intake in millilitres. 0-10,000.
 
     Returns:
-        A JSON string with "logged" (just the fields this call set) and
-        "row" (the day's full current state across all metrics, including
-        any set previously).
+        A LogDailyMetricResult with "logged" (just the fields this call set)
+        and "row" (the day's full current state across all metrics,
+        including any set previously).
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -398,7 +462,7 @@ def log_daily_metric(
             "Could not write to the health database — it may be locked by another process. Try again in a moment.",
         ) from exc
 
-    return json.dumps({"logged": provided, "row": dict(row)}, indent=2)
+    return LogDailyMetricResult(logged=provided, row=DailyMetricsRow(**dict(row)))
 
 
 @mcp.tool(
@@ -410,7 +474,7 @@ def log_daily_metric(
         openWorldHint=False,
     )
 )
-def clear_metric(date: str, field: str) -> str:
+def clear_metric(date: str, field: str) -> ClearMetricResult:
     """
     Blank out (set to null) a single metric for a single day, without
     touching that day's other metrics. The counterpart to log_daily_metric
@@ -423,9 +487,9 @@ def clear_metric(date: str, field: str) -> str:
             resting_heart_rate, weight_kg, workout_minutes, mood, water_ml.
 
     Returns:
-        A JSON string with "cleared" (the field name) and "row" (the
+        A ClearMetricResult with "cleared" (the field name) and "row" (the
         day's full current state after clearing). If no row exists yet
-        for that date, "row" is omitted and a "note" explains there was
+        for that date, "row" is null and "note" explains there was
         nothing to clear.
 
     Privacy note: this server and its SQLite file are entirely local, but
@@ -464,8 +528,8 @@ def clear_metric(date: str, field: str) -> str:
         ) from exc
 
     if row is None:
-        return json.dumps({"cleared": field, "note": f"No row exists for {day.isoformat()} — nothing to clear."})
-    return json.dumps({"cleared": field, "row": dict(row)}, indent=2)
+        return ClearMetricResult(cleared=field, note=f"No row exists for {day.isoformat()} — nothing to clear.")
+    return ClearMetricResult(cleared=field, row=DailyMetricsRow(**dict(row)))
 
 
 def main():

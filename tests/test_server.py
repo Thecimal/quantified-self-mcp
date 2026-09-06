@@ -8,7 +8,6 @@ touch ./data/health.db or affect each other.
 """
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 
@@ -36,23 +35,23 @@ def health_db(tmp_path, monkeypatch):
 
 
 def test_log_then_read_round_trip(health_db):
-    logged = json.loads(health_db.log_daily_metric(date="2026-01-01", steps=5000, mood=4))
-    assert logged["logged"] == {"steps": 5000, "mood": 4}
-    assert logged["row"]["steps"] == 5000
-    assert logged["row"]["mood"] == 4
+    logged = health_db.log_daily_metric(date="2026-01-01", steps=5000, mood=4)
+    assert logged.logged == {"steps": 5000, "mood": 4}
+    assert logged.row.steps == 5000
+    assert logged.row.mood == 4
 
-    read_back = json.loads(health_db.read_health_data(start_date="2026-01-01", end_date="2026-01-01"))
-    assert read_back["rows"][0]["steps"] == 5000
-    assert read_back["rows"][0]["mood"] == 4
+    read_back = health_db.read_health_data(start_date="2026-01-01", end_date="2026-01-01")
+    assert read_back.rows[0].steps == 5000
+    assert read_back.rows[0].mood == 4
 
 
 def test_log_daily_metric_does_not_clear_other_fields(health_db):
     health_db.log_daily_metric(date="2026-01-02", steps=8000)
     health_db.log_daily_metric(date="2026-01-02", mood=5)
-    row = json.loads(health_db.log_daily_metric(date="2026-01-02", water_ml=2000))["row"]
-    assert row["steps"] == 8000
-    assert row["mood"] == 5
-    assert row["water_ml"] == 2000
+    row = health_db.log_daily_metric(date="2026-01-02", water_ml=2000).row
+    assert row.steps == 8000
+    assert row.mood == 5
+    assert row.water_ml == 2000
 
 
 def test_log_daily_metric_rejects_out_of_range_value(health_db):
@@ -72,9 +71,9 @@ def test_log_daily_metric_rejects_bad_date(health_db):
 
 def test_clear_metric_blanks_only_the_given_field(health_db):
     health_db.log_daily_metric(date="2026-01-05", steps=9000, mood=3)
-    result = json.loads(health_db.clear_metric(date="2026-01-05", field="mood"))
-    assert result["row"]["mood"] is None
-    assert result["row"]["steps"] == 9000
+    result = health_db.clear_metric(date="2026-01-05", field="mood")
+    assert result.row.mood is None
+    assert result.row.steps == 9000
 
 
 def test_clear_metric_rejects_unknown_field(health_db):
@@ -83,9 +82,9 @@ def test_clear_metric_rejects_unknown_field(health_db):
 
 
 def test_clear_metric_on_a_date_with_no_row_reports_nothing_to_clear(health_db):
-    result = json.loads(health_db.clear_metric(date="2026-01-07", field="mood"))
-    assert "row" not in result
-    assert "note" in result
+    result = health_db.clear_metric(date="2026-01-07", field="mood")
+    assert result.row is None
+    assert result.note is not None
 
 
 def test_read_health_data_rejects_inverted_range(health_db):
@@ -122,6 +121,30 @@ def test_every_tool_carries_the_cloud_model_warning(health_db):
     assert tools, "expected at least one tool to check"
     for tool in tools:
         assert health_db.CLOUD_MODEL_WARNING.strip() in tool.__doc__
+
+
+def test_log_daily_metric_has_a_structured_output_schema_on_the_wire(health_db):
+    """Direct calls (used above) bypass FastMCP's protocol layer entirely,
+    so they can't confirm output_schema/structured_content actually reach
+    a client. Drive one real call through an in-memory fastmcp Client and
+    check the wire-level result: structured_content should be the typed
+    object itself (matching LogDailyMetricResult), not the previous
+    behavior of a JSON string wrapped in {"result": ...}.
+    """
+    from fastmcp import Client
+
+    async def _call():
+        async with Client(health_db.mcp) as client:
+            return await client.call_tool("log_daily_metric", {"date": "2026-01-09", "steps": 4200})
+
+    result = asyncio.run(_call())
+    assert result.structured_content["logged"] == {"steps": 4200}
+    assert result.structured_content["row"]["steps"] == 4200
+    assert result.structured_content["row"]["date"] == "2026-01-09"
+
+    tool = asyncio.run(health_db.mcp.get_tool("log_daily_metric"))
+    assert tool.output_schema is not None
+    assert tool.output_schema.get("properties", {}).keys() >= {"logged", "row"}
 
 
 def test_tool_annotations_reflect_read_write_behavior(health_db):
