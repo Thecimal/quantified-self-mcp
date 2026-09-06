@@ -18,6 +18,14 @@ quantified-self-init-db = "init_db:main"
 [tool.hatch.build.targets.wheel]
 include = ["server.py", "init_db.py", "logic.py"]
 
+[tool.pytest.ini_options]
+# asyncio_mode = "auto" lets async def test_* functions and fixtures run
+# without needing @pytest.mark.asyncio on every one — used by
+# tests/test_mcp_client_integration.py, which drives the server through a
+# real (in-memory) fastmcp.Client rather than calling tool functions
+# directly.
+asyncio_mode = "auto"
+
 [tool.ruff]
 line-length = 120
 
