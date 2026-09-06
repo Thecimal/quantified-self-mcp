@@ -7,6 +7,7 @@ These only exercise the framework-free helpers in logic.py, so they run
 without fastmcp installed — server.py itself is not imported here.
 """
 
+import logging
 import sqlite3
 import sys
 import threading
@@ -21,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from logic import (
     ADDED_COLUMNS,
     BUSY_TIMEOUT_MS,
+    MIGRATIONS,
+    SCHEMA_VERSION,
     connect_writable,
     default_data_dir,
     ensure_schema,
@@ -111,6 +114,77 @@ def test_ensure_schema_migrates_older_table_missing_new_columns():
     # Pre-existing row survives the migration, with new columns defaulting to NULL.
     row = conn.execute("SELECT steps, weight_kg FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
     assert row == (5000, None)
+
+
+def test_ensure_schema_sets_user_version_to_latest():
+    conn = sqlite3.connect(":memory:")
+    ensure_schema(conn)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+def test_ensure_schema_only_runs_each_migration_once():
+    """A second call shouldn't re-run any migration — mainly a guard
+    against a future migration that (unlike the current two) *isn't*
+    naturally idempotent, since user_version having already advanced is
+    the only thing that would stop it running again.
+    """
+    calls = []
+    conn = sqlite3.connect(":memory:")
+    patched = [
+        (version, description, lambda c, v=version, m=migrate: (calls.append(v), m(c))[1])
+        for version, description, migrate in MIGRATIONS
+    ]
+    original_migrations = MIGRATIONS[:]
+    MIGRATIONS[:] = patched
+    try:
+        ensure_schema(conn)
+        assert calls == [version for version, _, _ in original_migrations]
+        ensure_schema(conn)
+        assert calls == [version for version, _, _ in original_migrations]  # unchanged — nothing re-ran
+    finally:
+        MIGRATIONS[:] = original_migrations
+
+
+def test_ensure_schema_heals_version_for_a_pre_versioning_database():
+    """A database written by a release of this project from before schema
+    versioning existed has every column already, but user_version is
+    still SQLite's default of 0 (nothing ever set it). ensure_schema
+    should recognize the schema is actually current and "heal" the
+    version stamp, without erroring or duplicating any column.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        f"""
+        CREATE TABLE daily_metrics (
+            date TEXT PRIMARY KEY,
+            steps INTEGER,
+            sleep_hours REAL,
+            resting_heart_rate INTEGER,
+            {", ".join(f"{name} {sqltype}" for name, sqltype in ADDED_COLUMNS.items())}
+        );
+        """
+    )
+    conn.commit()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+
+    ensure_schema(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
+    assert set(ADDED_COLUMNS).issubset(columns)
+
+
+def test_ensure_schema_does_not_touch_a_database_from_a_newer_version(caplog):
+    conn = sqlite3.connect(":memory:")
+    ensure_schema(conn)
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    conn.commit()
+
+    with caplog.at_level(logging.WARNING, logger="quantified-self-mcp"):
+        ensure_schema(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION + 1
+    assert "newer than this version" in caplog.text
 
 
 def _conn_with_schema():

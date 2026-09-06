@@ -10,31 +10,31 @@ and unit-tested without installing fastmcp — see tests/test_logic.py.
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import sys
 import tempfile
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("quantified-self-mcp")
 
 HEALTH_SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_metrics (
     date TEXT PRIMARY KEY,
     steps INTEGER,
     sleep_hours REAL,
-    resting_heart_rate INTEGER,
-    weight_kg REAL,
-    workout_minutes INTEGER,
-    mood INTEGER,
-    water_ml INTEGER
+    resting_heart_rate INTEGER
 );
 """
 
 # Columns added after the original release. Kept separate from HEALTH_SCHEMA
 # (rather than just relying on CREATE TABLE) because CREATE TABLE IF NOT
 # EXISTS does nothing for a daily_metrics table that already exists from an
-# older version of this project — ensure_schema() below adds these to any
+# older version of this project — the v2 migration below adds these to any
 # such table so upgrading never requires deleting your database.
 ADDED_COLUMNS = {
     "weight_kg": "REAL",
@@ -42,6 +42,35 @@ ADDED_COLUMNS = {
     "mood": "INTEGER",
     "water_ml": "INTEGER",
 }
+
+
+def _migrate_v1_create_table(conn: sqlite3.Connection) -> None:
+    conn.executescript(HEALTH_SCHEMA)
+
+
+def _migrate_v2_add_weight_workout_mood_water(conn: sqlite3.Connection) -> None:
+    # Guarded by an existence check (rather than a bare ALTER TABLE) so this
+    # stays safe to run against a database that already has some or all of
+    # these columns from before schema versioning existed — see
+    # test_ensure_schema_heals_version_for_a_pre_versioning_database.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
+    for name, sqltype in ADDED_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {name} {sqltype}")
+
+
+# Ordered, versioned migrations, applied via SQLite's own PRAGMA user_version
+# (an integer stored in the database file itself — no separate migrations
+# table needed). Add new schema changes by appending a new (version,
+# description, function) entry here; never edit or remove an existing one,
+# even to fix a mistake, since a migration may have already run against a
+# real database — write a new migration to correct it instead.
+MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
+    (1, "create daily_metrics table", _migrate_v1_create_table),
+    (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
+]
+
+SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 # Guardrails for read_health_data (server.py).
 MAX_RANGE_DAYS = 3660  # ~10 years — a wider request is almost certainly a mistake
@@ -118,8 +147,24 @@ def connect_writable(db_path: Any) -> sqlite3.Connection:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create daily_metrics if it doesn't exist, and add any columns that
-    were introduced after the table may have first been created.
+    """Bring `conn`'s schema up to SCHEMA_VERSION, running whichever
+    migrations in MIGRATIONS haven't been applied yet.
+
+    Tracked via SQLite's own `PRAGMA user_version` — an integer stored in
+    the database file itself, so no separate migrations table is needed.
+    A brand-new database starts at 0, so every migration runs. A database
+    from before this versioning existed is also at 0 despite already
+    having some (or all) of these columns; each migration function is
+    itself idempotent specifically so re-running one against such a
+    database is always safe — see
+    test_ensure_schema_heals_version_for_a_pre_versioning_database.
+
+    A database with a *higher* version than this code knows about (opened
+    with an older release, after being upgraded by a newer one) is left
+    untouched rather than guessed at — the loop below only ever applies
+    migrations numbered above the current version, so this is naturally a
+    no-op, but a warning is logged since it likely means an upgrade of
+    this project itself is needed.
 
     Also switches the database to WAL journal mode (a no-op if it's a
     real file already in WAL mode, silently ignored for :memory: databases
@@ -128,16 +173,29 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     versa — the two only conflict if two writes land at the exact same
     instant, which busy_timeout above then covers.
 
-    Safe and cheap to call on every startup/import — CREATE TABLE IF NOT
-    EXISTS and the ALTER TABLE calls are both no-ops once already applied.
-    Requires a writable connection; commits before returning.
+    Safe and cheap to call on every startup/import — every migration is a
+    no-op once already applied, and user_version already at SCHEMA_VERSION
+    is the common case. Requires a writable connection; commits before
+    returning.
     """
     conn.execute("PRAGMA journal_mode = WAL")
-    conn.executescript(HEALTH_SCHEMA)
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
-    for name, sqltype in ADDED_COLUMNS.items():
-        if name not in existing:
-            conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {name} {sqltype}")
+    current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current_version > SCHEMA_VERSION:
+        logger.warning(
+            "Database schema version %d is newer than this version of quantified-self-mcp expects (%d); "
+            "leaving it as-is. You may need to upgrade quantified-self-mcp.",
+            current_version,
+            SCHEMA_VERSION,
+        )
+        return
+    for version, _description, migrate in MIGRATIONS:
+        if version <= current_version:
+            continue
+        migrate(conn)
+        # Not parameterized: PRAGMA doesn't accept bound parameters, and
+        # `version` is always one of our own MIGRATIONS entries, never
+        # user input.
+        conn.execute(f"PRAGMA user_version = {version}")
     conn.commit()
 
 
