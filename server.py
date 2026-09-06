@@ -179,6 +179,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger("quantified-self-mcp")
 
+# Field-level privacy: metrics listed here (comma-separated) are never
+# exposed by any tool, no matter how they're stored — read_health_data
+# always reports them as null (in both "rows" and "summary"), and the
+# "row" echoed back by log_daily_metric/clear_metric redacts them too, so
+# even the write tools' own responses can't leak a value back to the
+# model. The actual value is still written to and kept in the database
+# (so e.g. weight_kg can still be logged for your own records), just never
+# read back through the MCP tools. Unknown names are logged and ignored
+# rather than crashing the server, since a typo in this config shouldn't
+# take down the whole thing.
+def _parse_private_fields(raw: str) -> frozenset[str]:
+    names = {name.strip() for name in raw.split(",") if name.strip()}
+    unknown = names - set(METRIC_COLUMNS)
+    if unknown:
+        logger.warning(
+            "HEALTH_PRIVATE_FIELDS contains unknown field(s) %s; ignoring. Valid fields: %s",
+            sorted(unknown),
+            ", ".join(METRIC_COLUMNS),
+        )
+    return frozenset(names & set(METRIC_COLUMNS))
+
+
+PRIVATE_FIELDS = _parse_private_fields(os.environ.get("HEALTH_PRIVATE_FIELDS", ""))
+
+
+def _redact_private_fields(row: dict) -> dict:
+    """Return a copy of a daily_metrics row dict with any private field
+    forced to None, regardless of what's actually stored for it.
+    """
+    if not PRIVATE_FIELDS:
+        return row
+    return {k: (None if k in PRIVATE_FIELDS else v) for k, v in row.items()}
+
+
 # mask_error_details=True: an unexpected internal error (corrupt DB, disk
 # issue, etc.) is reduced to a generic message instead of leaking a raw
 # Python traceback — including local file paths — to whatever LLM is
@@ -322,6 +356,10 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
         - "summary": days_with_data plus avg/min/max for each metric, computed
           over *all* matching days even when "rows" is truncated
 
+    Any metric listed in the HEALTH_PRIVATE_FIELDS environment variable is
+    always reported as null here (in both "rows" and "summary"), regardless
+    of what's actually stored for it.
+
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
     to whatever model the calling client is configured with. If that
@@ -358,11 +396,14 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
 
     return ReadHealthDataResult(
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
-        rows=[DailyMetricsRow(**row) for row in returned_rows],
+        rows=[DailyMetricsRow(**_redact_private_fields(row)) for row in returned_rows],
         truncated=truncated,
         summary=HealthDataSummary(
             days_with_data=len(rows),
-            **{metric: MetricStats(**numeric_stats(rows, metric)) for metric in METRIC_COLUMNS},
+            **{
+                metric: (MetricStats() if metric in PRIVATE_FIELDS else MetricStats(**numeric_stats(rows, metric)))
+                for metric in METRIC_COLUMNS
+            },
         ),
     )
 
@@ -408,7 +449,9 @@ def log_daily_metric(
     Returns:
         A LogDailyMetricResult with "logged" (just the fields this call set)
         and "row" (the day's full current state across all metrics,
-        including any set previously).
+        including any set previously). Any field listed in
+        HEALTH_PRIVATE_FIELDS is always null in "row", regardless of what
+        was just written for it.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -462,7 +505,7 @@ def log_daily_metric(
             "Could not write to the health database — it may be locked by another process. Try again in a moment.",
         ) from exc
 
-    return LogDailyMetricResult(logged=provided, row=DailyMetricsRow(**dict(row)))
+    return LogDailyMetricResult(logged=provided, row=DailyMetricsRow(**_redact_private_fields(dict(row))))
 
 
 @mcp.tool(
@@ -490,7 +533,8 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
         A ClearMetricResult with "cleared" (the field name) and "row" (the
         day's full current state after clearing). If no row exists yet
         for that date, "row" is null and "note" explains there was
-        nothing to clear.
+        nothing to clear. Any field listed in HEALTH_PRIVATE_FIELDS is
+        always null in "row".
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -529,7 +573,7 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
 
     if row is None:
         return ClearMetricResult(cleared=field, note=f"No row exists for {day.isoformat()} — nothing to clear.")
-    return ClearMetricResult(cleared=field, row=DailyMetricsRow(**dict(row)))
+    return ClearMetricResult(cleared=field, row=DailyMetricsRow(**_redact_private_fields(dict(row))))
 
 
 def main():

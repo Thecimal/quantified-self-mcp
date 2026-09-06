@@ -147,6 +147,46 @@ def test_log_daily_metric_has_a_structured_output_schema_on_the_wire(health_db):
     assert tool.output_schema.get("properties", {}).keys() >= {"logged", "row"}
 
 
+def _import_server_with_private_fields(tmp_path, monkeypatch, private_fields):
+    """Like the health_db fixture, but also sets HEALTH_PRIVATE_FIELDS
+    before import, since PRIVATE_FIELDS is parsed once at module import
+    time. Not a fixture itself since most tests don't need this env var.
+    """
+    db_path = tmp_path / "health.db"
+    monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
+    monkeypatch.setenv("HEALTH_PRIVATE_FIELDS", private_fields)
+    sys.modules.pop("server", None)
+    import server
+
+    return server
+
+
+def test_read_health_data_redacts_private_fields(tmp_path, monkeypatch):
+    server = _import_server_with_private_fields(tmp_path, monkeypatch, "weight_kg,mood")
+    server.log_daily_metric(date="2026-01-10", steps=1000, weight_kg=70.5, mood=8)
+
+    result = server.read_health_data(start_date="2026-01-10", end_date="2026-01-10")
+    row = result.rows[0]
+    assert row.steps == 1000  # not private, visible as normal
+    assert row.weight_kg is None  # private, redacted regardless of what's stored
+    assert row.mood is None  # private, redacted regardless of what's stored
+    assert result.summary.steps.avg == 1000
+    assert result.summary.weight_kg.avg is None
+    assert result.summary.mood.max is None
+
+
+def test_log_daily_metric_redacts_private_field_in_echoed_row(tmp_path, monkeypatch):
+    server = _import_server_with_private_fields(tmp_path, monkeypatch, "weight_kg")
+    result = server.log_daily_metric(date="2026-01-11", weight_kg=80.0)
+    assert result.logged == {"weight_kg": 80.0}  # the caller's own input, already known to it
+    assert result.row.weight_kg is None  # but the current-state row still redacts it
+
+
+def test_unknown_private_field_name_is_ignored_not_fatal(tmp_path, monkeypatch):
+    server = _import_server_with_private_fields(tmp_path, monkeypatch, "not_a_real_field, steps")
+    assert server.PRIVATE_FIELDS == frozenset({"steps"})
+
+
 def test_tool_annotations_reflect_read_write_behavior(health_db):
     """MCP tool annotations are client-facing hints about a tool's effects
     (readOnlyHint/destructiveHint/idempotentHint/openWorldHint) — clients

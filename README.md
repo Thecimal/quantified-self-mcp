@@ -29,6 +29,8 @@ For maximum privacy, use a local LLM so everything stays on your machine.
 
 Cloud LLMs such as Claude can also be used. In that case, your database and MCP server remain local, but the data returned to the model may be sent to the cloud provider.
 
+If you'd rather some specific metrics never be sent to the model at all — even a local one — set `HEALTH_PRIVATE_FIELDS` to a comma-separated list of field names (e.g. `weight_kg,mood`). Those fields can still be logged normally, but every tool always reports them as null when reading data back, including in a `log_daily_metric` call's own response.
+
 ## Current functionality
 
 The server currently provides three tools:
