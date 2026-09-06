@@ -7,6 +7,15 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Added
+- `tests/test_logic.py`: real multi-threaded concurrency tests that hold
+  a write lock on one connection while a second writes, and that fire
+  several concurrent upserts at once — exercising WAL mode and
+  `busy_timeout` under actual contention instead of only checking their
+  pragma values.
+
+## [0.2.0] - 2026-09-06
+
 ### Fixed
 - `server.py` and `init_db.py` no longer default to storing `health.db`
   inside the installed package's own directory on a system-wide `pip

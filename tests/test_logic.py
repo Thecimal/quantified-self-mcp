@@ -9,6 +9,8 @@ without fastmcp installed — server.py itself is not imported here.
 
 import sqlite3
 import sys
+import threading
+import time
 from datetime import date
 from pathlib import Path
 
@@ -234,3 +236,101 @@ def test_dir_is_writable_false_when_path_is_actually_a_file(tmp_path):
     blocker = tmp_path / "not-a-directory"
     blocker.write_text("this occupies the path")
     assert _dir_is_writable(blocker) is False
+
+
+def test_busy_timeout_lets_a_blocked_writer_wait_for_a_concurrent_write(tmp_path):
+    """Exercises the exact contention scenario connect_writable/busy_timeout
+    are meant to handle: one writer (e.g. init_db.py --replace) holds the
+    write lock while a second (e.g. a concurrent log_daily_metric call)
+    tries to write at the same time. Without a real busy_timeout, the
+    second writer would fail immediately with 'database is locked'
+    instead of waiting — the existing pragma-value test doesn't actually
+    exercise contention, so it wouldn't catch a regression here.
+    """
+    db_path = tmp_path / "concurrent.db"
+    setup_conn = connect_writable(db_path)
+    ensure_schema(setup_conn)
+    setup_conn.close()
+
+    hold_seconds = 0.5
+    lock_acquired = threading.Event()
+    holder_errors = []
+
+    def hold_write_lock():
+        conn = connect_writable(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("INSERT INTO daily_metrics (date, steps) VALUES (?, ?)", ("2026-01-01", 1))
+            lock_acquired.set()
+            time.sleep(hold_seconds)
+            conn.commit()
+        except Exception as exc:  # pragma: no cover - surfaced via holder_errors
+            holder_errors.append(exc)
+        finally:
+            conn.close()
+
+    holder = threading.Thread(target=hold_write_lock)
+    holder.start()
+    assert lock_acquired.wait(timeout=2), "holder thread never acquired the write lock"
+
+    start = time.monotonic()
+    second_conn = connect_writable(db_path)
+    try:
+        upsert_metrics(second_conn, [{"date": "2026-01-02", "steps": 2}])
+    finally:
+        second_conn.close()
+    elapsed = time.monotonic() - start
+
+    holder.join(timeout=5)
+    assert not holder_errors, f"lock-holding thread raised: {holder_errors}"
+
+    # Genuinely waited for the first writer (proving busy_timeout works) —
+    # neither failed instantly nor slipped in before the lock was held.
+    assert elapsed >= hold_seconds * 0.6, (
+        f"second write returned in {elapsed:.2f}s — too fast to have "
+        "actually waited on the concurrent writer's lock"
+    )
+    assert elapsed < BUSY_TIMEOUT_MS / 1000, "second write took suspiciously close to the busy_timeout ceiling"
+
+    check_conn = sqlite3.connect(str(db_path))
+    rows = {r[0]: r[1] for r in check_conn.execute("SELECT date, steps FROM daily_metrics")}
+    check_conn.close()
+    assert rows == {"2026-01-01": 1, "2026-01-02": 2}
+
+
+def test_concurrent_upserts_from_multiple_threads_all_succeed(tmp_path):
+    """Simulates several near-simultaneous log_daily_metric-style calls
+    (e.g. Claude Desktop firing off a few tool calls in quick succession)
+    hitting the same database file. WAL mode plus busy_timeout should let
+    every write eventually land rather than a subset failing with
+    'database is locked'.
+    """
+    db_path = tmp_path / "concurrent_multi.db"
+    setup_conn = connect_writable(db_path)
+    ensure_schema(setup_conn)
+    setup_conn.close()
+
+    thread_count = 10
+    errors = []
+
+    def write_one(i):
+        conn = connect_writable(db_path)
+        try:
+            upsert_metrics(conn, [{"date": f"2026-02-{i + 1:02d}", "steps": i * 100}])
+        except Exception as exc:  # pragma: no cover - surfaced via errors
+            errors.append((i, exc))
+        finally:
+            conn.close()
+
+    threads = [threading.Thread(target=write_one, args=(i,)) for i in range(thread_count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, f"some concurrent writes failed: {errors}"
+
+    check_conn = sqlite3.connect(str(db_path))
+    count = check_conn.execute("SELECT COUNT(*) FROM daily_metrics").fetchone()[0]
+    check_conn.close()
+    assert count == thread_count
