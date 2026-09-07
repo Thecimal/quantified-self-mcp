@@ -58,6 +58,11 @@ Lets the LLM record any of the metrics above for a given day, without you touchi
 
 Blanks out a single metric for a single day, for undoing a bad `log_daily_metric` call (wrong date, wrong units, etc.) without needing to re-run `init_db.py`.
 
+It also exposes two read-only MCP **resources** (addressed by URI rather than invoked like a tool call, for reference data a client might fetch once and cache):
+
+* `health://metrics/schema` — each metric's valid range and whether it's currently private
+* `health://day/{date}` — one day's metrics, direct-addressed by date
+
 ## Installation
 
 ### Option A: from PyPI (recommended)

@@ -8,11 +8,13 @@ touch ./data/health.db or affect each other.
 """
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
 import pytest
-from fastmcp.exceptions import ToolError
+from fastmcp import Client
+from fastmcp.exceptions import ResourceError, ToolError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -121,6 +123,62 @@ def test_every_tool_carries_the_cloud_model_warning(health_db):
     assert tools, "expected at least one tool to check"
     for tool in tools:
         assert health_db.CLOUD_MODEL_WARNING.strip() in tool.__doc__
+
+
+def test_metrics_schema_reflects_bounds_and_privacy(tmp_path, monkeypatch):
+    server = _import_server_with_private_fields(tmp_path, monkeypatch, "weight_kg")
+    schema = {entry["name"]: entry for entry in server.metrics_schema()}
+    assert schema["steps"] == {"name": "steps", "min": 0, "max": 200_000, "label": "steps", "private": False}
+    assert schema["weight_kg"]["private"] is True
+    assert set(schema) == set(server.METRIC_COLUMNS)
+
+
+def test_day_snapshot_returns_redacted_data_for_a_logged_day(health_db):
+    health_db.log_daily_metric(date="2026-01-12", steps=7000, mood=6)
+    snapshot = health_db.day_snapshot("2026-01-12")
+    assert snapshot["date"] == "2026-01-12"
+    assert snapshot["steps"] == 7000
+    assert snapshot["mood"] == 6
+
+
+def test_day_snapshot_returns_all_nulls_for_a_day_with_no_data(health_db):
+    snapshot = health_db.day_snapshot("2026-01-13")
+    assert snapshot["date"] == "2026-01-13"
+    assert all(snapshot[m] is None for m in health_db.METRIC_COLUMNS)
+
+
+def test_day_snapshot_rejects_bad_date(health_db):
+    with pytest.raises(ResourceError):
+        health_db.day_snapshot("not-a-date")
+
+
+def test_resources_are_registered_and_readable_over_the_wire(health_db):
+    """Confirms both resources actually reach an MCP client: they're listed
+    (as a plain resource and a template, respectively) and reading them
+    returns valid JSON — this is also a regression test for a real bug
+    caught during development, where returning a Pydantic model directly
+    from a resource function crashed at read time because fastmcp's
+    resource path (unlike the tool path) doesn't serialize BaseModel
+    instances on its own.
+    """
+
+    async def _check():
+        async with Client(health_db.mcp) as client:
+            resources = await client.list_resources()
+            assert str(resources[0].uri) == "health://metrics/schema"
+
+            templates = await client.list_resource_templates()
+            assert templates[0].uriTemplate == "health://day/{date}"
+
+            schema_result = await client.read_resource("health://metrics/schema")
+            schema = json.loads(schema_result[0].text)
+            assert any(entry["name"] == "steps" for entry in schema)
+
+            day_result = await client.read_resource("health://day/2026-01-14")
+            day = json.loads(day_result[0].text)
+            assert day["date"] == "2026-01-14"
+
+    asyncio.run(_check())
 
 
 def test_log_daily_metric_has_a_structured_output_schema_on_the_wire(health_db):

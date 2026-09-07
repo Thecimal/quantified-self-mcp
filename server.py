@@ -12,6 +12,11 @@ Tools exposed:
 - clear_metric: blank out a single metric for a given day, undoing a bad
   log_daily_metric call
 
+Resources exposed (read-only, addressed by URI rather than invoked):
+- health://metrics/schema: valid range and privacy status for each metric
+- health://day/{date}: one day's metrics, equivalent to read_health_data
+  with start_date == end_date == date
+
 Reads from a local SQLite file under ./data/ (created by init_db.py — see
 README.md). This file makes no network calls, so nothing you log or read
 ever leaves your machine. read_health_data's connection is opened
@@ -38,13 +43,14 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fastmcp import FastMCP
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
 from logic import (
     BUSY_TIMEOUT_MS,
     MAX_ROWS_RETURNED,
+    METRIC_BOUNDS,
     connect_writable,
     default_data_dir,
     ensure_schema,
@@ -574,6 +580,78 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
     if row is None:
         return ClearMetricResult(cleared=field, note=f"No row exists for {day.isoformat()} — nothing to clear.")
     return ClearMetricResult(cleared=field, row=DailyMetricsRow(**_redact_private_fields(dict(row))))
+
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+#
+# Unlike the tools above, resources are read-only, side-effect-free, and
+# addressed by URI rather than invoked with arguments — the right shape for
+# reference data a client might want to read once and cache (the metric
+# schema) or fetch directly by a known key (a specific day), rather than
+# something that needs a tool call's request/response semantics.
+
+
+class MetricDefinition(BaseModel):
+    name: str
+    min: float
+    max: float
+    label: str
+    private: bool  # mirrors PRIVATE_FIELDS at the time this is read
+
+
+@mcp.resource(
+    "health://metrics/schema",
+    name="Metric schema",
+    description=(
+        "The full set of metrics this server tracks, with each one's valid "
+        "range (see logic.METRIC_BOUNDS) and whether it's currently "
+        "configured as private (see HEALTH_PRIVATE_FIELDS). Read this to "
+        "see accepted ranges up front, instead of discovering them one at "
+        "a time from log_daily_metric's invalid_metric_value errors."
+    ),
+    mime_type="application/json",
+)
+def metrics_schema() -> list[dict]:
+    return [
+        MetricDefinition(name=name, min=low, max=high, label=label, private=name in PRIVATE_FIELDS).model_dump()
+        for name, (low, high, label) in METRIC_BOUNDS.items()
+    ]
+
+
+@mcp.resource(
+    "health://day/{date}",
+    name="Single day snapshot",
+    description=(
+        "Read-only snapshot of one day's metrics, addressed directly by "
+        "date (YYYY-MM-DD) instead of a tool call. Equivalent to "
+        "read_health_data with start_date == end_date == date, including "
+        "the same field-level privacy redaction — a date with no data at "
+        "all still resolves, just with every field null, rather than "
+        "erroring."
+    ),
+    mime_type="application/json",
+)
+def day_snapshot(date: str) -> dict:
+    try:
+        day = parse_date(date, "date")
+    except ValueError as exc:
+        raise ResourceError(str(exc)) from exc
+
+    try:
+        with _readonly_connection(HEALTH_DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
+                (day.isoformat(),),
+            ).fetchone()
+    except sqlite3.Error as exc:
+        logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
+        raise ResourceError(f"Could not read the health database: {exc}") from exc
+
+    if row is None:
+        return DailyMetricsRow(date=day.isoformat()).model_dump()
+    return DailyMetricsRow(**_redact_private_fields(dict(row))).model_dump()
 
 
 def main():
