@@ -2,10 +2,18 @@
 init_db.py
 ==========
 Initializes the local SQLite database used by the Quantified Self MCP
-server (server.py), from a plain CSV file of health data.
+server (server.py), from a health-data export file.
 
 Usage:
     python init_db.py path/to/health.csv
+    python init_db.py path/to/export.xml            # Apple Health export
+    python init_db.py path/to/health.csv --source csv
+
+By default the source format is guessed from the file extension (--source
+auto, the default: .xml -> apple-health, anything else -> this project's
+own csv format below) — pass --source explicitly to override that guess.
+See import_adapters.py to add support for another export format; adding
+one there is all that's needed; nothing below has to change.
 
 By default the database is created at data/health.db next to this script
 if that's writable, or wherever the HEALTH_DB_PATH environment variable
@@ -35,7 +43,8 @@ untouched, rather than blanking them out. Pass --replace to clear the
 table first instead. Rows with a problem (bad date, non-numeric value,
 etc.) are skipped with a warning rather than aborting the whole import —
 the final line printed always tells you how many rows loaded vs. were
-skipped.
+skipped. All of this applies equally to non-CSV sources (see
+import_adapters.py); only the parsing of the source file itself differs.
 """
 
 from __future__ import annotations
@@ -47,6 +56,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from import_adapters import ADAPTERS, RowError, detect_adapter
 from logic import connect_writable, default_data_dir, ensure_schema, upsert_metrics, validate_metrics
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -68,10 +78,6 @@ CORE_METRIC_COLUMNS = ["steps", "sleep_hours", "resting_heart_rate"]
 OPTIONAL_COLUMNS = ["weight_kg", "workout_minutes", "mood", "water_ml"]
 
 DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y"]
-
-
-class RowError(ValueError):
-    """A single CSV row couldn't be parsed; the import continues without it."""
 
 
 def _normalize_date(raw: str) -> str:
@@ -149,7 +155,13 @@ _METRIC_PARSERS = {
 }
 
 
-def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
+def _load_csv_rows(csv_path: Path) -> tuple[list[dict], list[str], int]:
+    """This project's own CSV format, exactly as before this module split
+    out other adapters — unchanged so existing tests (and existing CSV
+    exports people already have from this project) keep working exactly
+    as they did. Returns (parsed_rows, present_columns, skipped) to match
+    the shape init_health_db needs regardless of which source it read.
+    """
     raw_rows, present_columns = _read_csv(csv_path)
 
     parsed_rows, skipped = [], 0
@@ -169,6 +181,35 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
         except RowError as exc:
             print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)
             skipped += 1
+    return parsed_rows, present_columns, skipped
+
+
+def init_health_db(source_path: Path, db_path: Path, replace: bool, source: str = "auto") -> None:
+    """Import source_path into db_path.
+
+    source picks which import_adapters.ADAPTERS entry reads source_path;
+    "auto" (the default) guesses from the file extension via
+    import_adapters.detect_adapter, "csv" is always this project's own
+    format (handled directly here — see _load_csv_rows), and any other
+    name must be a key in import_adapters.ADAPTERS.
+    """
+    adapter_name = detect_adapter(source_path) if source == "auto" else source
+
+    if adapter_name == "csv":
+        parsed_rows, present_columns, skipped = _load_csv_rows(source_path)
+    else:
+        if adapter_name not in ADAPTERS:
+            sys.exit(f"Error: unknown import source {adapter_name!r}. Available: csv, {', '.join(ADAPTERS)}")
+        adapted = ADAPTERS[adapter_name](source_path)
+        parsed_rows, skipped = [], adapted.skipped
+        for row in adapted.rows:
+            try:
+                validate_metrics({k: v for k, v in row.items() if k != "date"})
+                parsed_rows.append(row)
+            except ValueError as exc:
+                print(f"Skipping {source_path} date {row.get('date')}: {exc}", file=sys.stderr)
+                skipped += 1
+        present_columns = adapted.present_columns
 
     conn = connect_writable(db_path)
     try:
@@ -181,14 +222,32 @@ def init_health_db(csv_path: Path, db_path: Path, replace: bool) -> None:
 
     if present_columns:
         print(f"Loaded columns: {', '.join(present_columns)}")
-    print(f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped.")
+    print(
+        f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, "
+        f"{skipped} skipped. (source: {adapter_name})"
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Load a CSV export into the Quantified Self health SQLite database."
+        description="Load a health-data export into the Quantified Self health SQLite database."
     )
-    parser.add_argument("csv_path", type=Path, help="Path to the source health CSV file.")
+    parser.add_argument(
+        "source_path",
+        type=Path,
+        help="Path to the source export file (this project's CSV, or e.g. Apple Health's export.xml).",
+    )
+    parser.add_argument(
+        "--source",
+        choices=["auto", "csv", *ADAPTERS],
+        default="auto",
+        help=(
+            "Which import format source_path is. 'auto' (default) guesses "
+            "from the file extension: .xml -> apple-health, anything else "
+            "-> csv. See import_adapters.py for what each non-csv adapter "
+            "supports."
+        ),
+    )
     parser.add_argument(
         "--replace",
         action="store_true",
@@ -207,12 +266,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.csv_path.exists():
-        sys.exit(f"Error: CSV file not found at {args.csv_path}")
+    if not args.source_path.exists():
+        sys.exit(f"Error: source file not found at {args.source_path}")
 
     db_path = args.db_path.expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    init_health_db(args.csv_path, db_path, args.replace)
+    init_health_db(args.source_path, db_path, args.replace, args.source)
 
 
 if __name__ == "__main__":

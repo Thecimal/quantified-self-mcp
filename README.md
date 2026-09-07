@@ -113,6 +113,14 @@ metric later (even one from the original four) without disturbing what's
 already logged. An existing database is migrated automatically, so
 upgrading never requires deleting it.
 
+Have an Apple Health export instead of a CSV? Point `init_db.py` at its `export.xml` directly (Health app → your profile icon → Export All Health Data):
+
+```bash
+python init_db.py export.xml
+```
+
+The source format is guessed from the file extension by default; pass `--source csv` or `--source apple-health` to be explicit. Only a subset of what Apple Health can contain is mapped (steps, resting heart rate, weight, exercise minutes, water, and time asleep — see `import_adapters.py` for exactly which record types); there's no HealthKit equivalent for `mood`, so log that separately. Adding support for another export format (Fitbit, Google Fit, etc.) means writing one function in `import_adapters.py` — the rest of the pipeline doesn't need to change.
+
 ## Using it with LLMs
 
 Use it with any MCP-compatible client and model — local LLMs, Claude, or anything else that speaks MCP.
@@ -172,6 +180,7 @@ The LLM retrieves the relevant data through MCP and analyzes it.
 server.py       # MCP server
 logic.py        # Data validation and analysis
 init_db.py      # Database initialization
+import_adapters.py  # Non-CSV import sources (Apple Health, etc.)
 sample_data/    # Example health data
 fastmcp.json    # One-command install into Claude Desktop/Cursor/etc.
 CHANGELOG.md    # Release history

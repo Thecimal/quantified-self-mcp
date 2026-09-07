@@ -13,6 +13,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -230,6 +231,62 @@ def test_init_health_db_upserts_optional_columns_without_clobbering_others(tmp_p
     row = conn.execute("SELECT steps, mood, weight_kg FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
     conn.close()
     assert row == (8000, 4, 70.5)
+
+
+# ---------------------------------------------------------------------------
+# --source / import adapters (#17)
+# ---------------------------------------------------------------------------
+
+
+def test_init_health_db_auto_detects_apple_health_from_xml_extension(tmp_path):
+    export = tmp_path / "export.xml"
+    export.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<HealthData locale="en_US">\n'
+        '<Record type="HKQuantityTypeIdentifierStepCount" unit="count" '
+        'startDate="2026-01-15 08:00:00 -0500" endDate="2026-01-15 08:05:00 -0500" value="4000"/>\n'
+        "</HealthData>\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "health.db"
+
+    init_health_db(export, db_path, replace=False)  # source="auto" by default
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT steps FROM daily_metrics WHERE date = '2026-01-15'").fetchone()
+    conn.close()
+    assert row == (4000,)
+
+
+def test_init_health_db_explicit_source_overrides_extension_guess(tmp_path):
+    # A .csv file force-read as apple-health should fail to parse as XML
+    # rather than silently falling back to the CSV reader.
+    csv_path = _write_csv(tmp_path, ["date", "steps"], [["2026-01-01", "8000"]])
+    db_path = tmp_path / "health.db"
+    with pytest.raises(ET.ParseError):
+        init_health_db(csv_path, db_path, replace=False, source="apple-health")
+
+
+def test_cli_source_flag_imports_an_apple_health_export(tmp_path):
+    export = tmp_path / "export.xml"
+    export.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<HealthData locale="en_US">\n'
+        '<Record type="HKQuantityTypeIdentifierStepCount" unit="count" '
+        'startDate="2026-01-15 08:00:00 -0500" endDate="2026-01-15 08:05:00 -0500" value="4000"/>\n'
+        "</HealthData>\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "health.db"
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "init_db.py"), str(export), "--db-path", str(db_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "source: apple-health" in result.stdout
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT steps FROM daily_metrics WHERE date = '2026-01-15'").fetchone()
+    conn.close()
+    assert row == (4000,)
 
 
 # ---------------------------------------------------------------------------
