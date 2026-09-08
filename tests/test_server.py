@@ -168,7 +168,7 @@ def test_resources_are_registered_and_readable_over_the_wire(health_db):
             assert str(resources[0].uri) == "health://metrics/schema"
 
             templates = await client.list_resource_templates()
-            assert templates[0].uriTemplate == "health://day/{date}"
+            assert templates[0].uri_template == "health://day/{date}"
 
             schema_result = await client.read_resource("health://metrics/schema")
             schema = json.loads(schema_result[0].text)
@@ -281,10 +281,11 @@ def test_server_tools_work_end_to_end_against_an_encrypted_database(tmp_path, mo
 
 def test_tool_annotations_reflect_read_write_behavior(health_db):
     """MCP tool annotations are client-facing hints about a tool's effects
-    (readOnlyHint/destructiveHint/idempotentHint/openWorldHint) — clients
-    can use these to, e.g., ask for confirmation before a destructive call.
-    Assert they match what each tool actually does, not just that they're
-    present, so a future behavior change can't silently leave stale hints.
+    (read_only_hint/destructive_hint/idempotent_hint/open_world_hint) —
+    clients can use these to, e.g., ask for confirmation before a
+    destructive call. Assert they match what each tool actually does, not
+    just that they're present, so a future behavior change can't silently
+    leave stale hints.
     fastmcp's get_tool is async; there's no running event loop in a plain
     pytest test, so asyncio.run drives it here rather than pulling in
     pytest-asyncio for a single call site.
@@ -292,15 +293,15 @@ def test_tool_annotations_reflect_read_write_behavior(health_db):
     get_tool = lambda name: asyncio.run(health_db.mcp.get_tool(name))  # noqa: E731
 
     read_tool = get_tool("read_health_data")
-    assert read_tool.annotations.readOnlyHint is True
-    assert read_tool.annotations.openWorldHint is False
+    assert read_tool.annotations.read_only_hint is True
+    assert read_tool.annotations.open_world_hint is False
 
     log_tool = get_tool("log_daily_metric")
-    assert log_tool.annotations.readOnlyHint is False
-    assert log_tool.annotations.destructiveHint is False  # upserts, never drops data
-    assert log_tool.annotations.idempotentHint is True
+    assert log_tool.annotations.read_only_hint is False
+    assert log_tool.annotations.destructive_hint is False  # upserts, never drops data
+    assert log_tool.annotations.idempotent_hint is True
 
     clear_tool = get_tool("clear_metric")
-    assert clear_tool.annotations.readOnlyHint is False
-    assert clear_tool.annotations.destructiveHint is True  # blanks out a value
-    assert clear_tool.annotations.idempotentHint is True
+    assert clear_tool.annotations.read_only_hint is False
+    assert clear_tool.annotations.destructive_hint is True  # blanks out a value
+    assert clear_tool.annotations.idempotent_hint is True

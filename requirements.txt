@@ -1,2 +1,2 @@
-fastmcp>=3.0,<4.0
-pydantic>=2.0,<3.0
+fastmcp>=4.0.3,<5.0
+pydantic>=2.13.5,<3.0
