@@ -25,7 +25,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Application source. init_db.py and sample_data are included so the
 # server can be seeded with example data inside the container.
-COPY server.py init_db.py logic.py ./
+# import_adapters.py is required by init_db.py (it's not optional glue —
+# init_db.py imports from it directly) for any --source, not just
+# apple-health, so it has to ship alongside the other three .py files.
+COPY server.py init_db.py logic.py import_adapters.py ./
 COPY sample_data ./sample_data
 
 # health.db lives here by default (see server.py). Point it at Glama's

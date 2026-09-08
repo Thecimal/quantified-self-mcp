@@ -5,7 +5,14 @@
 
 version: 2
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  # requirements.txt / requirements-dev.txt / pyproject.toml
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  # actions/checkout, actions/setup-python, pypa/gh-action-pypi-publish
+  # (.github/workflows/ci.yml and publish.yml)
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
       interval: "weekly"

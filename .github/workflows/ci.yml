@@ -33,6 +33,9 @@ jobs:
       - name: Check init_db.py syntax
         run: python -m py_compile init_db.py && echo "init_db.py OK"
 
+      - name: Check import_adapters.py syntax
+        run: python -m py_compile import_adapters.py && echo "import_adapters.py OK"
+
       - name: Test database initialization
         run: |
           python init_db.py sample_data/health_sample.csv
@@ -55,4 +58,4 @@ jobs:
       - name: Verify wheel contains all required modules
         run: |
           pip install --force-reinstall dist/*.whl
-          python -c "import server, init_db, logic; print('wheel contents OK')"
+          python -c "import server, init_db, logic, import_adapters; print('wheel contents OK')"

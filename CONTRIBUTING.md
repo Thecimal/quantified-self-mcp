@@ -32,13 +32,33 @@ cd quantified-self-mcp
 Create and activate your development environment according to the installation
 instructions in the README.
 
-Install the required dependencies:
+Install the development dependencies (this also pulls in `requirements.txt`,
+plus `pytest`, `ruff`, and the other tools needed to actually run the checks
+below — `pip install -r requirements.txt` alone is not enough to develop or
+test the project):
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
-Run the available tests before submitting changes.
+Run the test suite:
+
+```bash
+pytest
+```
+
+Run the linter (CI runs this too — a pull request won't pass CI if this
+doesn't):
+
+```bash
+ruff check .
+```
+
+To try the server against real sample data, generate or regenerate it with
+`python sample_data/generate_sample_data.py` (see that script's docstring —
+running it with no arguments reproduces the checked-in sample files exactly,
+so this is safe to run any time), then follow the "Installation" steps in
+the README.
 
 ## Project Principles
 
@@ -68,12 +88,24 @@ Do not commit:
 
 Use synthetic or anonymized sample data for tests and examples.
 
+### Extending Import Support
+
+Adding support for a new health-data export format (Fitbit, Google Fit,
+etc.) doesn't need changes anywhere else: write one function in
+`import_adapters.py` matching the existing `adapt_apple_health` pattern,
+and register it in `ADAPTERS`. `init_db.py`'s CLI, and the
+validate/upsert pipeline it shares with every adapter, pick it up
+automatically.
+
 ### Data Safety
 
-Contributors should not introduce unexpected modification of user data.
-
-Any future write functionality should require explicit discussion, documentation,
-and security review.
+The server already includes write tools (`log_daily_metric`, `clear_metric`),
+so this isn't hypothetical: changes to how they validate input, handle
+errors, or decide what a tool call is allowed to touch need real care.
+Don't broaden what a tool can write or read without a clear reason, and
+call it out explicitly in the pull request description. New *kinds* of
+write access (e.g. deleting rather than clearing/upserting) should be
+discussed in an issue first.
 
 ## Making Changes
 
