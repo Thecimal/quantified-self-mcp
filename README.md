@@ -21,28 +21,29 @@ Built with **Python, FastMCP, and SQLite**, it works with both **local LLMs and 
 Quantified Self MCP connects an AI agent to your personal health data through the **Model Context Protocol (MCP)**.
 
 ```text
-                    ┌──────────────────────┐
-                    │      AI Agent        │
-                    │                      │
-                    │   Local LLM          │
-                    │        or            │
-                    │   Cloud LLM          │
-                    └──────────┬───────────┘
-                               │
-                               │ MCP
-                               ▼
-                    ┌──────────────────────┐
-                    │ Quantified Self MCP  │
-                    │                      │
-                    │      FastMCP         │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │    Local SQLite      │
-                    │                      │
-                    │    Health Data       │
-                    └──────────────────────┘
+                 ┌─────────────────────┐
+                 │      AI Agent       │
+                 │                     │
+                 │ Local LLM / Cloud   │
+                 └──────────▲──────────┘
+                            │
+                     MCP tool result
+                            │
+                     MCP tool call
+                            │
+                 ┌──────────┴──────────┐
+                 │ Quantified Self MCP │
+                 │      FastMCP        │
+                 │       LOCAL        │
+                 └──────────▲──────────┘
+                            │
+                       SQL / data
+                            │
+                 ┌──────────┴──────────┐
+                 │    Local SQLite     │
+                 │     Health Data     │
+                 │       LOCAL         │
+                 └─────────────────────┘
 ```
 
 The MCP server does **not** require a specific AI provider.
