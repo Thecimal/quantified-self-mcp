@@ -1,110 +1,258 @@
 # Quantified Self MCP
-*Try it Live!*
 
-[![Glama MCP Server](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badge)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
+> **Your health data. Your AI. Your machine.**
 
+[![CI](https://github.com/Thecimal/quantified-self-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Thecimal/quantified-self-mcp/actions)
+[![PyPI](https://img.shields.io/pypi/v/quantified-self-mcp)](https://pypi.org/project/quantified-self-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/quantified-self-mcp)](https://pypi.org/project/quantified-self-mcp/)
+[![License](https://img.shields.io/github/license/Thecimal/quantified-self-mcp)](LICENSE)
+[![Glama](https://img.shields.io/badge/Glama-A%20%2F%20A%20%2F%20A-blue)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
 
+**Quantified Self MCP** is a privacy-first **Model Context Protocol (MCP) server** that gives AI agents controlled access to your personal **health data** stored locally.
 
-**A private, local-first MCP server that lets LLMs access your personal health data.**
+Built with **Python, FastMCP, and SQLite**, it works with both **local LLMs and cloud-based LLMs**. You choose where your AI runs.
 
-Quantified Self MCP connects an LLM to health data stored on your computer using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+**[Try it on Glama →](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)**
 
-It is **not limited to Claude**. It can work with local LLMs as well as cloud-based models that support MCP.
+---
 
-## Privacy first
+## What Is It?
 
-Your health data is stored locally in SQLite, and the MCP server runs entirely on your computer.
+Quantified Self MCP connects an AI agent to your personal health data through the **Model Context Protocol (MCP)**.
+
+```text
+                    ┌──────────────────────┐
+                    │      AI Agent        │
+                    │                      │
+                    │   Local LLM          │
+                    │        or            │
+                    │   Cloud LLM          │
+                    └──────────┬───────────┘
+                               │
+                               │ MCP
+                               ▼
+                    ┌──────────────────────┐
+                    │ Quantified Self MCP  │
+                    │                      │
+                    │      FastMCP         │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │    Local SQLite      │
+                    │                      │
+                    │    Health Data       │
+                    └──────────────────────┘
+```
+
+The MCP server does **not** require a specific AI provider.
+
+You can run the entire AI stack locally, or connect the server to an online model when you prefer.
+
+---
+
+## 🏠 Local AI or ☁️ Cloud AI
+
+The important distinction is between the **MCP server** and the **AI model**.
+
+### Fully Local
 
 ```text
 Your Health Data
-      ↓
- Local SQLite
-      ↓
-  MCP Server
-      ↓
-   LLM
+       ↓
+Local SQLite
+       ↓
+Quantified Self MCP
+       ↓
+Local AI Agent
+       ↓
+Local LLM
 ```
 
-For maximum privacy, use a local LLM so everything stays on your machine.
+With a local MCP-compatible agent and local LLM, your health data and AI inference can remain on your machine.
 
-Cloud LLMs such as Claude can also be used. In that case, your database and MCP server remain local, but the data returned to the model may be sent to the cloud provider.
+### Cloud LLM
 
-If you'd rather some specific metrics never be sent to the model at all — even a local one — set `HEALTH_PRIVATE_FIELDS` to a comma-separated list of field names (e.g. `weight_kg,mood`). Those fields can still be logged normally, but every tool always reports them as null when reading data back, including in a `log_daily_metric` call's own response.
+```text
+Your Health Data
+       ↓
+Local SQLite
+       ↓
+Quantified Self MCP
+       ↓
+AI Agent
+       ↓
+Cloud LLM
+```
 
-### Database encryption
+You can also connect the same MCP server to a hosted model.
 
-`health.db` is, by default, an ordinary unencrypted SQLite file — readable by anything with filesystem access to it, same as any other file on your disk. For most people on a single-user machine, **OS-level full-disk (or at least full-volume) encryption is the right baseline and needs no setup here**: FileVault on macOS, BitLocker on Windows, or LUKS on Linux, all of which are likely already available and possibly already on. That protects `health.db` along with everything else on the machine, at rest, with no code involved.
+In that setup, your **database and MCP server remain local**, while data returned by MCP tools may be sent to the cloud model provider.
 
-If you want the database file itself encrypted regardless of that — say, it might get synced to a cloud drive, or the machine is shared — set the `HEALTH_DB_PASSPHRASE` environment variable and install the optional `sqlcipher3-binary` package (`pip install sqlcipher3-binary`, or `pip install quantified-self-mcp[encryption]`). With both in place, every tool and `init_db.py` transparently read and write through [SQLCipher](https://www.zetetic.net/sqlcipher/) instead of plain SQLite — nothing else changes. Leave `HEALTH_DB_PASSPHRASE` unset (the default) and none of this applies; `sqlcipher3-binary` isn't a required dependency.
+**The choice is yours.**
 
-A few things worth knowing about this mode:
+Quantified Self MCP does not lock you into Claude, OpenAI, or any other model provider.
 
-* **There's no recovery if you lose the passphrase.** SQLCipher doesn't support that by design — losing it means losing the database.
-* **The passphrase has to be available wherever the server or `init_db.py` runs** — typically in the `env` block of your MCP client's config alongside `HEALTH_DB_PATH` (see below). Anywhere that config lives unencrypted, the passphrase does too; this protects the database file at rest, not against something with access to that config.
-* Setting `HEALTH_DB_PASSPHRASE` without `sqlcipher3-binary` installed fails loudly and immediately, rather than silently falling back to a plaintext database — you'll get a clear error telling you to install it or unset the variable.
+---
 
-## Current functionality
+## 🔒 Privacy First
 
-The server currently provides three tools:
+Your health data is stored locally in SQLite, and the MCP server runs on your machine.
 
-**`read_health_data`** — read-only
+The server itself does not require a cloud database, account, or hosted data store.
 
-It can access:
+For maximum privacy, use a **local LLM** so the entire pipeline can remain on your machine.
 
-* Daily steps
-* Sleep duration
-* Resting heart rate
-* Weight (kg)
-* Workout minutes
-* Mood (1–10 scale)
-* Water intake (ml)
-* Data for a selected date range
+```text
+┌───────────────────────────────────┐
+│          YOUR MACHINE             │
+│                                   │
+│  Health Data                      │
+│       ↓                           │
+│  Local SQLite                     │
+│       ↓                           │
+│  Quantified Self MCP              │
+│       ↓                           │
+│  Local AI Agent                   │
+│       ↓                           │
+│  Local LLM                        │
+│                                   │
+└───────────────────────────────────┘
+```
 
-Every field is optional per day — log just the metrics you actually track.
+### Optional Private Fields
 
-**`log_daily_metric`** — write
-
-Lets the LLM record any of the metrics above for a given day, without you touching a CSV or SQLite directly. Pass just the fields you're logging (e.g. only `mood`) and the rest of that day's data is left exactly as it was — nothing is ever cleared, only set. Values are checked against generous sanity bounds before being written (e.g. `mood` 1–10, `resting_heart_rate` 20–250 bpm) — this catches unit mix-ups and typos, not "abnormal" readings. It's a plain per-date upsert into `daily_metrics`; there's no way for it (or anything else in this server) to run arbitrary SQL. The same bounds are applied to CSV imports via `init_db.py`, so a bad value there is skipped with a warning rather than silently loaded.
-
-**`clear_metric`** — write
-
-Blanks out a single metric for a single day, for undoing a bad `log_daily_metric` call (wrong date, wrong units, etc.) without needing to re-run `init_db.py`.
-
-It also exposes two read-only MCP **resources** (addressed by URI rather than invoked like a tool call, for reference data a client might fetch once and cache):
-
-* `health://metrics/schema` — each metric's valid range and whether it's currently private
-* `health://day/{date}` — one day's metrics, direct-addressed by date
-
-## Installation
-
-### Option A: from PyPI (recommended)
+If specific metrics should never be returned to the model, configure:
 
 ```bash
-pip install quantified-self-mcp
+HEALTH_PRIVATE_FIELDS=weight_kg,mood
 ```
 
-This installs two commands: `quantified-self-mcp` (the server itself) and
-`quantified-self-init-db` (the CSV loader below). By default both store the
-database in a per-user data directory (e.g. `~/.local/share/quantified-self-mcp/`
-on Linux, `~/Library/Application Support/quantified-self-mcp/` on macOS,
-`%APPDATA%\quantified-self-mcp\` on Windows) — this is a system-wide `pip
-install`, so the location pip installed the package to usually isn't
-writable, and both commands detect that and fall back automatically. Point
-them somewhere else with the `HEALTH_DB_PATH` environment variable (read
-by both), or pass `--db-path` to `quantified-self-init-db` directly.
+Private fields can still be stored and logged, but MCP read operations return them as `null`.
 
-Initialize the database (using the default per-user location):
+This gives you another layer of control over which health metrics an AI agent can access.
+
+---
+
+## ❤️ What Can It Track?
+
+Quantified Self MCP currently supports:
+
+* 👟 Daily steps
+* 😴 Sleep duration
+* ❤️ Resting heart rate
+* ⚖️ Weight
+* 🏋️ Workout minutes
+* 🙂 Mood
+* 💧 Water intake
+
+Every metric is optional, so you can track only the measurements you actually use.
+
+---
+
+## 💬 What Can You Ask?
+
+Once connected to an MCP-compatible AI agent, you can ask questions naturally.
+
+For example:
+
+```text
+How has my sleep changed over the last 30 days?
+```
+
+```text
+What was my average step count this week?
+```
+
+```text
+Show me my resting heart rate trend.
+```
+
+```text
+How much water did I drink on average this month?
+```
+
+```text
+What patterns do you see in my recent health data?
+```
+
+You can also log information through the AI agent:
+
+```text
+Log 7.5 hours of sleep for today.
+```
+
+Or correct a mistake:
+
+```text
+Clear today's mood entry.
+```
+
+---
+
+## 🧠 MCP Tools
+
+The server currently provides three MCP tools:
+
+| Tool               | Purpose                                              |
+| ------------------ | ---------------------------------------------------- |
+| `read_health_data` | Read health metrics for a selected date range        |
+| `log_daily_metric` | Record one or more health metrics for a specific day |
+| `clear_metric`     | Clear a single metric without affecting other data   |
+
+The server also exposes read-only MCP resources for health metric schemas and individual days.
+
+All data operations are scoped to the supported health metrics. The server does not expose arbitrary SQL execution to the model.
+
+---
+
+## 📥 Import Your Health Data
+
+You can initialize the local database from CSV data.
 
 ```bash
 quantified-self-init-db sample_data/health_sample.csv
 ```
 
-(No sample CSV handy from a `pip install`? Grab it from the repo:
-`curl -O https://raw.githubusercontent.com/Thecimal/quantified-self-mcp/main/sample_data/health_sample.csv`)
+The supported health fields include:
 
-### Option B: from source
+```text
+date
+steps
+sleep_hours
+resting_heart_rate
+weight_kg
+workout_minutes
+mood
+water_ml
+```
 
-Use this if you want to read/modify the code, or run the test suite.
+You can also import an **Apple Health export**:
+
+```bash
+quantified-self-init-db export.xml
+```
+
+The importer maps supported Apple Health records into the local database.
+
+---
+
+## ⚡ Installation
+
+### PyPI
+
+```bash
+pip install quantified-self-mcp
+```
+
+This installs:
+
+```text
+quantified-self-mcp
+quantified-self-init-db
+```
+
+### From Source
 
 ```bash
 git clone https://github.com/Thecimal/quantified-self-mcp.git
@@ -112,111 +260,251 @@ cd quantified-self-mcp
 
 python3 -m venv .venv
 source .venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
-Initialize the database:
+### Docker
 
 ```bash
-python init_db.py sample_data/health_sample.csv
+docker build -t quantified-self-mcp .
 ```
 
-CSV columns: `date` is the only one required; `steps, sleep_hours,
-resting_heart_rate, weight_kg, workout_minutes, mood, water_ml` are all
-read only if present — include any subset of them. Re-running `init_db.py`
-upserts by date, and a CSV that omits a column leaves that column's
-existing values alone rather than clearing them, so you can add a new
-metric later (even one from the original four) without disturbing what's
-already logged. An existing database is migrated automatically, so
-upgrading never requires deleting it.
+The included Docker configuration can be used for containerized MCP deployments, including Glama.
 
-Have an Apple Health export instead of a CSV? Point `init_db.py` at its `export.xml` directly (Health app → your profile icon → Export All Health Data):
+---
+
+## 🚀 Quick Start
+
+### 1. Install
 
 ```bash
-python init_db.py export.xml
+pip install quantified-self-mcp
 ```
 
-The source format is guessed from the file extension by default; pass `--source csv` or `--source apple-health` to be explicit. Only a subset of what Apple Health can contain is mapped (steps, resting heart rate, weight, exercise minutes, water, and time asleep — see `import_adapters.py` for exactly which record types); there's no HealthKit equivalent for `mood`, so log that separately. Adding support for another export format (Fitbit, Google Fit, etc.) means writing one function in `import_adapters.py` — the rest of the pipeline doesn't need to change.
-
-`sample_data/health_sample.csv` and `sample_data/apple_health_sample.xml` — used above and in CI — describe the same 30 fictional days in each format, generated by `sample_data/generate_sample_data.py`. Running that script with no arguments regenerates both files byte-for-byte (it's seeded, not random each run); pass `--seed`, `--days`, or `--start-date` to get a different or longer dataset instead, without touching what's checked in.
-
-## Using it with LLMs
-
-Use it with any MCP-compatible client and model — local LLMs, Claude, or anything else that speaks MCP.
-
-### Claude Desktop
-
-**If you installed from source**, one command, using the included `fastmcp.json`:
+### 2. Load your health data
 
 ```bash
-fastmcp install claude-desktop
+quantified-self-init-db your-health-data.csv
 ```
 
-This registers the server in Claude Desktop's config, and has `uv` manage an isolated environment with this project's dependencies (no need to have already run `pip install -r requirements.txt` first) — restart Claude Desktop afterwards and look for the 🔨 icon to confirm it loaded.
+### 3. Connect the MCP server
 
-**If you installed via `pip install quantified-self-mcp`**, edit the config file directly instead — `fastmcp install` expects a source checkout, not a pip package. Find `command` by running `which quantified-self-mcp` (macOS/Linux) or `where quantified-self-mcp` (Windows), then add:
+Connect Quantified Self MCP to an MCP-compatible AI agent.
 
-```json
-{
-  "mcpServers": {
-    "quantified-self": {
-      "command": "/absolute/path/from/which/quantified-self-mcp",
-      "env": {
-        "HEALTH_DB_PATH": "/absolute/path/to/health.db"
-      }
-    }
-  }
-}
-```
+### 4. Choose your model
 
-Set `HEALTH_DB_PATH` here to match whatever `--db-path` you used when running `quantified-self-init-db` — otherwise the server falls back to its own default location and won't see the data you just loaded.
+Use either:
 
-into the same config file the source-install instructions above point to (**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`, **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`, **Linux**: `~/.config/Claude/claude_desktop_config.json`). Restart Claude Desktop afterwards.
+* **A local LLM**
+* **A cloud-based LLM**
 
-### Other MCP clients (Cursor, Claude Code, Gemini CLI, etc.)
-
-```bash
-fastmcp install cursor        # or: claude-code, gemini-cli, goose
-```
-
-Any client not directly supported by `fastmcp install` can still use standard MCP JSON config, generated the same way:
-
-```bash
-fastmcp install mcp-json fastmcp.json
-```
-
-Paste the output into that client's config file under its `mcpServers` key.
-
-### Try it
-
-> How has my sleep changed over the last 30 days?
-
-The LLM retrieves the relevant data through MCP and analyzes it.
-
-## Project structure
+### 5. Ask your health data questions
 
 ```text
-server.py       # MCP server
-logic.py        # Data validation and analysis
-init_db.py      # Database initialization
-import_adapters.py  # Non-CSV import sources (Apple Health, etc.)
-sample_data/    # Example health data (see generate_sample_data.py)
-fastmcp.json    # One-command install into Claude Desktop/Cursor/etc.
-CHANGELOG.md    # Release history
+How has my sleep changed over the last 30 days?
 ```
 
-## Limitations
+The AI agent retrieves the relevant health data through MCP and analyzes it.
 
-**Single machine only, by design.** The database is a plain SQLite file on disk — there's no sync, no server component, no accounts. That's the same choice that keeps your data private: nothing here is built to talk to a network. If you use this on more than one computer, each one has its own independent `data/health.db`; nothing here merges them. Copying the file yourself (e.g. via a synced folder) works but isn't something this project manages or is tested against.
+---
 
-**`pip install` default database location.** Both commands store `health.db` in a per-user data directory by default (see [Installation](#installation) above), not your current working directory. Use `HEALTH_DB_PATH` (read by both `quantified-self-mcp` and `quantified-self-init-db`) or `quantified-self-init-db`'s `--db-path` flag if you'd rather point it somewhere else, e.g. `~/quantified-self/health.db`.
+## 🔌 MCP Client Compatibility
 
-## Philosophy
+Quantified Self MCP uses the standard **Model Context Protocol**, so the server is designed to work with MCP-compatible clients and models rather than being tied to a single AI application.
 
-**Your data stays yours.**
+The project includes configuration for clients supported by FastMCP, and standard MCP configuration can be generated for other compatible clients.
 
-Keep your personal data local, give the LLM controlled access, and choose whether the model runs locally or in the cloud.
+For local AI setups, pair the server with an MCP-compatible client and a local LLM runtime.
 
-## License
+For example:
 
-MIT
+```text
+Local LLM
+   +
+MCP-compatible Agent
+   +
+Quantified Self MCP
+```
+
+This allows the complete AI workflow to remain local.
+
+---
+
+## 🏗️ Architecture
+
+```text
+                         ┌────────────────────┐
+                         │      AI Agent      │
+                         └─────────┬──────────┘
+                                   │
+                              MCP Protocol
+                                   │
+                                   ▼
+                         ┌────────────────────┐
+                         │ Quantified Self    │
+                         │       MCP          │
+                         │                    │
+                         │      FastMCP       │
+                         └─────────┬──────────┘
+                                   │
+                                   ▼
+                         ┌────────────────────┐
+                         │    Local SQLite    │
+                         │                    │
+                         │    Health Data     │
+                         └────────────────────┘
+```
+
+The **AI model and the MCP server are separate components**.
+
+This means you can change the AI model without changing how your health data is stored or exposed.
+
+---
+
+## 🛠️ Technology
+
+| Component        | Technology             |
+| ---------------- | ---------------------- |
+| Language         | Python                 |
+| Protocol         | Model Context Protocol |
+| MCP Framework    | FastMCP                |
+| Database         | SQLite                 |
+| Containerization | Docker                 |
+| CI               | GitHub Actions         |
+| Package          | PyPI                   |
+
+---
+
+## 🧪 Development
+
+Clone the repository:
+
+```bash
+git clone https://github.com/Thecimal/quantified-self-mcp.git
+cd quantified-self-mcp
+```
+
+Create a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+Run tests:
+
+```bash
+pytest
+```
+
+Build the package:
+
+```bash
+python -m build
+```
+
+GitHub Actions validates the project in a clean environment.
+
+---
+
+## 📁 Project Structure
+
+```text
+quantified-self-mcp/
+├── .github/
+│   └── workflows/
+├── sample_data/
+├── tests/
+├── Dockerfile
+├── fastmcp.json
+├── glama.json
+├── init_db.py
+├── logic.py
+├── import_adapters.py
+├── server.py
+├── pyproject.toml
+├── requirements.txt
+├── requirements-dev.txt
+├── SECURITY.md
+├── CONTRIBUTING.md
+├── LICENSE
+└── README.md
+```
+
+---
+
+## 🛡️ Security
+
+Health information is sensitive personal data.
+
+Never commit:
+
+* Personal health records
+* Private SQLite databases
+* API keys
+* Passwords
+* Authentication tokens
+* Other sensitive personal information
+
+For security vulnerabilities, please follow the instructions in [SECURITY.md](SECURITY.md).
+
+---
+
+## ⭐ Glama
+
+Quantified Self MCP is available through the **Glama MCP directory**.
+
+### Glama Score
+
+**A / A / B**
+
+| Category    | Score |
+| ----------- | ----- |
+| License     | **A** |
+| Quality     | **A** |
+| Maintenance | **B** |
+
+The project is listed as a **Python / Local** MCP server on Glama, and its current MCP inspection shows three health-data tools with maintained activity.
+
+**[View Quantified Self MCP on Glama →](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)**
+
+---
+
+## 🤝 Contributing
+
+Contributions, bug reports, documentation improvements, and ideas are welcome.
+
+Before contributing, please read:
+
+* [CONTRIBUTING.md](CONTRIBUTING.md)
+* [SECURITY.md](SECURITY.md)
+
+If you find a bug, please open an issue with enough information to reproduce it.
+
+---
+
+## 📄 License
+
+MIT License.
+
+---
+
+## Links
+
+* **GitHub:** https://github.com/Thecimal/quantified-self-mcp
+* **PyPI:** https://pypi.org/project/quantified-self-mcp/
+* **Glama:** https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp
+* **Author:** https://github.com/Thecimal
+
+---
+
+> **Quantified Self MCP**
+>
+> **Your health data. Your AI. Your machine.**
