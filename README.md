@@ -3,8 +3,8 @@
 > **Your health data. Your AI. Your machine.**
 
 [![CI](https://github.com/Thecimal/quantified-self-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Thecimal/quantified-self-mcp/actions)
-[![PyPI]([https://img.shields.io/pypi/v/quantified-self-mcp)](https://pypi.org/project/quantified-self-mcp/](https://img.shields.io/pypi/pyversions/quantified-self-mcp/0.2.2))
-[![Python](https://img.shields.io/pypi/pyversions/quantified-self-mcp)](https://pypi.org/project/quantified-self-mcp/)
+[![PyPI](https://img.shields.io/pypi/v/quantified-self-mcp)](https://pypi.org/project/quantified-self-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/quantified-self-mcp/0.2.2)](https://pypi.org/project/quantified-self-mcp/)
 [![License](https://img.shields.io/github/license/Thecimal/quantified-self-mcp)](LICENSE)
 [![Glama](https://img.shields.io/badge/Glama-A%20%2F%20A%20%2F%20A-blue)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
 
