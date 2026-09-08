@@ -48,17 +48,21 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
 from logic import (
-    BUSY_TIMEOUT_MS,
     MAX_ROWS_RETURNED,
     METRIC_BOUNDS,
     connect_writable,
+    db_error_types,
     default_data_dir,
     ensure_schema,
     numeric_stats,
     parse_date,
     resolve_range,
+    row_class,
     upsert_metrics,
     validate_metrics,
+)
+from logic import (
+    readonly_connection as _logic_readonly_connection,
 )
 
 # The SQLite file never leaves this machine, but the *rows read out of it*
@@ -258,38 +262,16 @@ def _ensure_db(db_path: Path) -> None:
 
 @contextmanager
 def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
-    """Open db_path read-only so this process cannot write to it.
-
-    Prefers SQLite's URI mode=ro, which enforces this at the driver level.
-    Falls back to a normal connection guarded by PRAGMA query_only if
-    mode=ro fails to open the file — which happens if a previous write left
-    a WAL/journal file pending recovery, something SQLite refuses to do
-    while read-only. The fallback still blocks writes, just via SQL rather
-    than the OS-level open flag. Either way, busy_timeout is set so a read
-    landing at the exact instant a write commits waits briefly rather than
-    failing immediately (WAL mode, enabled in logic.ensure_schema, makes
-    this rare in the first place — readers don't normally block on a
-    writer at all).
+    """Ensure db_path exists (creating an empty, migrated database if this
+    is a first run — see _ensure_db), then open it read-only. The actual
+    read-only-opening logic (including optional SQLCipher decryption) now
+    lives in logic.readonly_connection, since none of it is MCP-specific;
+    this wrapper just adds the create-on-first-run behavior server.py
+    itself needs.
     """
     _ensure_db(db_path)
-    uri = db_path.resolve().as_uri() + "?mode=ro"
-    try:
-        conn = sqlite3.connect(uri, uri=True)
-        conn.execute("SELECT 1")  # force the open now, not on the caller's first real query
-    except sqlite3.OperationalError:
-        logger.warning(
-            "Could not open %s read-only (likely a pending WAL/journal); "
-            "falling back to a query_only connection.",
-            db_path,
-        )
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("PRAGMA query_only = ON")
-    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-    conn.row_factory = sqlite3.Row
-    try:
+    with _logic_readonly_connection(db_path) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -316,13 +298,19 @@ def _tool_error(code: str, message: str) -> ToolError:
     return ToolError(f"[{code}] {message}")
 
 
-def _is_locked_error(exc: sqlite3.Error) -> bool:
+def _is_locked_error(exc: Exception) -> bool:
     """True if exc looks like a lock/busy contention error rather than a
     missing/corrupt database — used to pick database_locked vs
     database_error so the two failure modes (retry-worthy vs not) are
     distinguishable by code, not just by re-reading the message text.
+
+    Checks the exception's class *name* rather than isinstance against
+    sqlite3.OperationalError specifically, since sqlcipher3's own
+    OperationalError (used when HEALTH_DB_PASSPHRASE is set — see
+    logic.db_error_types) is a separate class, not a subclass of
+    sqlite3's, and this needs to recognize either.
     """
-    return isinstance(exc, sqlite3.OperationalError) and "lock" in str(exc).lower()
+    return type(exc).__name__ == "OperationalError" and "lock" in str(exc).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +373,7 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
                 (start.isoformat(), end.isoformat()),
             )
             rows = [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as exc:
+    except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         if _is_locked_error(exc):
             raise _tool_error(
@@ -496,14 +484,14 @@ def log_daily_metric(
         try:
             ensure_schema(conn)
             upsert_metrics(conn, [{"date": day.isoformat(), **provided}])
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = row_class()
             row = conn.execute(
                 "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
                 (day.isoformat(),),
             ).fetchone()
         finally:
             conn.close()
-    except sqlite3.Error as exc:
+    except db_error_types() as exc:
         logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
         code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
         raise _tool_error(
@@ -562,14 +550,14 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
             ensure_schema(conn)
             conn.execute(f"UPDATE daily_metrics SET {field} = NULL WHERE date = ?", (day.isoformat(),))
             conn.commit()
-            conn.row_factory = sqlite3.Row
+            conn.row_factory = row_class()
             row = conn.execute(
                 "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
                 (day.isoformat(),),
             ).fetchone()
         finally:
             conn.close()
-    except sqlite3.Error as exc:
+    except db_error_types() as exc:
         logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
         code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
         raise _tool_error(
@@ -645,7 +633,7 @@ def day_snapshot(date: str) -> dict:
                 "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
                 (day.isoformat(),),
             ).fetchone()
-    except sqlite3.Error as exc:
+    except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         raise ResourceError(f"Could not read the health database: {exc}") from exc
 

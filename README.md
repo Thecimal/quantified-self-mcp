@@ -31,6 +31,18 @@ Cloud LLMs such as Claude can also be used. In that case, your database and MCP 
 
 If you'd rather some specific metrics never be sent to the model at all — even a local one — set `HEALTH_PRIVATE_FIELDS` to a comma-separated list of field names (e.g. `weight_kg,mood`). Those fields can still be logged normally, but every tool always reports them as null when reading data back, including in a `log_daily_metric` call's own response.
 
+### Database encryption
+
+`health.db` is, by default, an ordinary unencrypted SQLite file — readable by anything with filesystem access to it, same as any other file on your disk. For most people on a single-user machine, **OS-level full-disk (or at least full-volume) encryption is the right baseline and needs no setup here**: FileVault on macOS, BitLocker on Windows, or LUKS on Linux, all of which are likely already available and possibly already on. That protects `health.db` along with everything else on the machine, at rest, with no code involved.
+
+If you want the database file itself encrypted regardless of that — say, it might get synced to a cloud drive, or the machine is shared — set the `HEALTH_DB_PASSPHRASE` environment variable and install the optional `sqlcipher3-binary` package (`pip install sqlcipher3-binary`, or `pip install quantified-self-mcp[encryption]`). With both in place, every tool and `init_db.py` transparently read and write through [SQLCipher](https://www.zetetic.net/sqlcipher/) instead of plain SQLite — nothing else changes. Leave `HEALTH_DB_PASSPHRASE` unset (the default) and none of this applies; `sqlcipher3-binary` isn't a required dependency.
+
+A few things worth knowing about this mode:
+
+* **There's no recovery if you lose the passphrase.** SQLCipher doesn't support that by design — losing it means losing the database.
+* **The passphrase has to be available wherever the server or `init_db.py` runs** — typically in the `env` block of your MCP client's config alongside `HEALTH_DB_PATH` (see below). Anywhere that config lives unencrypted, the passphrase does too; this protects the database file at rest, not against something with access to that config.
+* Setting `HEALTH_DB_PASSPHRASE` without `sqlcipher3-binary` installed fails loudly and immediately, rather than silently falling back to a plaintext database — you'll get a clear error telling you to install it or unset the variable.
+
 ## Current functionality
 
 The server currently provides three tools:

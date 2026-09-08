@@ -22,14 +22,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from logic import (
     ADDED_COLUMNS,
     BUSY_TIMEOUT_MS,
+    DB_PASSPHRASE_ENV,
     MIGRATIONS,
     SCHEMA_VERSION,
     connect_writable,
+    db_error_types,
     default_data_dir,
+    encryption_available,
     ensure_schema,
     numeric_stats,
     parse_date,
+    readonly_connection,
     resolve_range,
+    row_class,
     upsert_metrics,
     validate_metrics,
 )  # noqa: E402
@@ -274,6 +279,139 @@ def test_ensure_schema_enables_wal_mode(tmp_path):
         assert mode.lower() == "wal"
     finally:
         conn.close()
+
+
+def test_readonly_connection_reads_data_written_by_connect_writable(tmp_path):
+    db_path = tmp_path / "test.db"
+    conn = connect_writable(db_path)
+    try:
+        ensure_schema(conn)
+        upsert_metrics(conn, [{"date": "2026-01-01", "steps": 5000}])
+    finally:
+        conn.close()
+
+    with readonly_connection(db_path) as conn:
+        conn.row_factory = row_class()
+        row = conn.execute("SELECT steps FROM daily_metrics WHERE date = ?", ("2026-01-01",)).fetchone()
+        assert dict(row)["steps"] == 5000
+
+
+def test_readonly_connection_actually_blocks_writes(tmp_path):
+    db_path = tmp_path / "test.db"
+    conn = connect_writable(db_path)
+    try:
+        ensure_schema(conn)
+    finally:
+        conn.close()
+
+    with readonly_connection(db_path) as conn, pytest.raises(sqlite3.Error):
+        conn.execute("INSERT INTO daily_metrics (date, steps) VALUES ('2026-01-01', 1)")
+
+
+# ---------------------------------------------------------------------------
+# Database encryption (#24)
+# ---------------------------------------------------------------------------
+#
+# These exercise the real sqlcipher3 package (a dev-only dependency — see
+# requirements-dev.txt) rather than mocking it, so a real incompatibility
+# between sqlite3 and sqlcipher3 (like the Row-class one connect_writable
+# and readonly_connection both have to work around) would actually be
+# caught here. Skipped rather than failed if that optional package isn't
+# importable, since it's not required to use this project without
+# encryption.
+
+require_sqlcipher = pytest.mark.skipif(not encryption_available(), reason="sqlcipher3 not installed")
+
+
+def test_encryption_available_matches_whether_sqlcipher3_imports():
+    import importlib.util
+
+    assert encryption_available() == (importlib.util.find_spec("sqlcipher3") is not None)
+
+
+def test_connect_writable_is_plain_sqlite_without_a_passphrase(tmp_path, monkeypatch):
+    monkeypatch.delenv(DB_PASSPHRASE_ENV, raising=False)
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        assert isinstance(conn, sqlite3.Connection)
+        assert row_class() is sqlite3.Row
+        assert db_error_types() == (sqlite3.Error,)
+    finally:
+        conn.close()
+
+
+def test_setting_a_passphrase_without_sqlcipher3_installed_fails_loudly(tmp_path, monkeypatch):
+    monkeypatch.setenv(DB_PASSPHRASE_ENV, "secret")
+    monkeypatch.setattr("logic._sqlcipher", None)  # simulate the package not being installed
+    with pytest.raises(RuntimeError, match="sqlcipher3"):
+        connect_writable(tmp_path / "test.db")
+
+
+@require_sqlcipher
+def test_connect_writable_encrypts_when_a_passphrase_is_set(tmp_path, monkeypatch):
+    db_path = tmp_path / "encrypted.db"
+    monkeypatch.setenv(DB_PASSPHRASE_ENV, "correct horse battery staple")
+    conn = connect_writable(db_path)
+    try:
+        assert not isinstance(conn, sqlite3.Connection)  # a sqlcipher3 connection instead
+        ensure_schema(conn)
+        upsert_metrics(conn, [{"date": "2026-01-01", "steps": 4200}])
+    finally:
+        conn.close()
+
+    # The whole point: a plain sqlite3 connection, with no key, can't read
+    # this file as a valid database — proving it's genuinely encrypted,
+    # not just nominally opened through a different driver.
+    monkeypatch.delenv(DB_PASSPHRASE_ENV, raising=False)
+    plain_conn = sqlite3.connect(str(db_path))
+    with pytest.raises(sqlite3.DatabaseError):
+        plain_conn.execute("SELECT * FROM daily_metrics").fetchall()
+    plain_conn.close()
+
+
+@require_sqlcipher
+def test_connect_writable_round_trips_through_readonly_connection_when_encrypted(tmp_path, monkeypatch):
+    db_path = tmp_path / "encrypted.db"
+    monkeypatch.setenv(DB_PASSPHRASE_ENV, "correct horse battery staple")
+    conn = connect_writable(db_path)
+    try:
+        ensure_schema(conn)
+        upsert_metrics(conn, [{"date": "2026-01-01", "steps": 4200}])
+    finally:
+        conn.close()
+
+    with readonly_connection(db_path) as conn:
+        conn.row_factory = row_class()
+        row = conn.execute("SELECT steps FROM daily_metrics WHERE date = ?", ("2026-01-01",)).fetchone()
+        assert dict(row)["steps"] == 4200
+
+
+@require_sqlcipher
+def test_wrong_passphrase_fails_loudly_rather_than_returning_garbage(tmp_path, monkeypatch):
+    db_path = tmp_path / "encrypted.db"
+    monkeypatch.setenv(DB_PASSPHRASE_ENV, "correct horse battery staple")
+    conn = connect_writable(db_path)
+    try:
+        # An empty file has no encrypted header to validate a key
+        # against, so SQLite treats it as valid regardless of passphrase
+        # — there has to be real content on disk for a wrong key to
+        # actually fail to decrypt it.
+        ensure_schema(conn)
+        upsert_metrics(conn, [{"date": "2026-01-01", "steps": 1}])
+    finally:
+        conn.close()
+
+    monkeypatch.setenv(DB_PASSPHRASE_ENV, "wrong passphrase entirely")
+    with pytest.raises(RuntimeError, match="wrong"):
+        connect_writable(db_path)
+
+
+@require_sqlcipher
+def test_db_error_types_includes_sqlcipher_errors_when_encrypted(tmp_path, monkeypatch):
+    monkeypatch.setenv(DB_PASSPHRASE_ENV, "correct horse battery staple")
+    error_types = db_error_types()
+    assert sqlite3.Error in error_types
+    assert len(error_types) == 2  # also includes sqlcipher3's own Error class
 
 
 def test_default_data_dir_prefers_writable_source_checkout(tmp_path):

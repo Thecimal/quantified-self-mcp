@@ -245,6 +245,40 @@ def test_unknown_private_field_name_is_ignored_not_fatal(tmp_path, monkeypatch):
     assert server.PRIVATE_FIELDS == frozenset({"steps"})
 
 
+def test_server_tools_work_end_to_end_against_an_encrypted_database(tmp_path, monkeypatch):
+    """The full tool pipeline (log_daily_metric -> read_health_data ->
+    clear_metric), not just logic.py's own connect_writable/
+    readonly_connection, actually works with HEALTH_DB_PASSPHRASE set —
+    this is what would have broken if e.g. one of server.py's `except
+    sqlite3.Error` sites hadn't been updated to logic.db_error_types().
+    """
+    pytest.importorskip("sqlcipher3")
+    db_path = tmp_path / "health.db"
+    monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
+    monkeypatch.setenv("HEALTH_DB_PASSPHRASE", "correct horse battery staple")
+    sys.modules.pop("server", None)
+    import server
+
+    logged = server.log_daily_metric(date="2026-01-20", steps=6000)
+    assert logged.row.steps == 6000
+
+    read_back = server.read_health_data(start_date="2026-01-20", end_date="2026-01-20")
+    assert read_back.rows[0].steps == 6000
+
+    cleared = server.clear_metric(date="2026-01-20", field="steps")
+    assert cleared.row.steps is None
+
+    # And, as in test_logic.py's version of this check: genuinely
+    # encrypted, not just opened through a different driver.
+    import sqlite3
+
+    monkeypatch.delenv("HEALTH_DB_PASSPHRASE", raising=False)
+    plain_conn = sqlite3.connect(str(db_path))
+    with pytest.raises(sqlite3.DatabaseError):
+        plain_conn.execute("SELECT * FROM daily_metrics").fetchall()
+    plain_conn.close()
+
+
 def test_tool_annotations_reflect_read_write_behavior(health_db):
     """MCP tool annotations are client-facing hints about a tool's effects
     (readOnlyHint/destructiveHint/idempotentHint/openWorldHint) — clients

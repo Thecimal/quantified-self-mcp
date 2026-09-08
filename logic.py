@@ -5,7 +5,13 @@ Framework-free helpers shared by server.py and init_db.py: date parsing,
 date-range resolution, numeric aggregation, and the health database schema.
 
 Deliberately dependency-free (standard library only) so it can be imported
-and unit-tested without installing fastmcp — see tests/test_logic.py.
+and unit-tested without installing fastmcp — see tests/test_logic.py. The
+one exception is optional, at-rest database encryption support: if
+HEALTH_DB_PASSPHRASE is set, connect_writable/readonly_connection open the
+database through the sqlcipher3 package instead of the standard library's
+sqlite3, so the file itself is unreadable without that passphrase — see
+"Database encryption" below, and README.md for setup and the (considerable)
+alternative of just using OS-level full-disk encryption instead.
 """
 
 from __future__ import annotations
@@ -15,7 +21,8 @@ import os
 import sqlite3
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -135,15 +142,182 @@ def default_data_dir(base_dir: Path) -> Path:
     return _user_data_dir() / "quantified-self-mcp"
 
 
+# ---------------------------------------------------------------------------
+# Database encryption (optional)
+# ---------------------------------------------------------------------------
+#
+# Plain SQLite (the default, and everything above this point) stores
+# health.db as an ordinary, unencrypted file — readable by anything with
+# filesystem access to it, same as any other file on disk. See README.md
+# for why OS-level full-disk encryption (FileVault, BitLocker, LUKS) is
+# the recommended baseline regardless, and is enough for most people on
+# a single-user machine.
+#
+# For the additional case of an at-rest-encrypted *database file itself*
+# (e.g. the file might be synced to a cloud drive, or the machine is
+# shared), set HEALTH_DB_PASSPHRASE and install the optional sqlcipher3
+# package (`pip install sqlcipher3-binary`, or `pip install
+# quantified-self-mcp[encryption]`). Everything below is a no-op — same
+# plain sqlite3 as always — unless that env var is set.
+
+DB_PASSPHRASE_ENV = "HEALTH_DB_PASSPHRASE"
+
+try:
+    import sqlcipher3 as _sqlcipher
+except ImportError:
+    _sqlcipher = None
+
+
+def encryption_available() -> bool:
+    """Whether the optional sqlcipher3 package is installed — i.e.
+    whether HEALTH_DB_PASSPHRASE can actually be used right now. Exposed
+    for init_db.py/server.py to give a clear, specific error message up
+    front rather than an obscure one from wherever the first query happens
+    to run.
+    """
+    return _sqlcipher is not None
+
+
+def _db_passphrase() -> str | None:
+    return os.environ.get(DB_PASSPHRASE_ENV) or None
+
+
+def _db_module():
+    """Which DB-API module every connection in this file goes through:
+    the standard library's sqlite3 (the default, unencrypted), or
+    sqlcipher3 if HEALTH_DB_PASSPHRASE is set. Raises with a specific,
+    actionable message if a passphrase is configured but sqlcipher3 isn't
+    installed — silently falling back to a plaintext connection instead
+    would be a dangerous way to fail for a security setting.
+    """
+    if _db_passphrase() is None:
+        return sqlite3
+    if _sqlcipher is None:
+        raise RuntimeError(
+            f"{DB_PASSPHRASE_ENV} is set, but the sqlcipher3 package needed to open an "
+            "encrypted database isn't installed. Install it with `pip install "
+            "sqlcipher3-binary` (or `pip install quantified-self-mcp[encryption]`), or "
+            f"unset {DB_PASSPHRASE_ENV} to use a plain, unencrypted database instead."
+        )
+    return _sqlcipher
+
+
+def row_class() -> type:
+    """The Row class matching whichever DB-API module is currently active
+    (see _db_module) — sqlite3.Row for a plain database, sqlcipher3's own
+    Row for an encrypted one. The two aren't interchangeable: sqlite3.Row
+    rejects a sqlcipher3 cursor outright (a C-level type check), so any
+    code setting `conn.row_factory` on a connection from this module must
+    use row_class() rather than hardcoding sqlite3.Row.
+    """
+    return _db_module().Row
+
+
+def db_error_types() -> tuple[type[Exception], ...]:
+    """Exception classes to catch for "something went wrong talking to
+    the database", matching whichever module is currently active (see
+    _db_module). sqlite3 and sqlcipher3 don't share an exception
+    hierarchy — sqlcipher3.dbapi2.Error is not a sqlite3.Error subclass —
+    so code that only ever caught sqlite3.Error would let a database
+    problem escape as an unhandled exception whenever encryption is on.
+    Always includes sqlite3.Error even when encrypted, since a handful of
+    error paths (e.g. a plain sqlite3.Error raised directly by this
+    module's own code, not the driver) can still occur either way.
+    """
+    module = _db_module()
+    return (sqlite3.Error,) if module is sqlite3 else (sqlite3.Error, module.Error)
+
+
+def _escape_pragma_string(value: str) -> str:
+    # SQLite/SQLCipher PRAGMA statements don't accept bound (?) parameters
+    # — the value has to be embedded directly into the SQL text. Escaping
+    # this the same way a SQL string literal would be (doubling any single
+    # quote) keeps a passphrase containing a quote from breaking out of
+    # the literal, the same concern parameterization would normally cover.
+    return value.replace("'", "''")
+
+
+def _apply_encryption_key(conn: sqlite3.Connection, module, db_path: Any) -> None:
+    """If HEALTH_DB_PASSPHRASE is set, key `conn` with it and immediately
+    verify the key actually works (a wrong passphrase, or opening a
+    plaintext file as if it were encrypted, doesn't fail until the first
+    real read otherwise — surfacing that here, in the shared connection
+    path, gives one clear error instead of a confusing failure wherever
+    the first query happens to be).
+    """
+    passphrase = _db_passphrase()
+    if passphrase is None:
+        return
+    conn.execute(f"PRAGMA key = '{_escape_pragma_string(passphrase)}'")
+    try:
+        conn.execute("SELECT count(*) FROM sqlite_master")
+    except module.DatabaseError as exc:
+        conn.close()
+        raise RuntimeError(
+            f"Could not open the encrypted database at {db_path}: wrong "
+            f"{DB_PASSPHRASE_ENV}, or this file isn't a SQLCipher database ({exc})"
+        ) from exc
+
+
 def connect_writable(db_path: Any) -> sqlite3.Connection:
     """Open db_path for writing, with a busy_timeout set so a momentary
     lock from a concurrent writer causes a short wait instead of an
     immediate error. Used by every writer: init_db.py, log_daily_metric,
     clear_metric, and the migration step in server.py's _ensure_db.
+
+    Transparently encrypted via SQLCipher if HEALTH_DB_PASSPHRASE is set
+    — see "Database encryption" above this function.
     """
-    conn = sqlite3.connect(str(db_path))
+    module = _db_module()
+    conn = module.connect(str(db_path))
+    _apply_encryption_key(conn, module, db_path)
     conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     return conn
+
+
+@contextmanager
+def readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
+    """Open db_path read-only so the caller cannot write to it.
+
+    Prefers SQLite's URI mode=ro, which enforces this at the driver level.
+    Falls back to a normal connection guarded by PRAGMA query_only if
+    mode=ro fails to open the file — which happens if a previous write left
+    a WAL/journal file pending recovery, something SQLite refuses to do
+    while read-only. The fallback still blocks writes, just via SQL rather
+    than the OS-level open flag. Either way, busy_timeout is set so a read
+    landing at the exact instant a write commits waits briefly rather than
+    failing immediately (WAL mode, enabled in ensure_schema, makes this
+    rare in the first place — readers don't normally block on a writer at
+    all). row_factory is set to row_class() (see there for why this
+    matters when the database is encrypted).
+
+    Moved here from server.py (which now just re-exports this) since none
+    of this is actually MCP-specific — it's the same database-opening
+    decision connect_writable makes, just read-only, and both need to
+    agree on which driver module is in play for a given HEALTH_DB_PASSPHRASE.
+    """
+    db_path = Path(db_path)
+    module = _db_module()
+    uri = db_path.resolve().as_uri() + "?mode=ro"
+    try:
+        conn = module.connect(uri, uri=True)
+        _apply_encryption_key(conn, module, db_path)
+        conn.execute("SELECT 1")  # force the open now, not on the caller's first real query
+    except module.OperationalError:
+        logger.warning(
+            "Could not open %s read-only (likely a pending WAL/journal); "
+            "falling back to a query_only connection.",
+            db_path,
+        )
+        conn = module.connect(str(db_path))
+        _apply_encryption_key(conn, module, db_path)
+        conn.execute("PRAGMA query_only = ON")
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    conn.row_factory = row_class()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
