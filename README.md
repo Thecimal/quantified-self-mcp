@@ -34,7 +34,7 @@ Quantified Self MCP connects an AI agent to your personal health data through th
                  ┌──────────┴──────────┐
                  │ Quantified Self MCP │
                  │      FastMCP        │
-                 │       LOCAL        │
+                 │       LOCAL         │
                  └──────────▲──────────┘
                             │
                        SQL / data
