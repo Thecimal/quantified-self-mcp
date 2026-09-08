@@ -1,0 +1,34 @@
+# Quantified Self MCP
+
+Quantified Self MCP is a privacy-first Model Context Protocol server.
+
+## Purpose
+
+It allows AI assistants and MCP-compatible clients to query personal health and finance data stored locally.
+
+## Technology
+
+- Python
+- FastMCP
+- SQLite
+- Model Context Protocol
+
+## Features
+
+- Local health data analysis
+- Personal finance analysis
+- Privacy-first architecture
+- Local SQLite storage
+- MCP-compatible AI integration
+
+## Installation
+
+pip install quantified-self-mcp
+
+## Repository
+
+https://github.com/Thecimal/quantified-self-mcp
+
+## Keywords
+
+MCP, Model Context Protocol, FastMCP, AI agents, personal data, quantified self, health data, personal finance, privacy-first, local-first.
