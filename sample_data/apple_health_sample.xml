@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<HealthData locale="en_US">
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-07-25 08:00:00 -0500" endDate="2026-07-25 08:00:00 -0500" value="8506"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-07-25 08:00:00 -0500" endDate="2026-07-25 08:00:00 -0500" value="56"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-07-25 08:00:00 -0500" endDate="2026-07-25 08:00:00 -0500" value="77.8"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-07-25 00:42:00 -0500" endDate="2026-07-25 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-07-26 08:00:00 -0500" endDate="2026-07-26 08:00:00 -0500" value="12279"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-07-26 08:00:00 -0500" endDate="2026-07-26 08:00:00 -0500" value="62"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-07-26 08:00:00 -0500" endDate="2026-07-26 08:00:00 -0500" value="77.7"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-07-26 18:00:00 -0500" endDate="2026-07-26 18:00:00 -0500" value="45"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-07-26 12:00:00 -0500" endDate="2026-07-26 12:00:00 -0500" value="1213"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-07-25 23:36:00 -0500" endDate="2026-07-26 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-07-27 08:00:00 -0500" endDate="2026-07-27 08:00:00 -0500" value="6615"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-07-27 08:00:00 -0500" endDate="2026-07-27 08:00:00 -0500" value="59"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-07-27 08:00:00 -0500" endDate="2026-07-27 08:00:00 -0500" value="77.7"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-07-27 18:00:00 -0500" endDate="2026-07-27 18:00:00 -0500" value="30"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-07-26 23:18:00 -0500" endDate="2026-07-27 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-07-28 08:00:00 -0500" endDate="2026-07-28 08:00:00 -0500" value="8333"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-07-28 08:00:00 -0500" endDate="2026-07-28 08:00:00 -0500" value="65"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-07-28 08:00:00 -0500" endDate="2026-07-28 08:00:00 -0500" value="77.8"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-07-28 18:00:00 -0500" endDate="2026-07-28 18:00:00 -0500" value="45"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-07-28 12:00:00 -0500" endDate="2026-07-28 12:00:00 -0500" value="2487"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-07-27 23:00:00 -0500" endDate="2026-07-28 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-07-29 08:00:00 -0500" endDate="2026-07-29 08:00:00 -0500" value="9925"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-07-29 08:00:00 -0500" endDate="2026-07-29 08:00:00 -0500" value="65"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-07-29 18:00:00 -0500" endDate="2026-07-29 18:00:00 -0500" value="20"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-07-29 12:00:00 -0500" endDate="2026-07-29 12:00:00 -0500" value="1978"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-07-28 23:42:00 -0500" endDate="2026-07-29 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-07-30 08:00:00 -0500" endDate="2026-07-30 08:00:00 -0500" value="9977"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-07-30 08:00:00 -0500" endDate="2026-07-30 08:00:00 -0500" value="59"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-07-30 08:00:00 -0500" endDate="2026-07-30 08:00:00 -0500" value="77.7"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-07-30 12:00:00 -0500" endDate="2026-07-30 12:00:00 -0500" value="1701"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-07-30 01:00:00 -0500" endDate="2026-07-30 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-07-31 08:00:00 -0500" endDate="2026-07-31 08:00:00 -0500" value="10216"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-07-31 08:00:00 -0500" endDate="2026-07-31 08:00:00 -0500" value="68"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-07-31 08:00:00 -0500" endDate="2026-07-31 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-07-31 18:00:00 -0500" endDate="2026-07-31 18:00:00 -0500" value="30"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-07-31 12:00:00 -0500" endDate="2026-07-31 12:00:00 -0500" value="1265"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-07-31 00:42:00 -0500" endDate="2026-07-31 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-01 08:00:00 -0500" endDate="2026-08-01 08:00:00 -0500" value="10572"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-01 08:00:00 -0500" endDate="2026-08-01 08:00:00 -0500" value="57"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-01 08:00:00 -0500" endDate="2026-08-01 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-01 18:00:00 -0500" endDate="2026-08-01 18:00:00 -0500" value="30"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-01 12:00:00 -0500" endDate="2026-08-01 12:00:00 -0500" value="2516"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-01 00:42:00 -0500" endDate="2026-08-01 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-02 08:00:00 -0500" endDate="2026-08-02 08:00:00 -0500" value="8339"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-02 08:00:00 -0500" endDate="2026-08-02 08:00:00 -0500" value="65"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-02 08:00:00 -0500" endDate="2026-08-02 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-02 18:00:00 -0500" endDate="2026-08-02 18:00:00 -0500" value="45"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-02 12:00:00 -0500" endDate="2026-08-02 12:00:00 -0500" value="1483"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-02 01:06:00 -0500" endDate="2026-08-02 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-03 08:00:00 -0500" endDate="2026-08-03 08:00:00 -0500" value="5489"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-03 08:00:00 -0500" endDate="2026-08-03 08:00:00 -0500" value="67"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-03 08:00:00 -0500" endDate="2026-08-03 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-03 18:00:00 -0500" endDate="2026-08-03 18:00:00 -0500" value="45"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-03 12:00:00 -0500" endDate="2026-08-03 12:00:00 -0500" value="2158"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-02 23:12:00 -0500" endDate="2026-08-03 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-04 08:00:00 -0500" endDate="2026-08-04 08:00:00 -0500" value="4188"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-04 08:00:00 -0500" endDate="2026-08-04 08:00:00 -0500" value="55"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-04 08:00:00 -0500" endDate="2026-08-04 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-04 18:00:00 -0500" endDate="2026-08-04 18:00:00 -0500" value="20"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-04 12:00:00 -0500" endDate="2026-08-04 12:00:00 -0500" value="2090"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-03 23:24:00 -0500" endDate="2026-08-04 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-05 08:00:00 -0500" endDate="2026-08-05 08:00:00 -0500" value="4053"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-05 08:00:00 -0500" endDate="2026-08-05 08:00:00 -0500" value="68"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-05 08:00:00 -0500" endDate="2026-08-05 08:00:00 -0500" value="77.5"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-05 12:00:00 -0500" endDate="2026-08-05 12:00:00 -0500" value="1811"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-04 22:30:00 -0500" endDate="2026-08-05 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-06 08:00:00 -0500" endDate="2026-08-06 08:00:00 -0500" value="12317"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-06 08:00:00 -0500" endDate="2026-08-06 08:00:00 -0500" value="56"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-06 08:00:00 -0500" endDate="2026-08-06 08:00:00 -0500" value="77.5"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-05 23:36:00 -0500" endDate="2026-08-06 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-07 08:00:00 -0500" endDate="2026-08-07 08:00:00 -0500" value="9038"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-07 08:00:00 -0500" endDate="2026-08-07 08:00:00 -0500" value="57"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-07 08:00:00 -0500" endDate="2026-08-07 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-07 12:00:00 -0500" endDate="2026-08-07 12:00:00 -0500" value="2290"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-07 00:48:00 -0500" endDate="2026-08-07 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-08 08:00:00 -0500" endDate="2026-08-08 08:00:00 -0500" value="6103"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-08 08:00:00 -0500" endDate="2026-08-08 08:00:00 -0500" value="62"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-08 08:00:00 -0500" endDate="2026-08-08 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-08 18:00:00 -0500" endDate="2026-08-08 18:00:00 -0500" value="45"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-08 12:00:00 -0500" endDate="2026-08-08 12:00:00 -0500" value="2017"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-07 23:30:00 -0500" endDate="2026-08-08 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-09 08:00:00 -0500" endDate="2026-08-09 08:00:00 -0500" value="10118"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-09 08:00:00 -0500" endDate="2026-08-09 08:00:00 -0500" value="62"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-09 08:00:00 -0500" endDate="2026-08-09 08:00:00 -0500" value="77.7"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-09 12:00:00 -0500" endDate="2026-08-09 12:00:00 -0500" value="1214"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-09 00:06:00 -0500" endDate="2026-08-09 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-10 08:00:00 -0500" endDate="2026-08-10 08:00:00 -0500" value="4964"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-10 08:00:00 -0500" endDate="2026-08-10 08:00:00 -0500" value="68"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-10 12:00:00 -0500" endDate="2026-08-10 12:00:00 -0500" value="1470"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-10 00:48:00 -0500" endDate="2026-08-10 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-11 08:00:00 -0500" endDate="2026-08-11 08:00:00 -0500" value="11744"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-11 08:00:00 -0500" endDate="2026-08-11 08:00:00 -0500" value="61"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-11 08:00:00 -0500" endDate="2026-08-11 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-11 12:00:00 -0500" endDate="2026-08-11 12:00:00 -0500" value="2156"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-11 00:42:00 -0500" endDate="2026-08-11 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-12 08:00:00 -0500" endDate="2026-08-12 08:00:00 -0500" value="4887"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-12 08:00:00 -0500" endDate="2026-08-12 08:00:00 -0500" value="64"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-12 18:00:00 -0500" endDate="2026-08-12 18:00:00 -0500" value="30"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-12 12:00:00 -0500" endDate="2026-08-12 12:00:00 -0500" value="1589"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-11 23:24:00 -0500" endDate="2026-08-12 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-13 08:00:00 -0500" endDate="2026-08-13 08:00:00 -0500" value="6296"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-13 08:00:00 -0500" endDate="2026-08-13 08:00:00 -0500" value="58"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-13 08:00:00 -0500" endDate="2026-08-13 08:00:00 -0500" value="77.7"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-13 00:12:00 -0500" endDate="2026-08-13 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-14 08:00:00 -0500" endDate="2026-08-14 08:00:00 -0500" value="4241"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-14 08:00:00 -0500" endDate="2026-08-14 08:00:00 -0500" value="68"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-14 08:00:00 -0500" endDate="2026-08-14 08:00:00 -0500" value="77.8"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-14 18:00:00 -0500" endDate="2026-08-14 18:00:00 -0500" value="45"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-14 12:00:00 -0500" endDate="2026-08-14 12:00:00 -0500" value="1320"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-13 22:30:00 -0500" endDate="2026-08-14 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-15 08:00:00 -0500" endDate="2026-08-15 08:00:00 -0500" value="4035"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-15 08:00:00 -0500" endDate="2026-08-15 08:00:00 -0500" value="58"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-15 08:00:00 -0500" endDate="2026-08-15 08:00:00 -0500" value="77.7"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-15 18:00:00 -0500" endDate="2026-08-15 18:00:00 -0500" value="20"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-15 12:00:00 -0500" endDate="2026-08-15 12:00:00 -0500" value="1807"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-14 22:24:00 -0500" endDate="2026-08-15 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-16 08:00:00 -0500" endDate="2026-08-16 08:00:00 -0500" value="4958"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-16 08:00:00 -0500" endDate="2026-08-16 08:00:00 -0500" value="62"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-15 23:42:00 -0500" endDate="2026-08-16 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-17 08:00:00 -0500" endDate="2026-08-17 08:00:00 -0500" value="7044"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-17 08:00:00 -0500" endDate="2026-08-17 08:00:00 -0500" value="55"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-17 08:00:00 -0500" endDate="2026-08-17 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-17 12:00:00 -0500" endDate="2026-08-17 12:00:00 -0500" value="1281"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-17 01:18:00 -0500" endDate="2026-08-17 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-18 08:00:00 -0500" endDate="2026-08-18 08:00:00 -0500" value="10868"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-18 08:00:00 -0500" endDate="2026-08-18 08:00:00 -0500" value="63"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-18 08:00:00 -0500" endDate="2026-08-18 08:00:00 -0500" value="77.6"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-18 12:00:00 -0500" endDate="2026-08-18 12:00:00 -0500" value="2010"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-17 23:30:00 -0500" endDate="2026-08-18 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-19 08:00:00 -0500" endDate="2026-08-19 08:00:00 -0500" value="8915"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-19 08:00:00 -0500" endDate="2026-08-19 08:00:00 -0500" value="68"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-19 08:00:00 -0500" endDate="2026-08-19 08:00:00 -0500" value="77.5"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-19 00:06:00 -0500" endDate="2026-08-19 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-20 08:00:00 -0500" endDate="2026-08-20 08:00:00 -0500" value="8345"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-20 08:00:00 -0500" endDate="2026-08-20 08:00:00 -0500" value="59"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-20 08:00:00 -0500" endDate="2026-08-20 08:00:00 -0500" value="77.4"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-20 18:00:00 -0500" endDate="2026-08-20 18:00:00 -0500" value="30"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-20 12:00:00 -0500" endDate="2026-08-20 12:00:00 -0500" value="2640"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-20 01:06:00 -0500" endDate="2026-08-20 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-21 08:00:00 -0500" endDate="2026-08-21 08:00:00 -0500" value="12666"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-21 08:00:00 -0500" endDate="2026-08-21 08:00:00 -0500" value="67"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-21 08:00:00 -0500" endDate="2026-08-21 08:00:00 -0500" value="77.3"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-21 12:00:00 -0500" endDate="2026-08-21 12:00:00 -0500" value="1419"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-21 01:30:00 -0500" endDate="2026-08-21 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-22 08:00:00 -0500" endDate="2026-08-22 08:00:00 -0500" value="6546"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-22 08:00:00 -0500" endDate="2026-08-22 08:00:00 -0500" value="63"/>
+  <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Sample Data Generator" unit="kg" startDate="2026-08-22 08:00:00 -0500" endDate="2026-08-22 08:00:00 -0500" value="77.3"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-22 18:00:00 -0500" endDate="2026-08-22 18:00:00 -0500" value="20"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-22 12:00:00 -0500" endDate="2026-08-22 12:00:00 -0500" value="1304"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-22 00:42:00 -0500" endDate="2026-08-22 07:00:00 -0500"/>
+  <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Sample Data Generator" unit="count" startDate="2026-08-23 08:00:00 -0500" endDate="2026-08-23 08:00:00 -0500" value="10939"/>
+  <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Sample Data Generator" unit="count/min" startDate="2026-08-23 08:00:00 -0500" endDate="2026-08-23 08:00:00 -0500" value="54"/>
+  <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Sample Data Generator" unit="min" startDate="2026-08-23 18:00:00 -0500" endDate="2026-08-23 18:00:00 -0500" value="20"/>
+  <Record type="HKQuantityTypeIdentifierDietaryWater" sourceName="Sample Data Generator" unit="mL" startDate="2026-08-23 12:00:00 -0500" endDate="2026-08-23 12:00:00 -0500" value="2075"/>
+  <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Sample Data Generator" value="HKCategoryValueSleepAnalysisAsleepCore" startDate="2026-08-22 22:54:00 -0500" endDate="2026-08-23 07:00:00 -0500"/>
+</HealthData>
