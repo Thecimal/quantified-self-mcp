@@ -55,13 +55,13 @@ async def test_list_tools_exposes_all_three_with_schemas_and_annotations(client)
 
     # Argument schemas come from the function signature via the protocol
     # layer, not something a direct call would ever check.
-    assert "date" in tools["log_daily_metric"].inputSchema["properties"]
-    assert "steps" in tools["log_daily_metric"].inputSchema["properties"]
+    assert "date" in tools["log_daily_metric"].input_schema["properties"]
+    assert "steps" in tools["log_daily_metric"].input_schema["properties"]
 
     # Annotations (#21) are part of what a client sees via list_tools,
     # not just internal metadata.
-    assert tools["read_health_data"].annotations.readOnlyHint is True
-    assert tools["clear_metric"].annotations.destructiveHint is True
+    assert tools["read_health_data"].annotations.read_only_hint is True
+    assert tools["clear_metric"].annotations.destructive_hint is True
 
 
 async def test_call_tool_round_trip_through_the_protocol(client):
@@ -112,7 +112,7 @@ async def test_resources_are_listed_and_readable_through_the_client(client, heal
     assert str(resources[0].uri) == "health://metrics/schema"
 
     templates = await client.list_resource_templates()
-    assert templates[0].uriTemplate == "health://day/{date}"
+    assert templates[0].uri_template == "health://day/{date}"
 
     schema = await client.read_resource("health://metrics/schema")
     assert "steps" in schema[0].text
