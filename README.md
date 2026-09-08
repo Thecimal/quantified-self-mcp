@@ -108,15 +108,15 @@ For maximum privacy, use a **local LLM** so the entire pipeline can remain on yo
 ┌───────────────────────────────────┐
 │          YOUR MACHINE             │
 │                                   │
-│  Health Data                      │
-│       ↓                           │
-│  Local SQLite                     │
-│       ↓                           │
-│  Quantified Self MCP              │
-│       ↓                           │
-│  Local AI Agent                   │
-│       ↓                           │
-│  Local LLM                        │
+│          Health Data              │
+│               ↓                   │
+│          Local SQLite             │
+│               ↓                   │
+│      Quantified Self MCP          │
+│               ↓                   │
+│         Local AI Agent            │
+│               ↓                   │
+│           Local LLM               │
 │                                   │
 └───────────────────────────────────┘
 ```
