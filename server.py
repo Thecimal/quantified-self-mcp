@@ -34,6 +34,7 @@ In normal use, this file is launched as a subprocess by an MCP client
 such as Claude Desktop, which talks to it over stdio — see README.md.
 """
 
+import csv
 import logging
 import os
 import sqlite3
@@ -149,6 +150,12 @@ class ReadHealthDataResult(BaseModel):
     rows: list[DailyMetricsRow]
     truncated: bool
     summary: HealthDataSummary
+
+
+class ExportCsvResult(BaseModel):
+    path: str
+    rows_exported: int
+    range: DateRange
 
 
 class LogDailyMetricResult(BaseModel):
@@ -399,6 +406,90 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
                 for metric in METRIC_COLUMNS
             },
         ),
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Export health data to CSV",
+        readOnlyHint=True,  # opened via _readonly_connection; cannot write the database
+        idempotentHint=False,  # writes a new file each call
+        openWorldHint=False,  # only ever touches the local SQLite file and local disk
+    )
+)
+def export_health_data_csv(start_date: str | None = None, end_date: str | None = None) -> ExportCsvResult:
+    """
+    Write daily health metrics for a date range to a CSV file on disk,
+    next to the database, instead of returning every row through this
+    tool's own result.
+
+    Unlike read_health_data, this is not capped at MAX_ROWS_RETURNED and
+    the row values themselves are not included in this tool's response —
+    only the resulting file's path and a row count are. That means a
+    long-range export doesn't have to pass through a cloud LLM's context
+    just to produce a file you can open yourself (in a spreadsheet, a
+    notebook, another tool, etc.). Any metric listed in
+    HEALTH_PRIVATE_FIELDS is still written as an empty cell in the file,
+    since those fields shouldn't leave the database at all, not just stay
+    out of the model's context.
+
+    Args:
+        start_date: First day to include, formatted YYYY-MM-DD.
+            Defaults to 30 days before end_date. Ranges over ~10 years are rejected.
+        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
+
+    Returns:
+        An ExportCsvResult with "path" (the written file's absolute
+        path), "rows_exported" (days with at least one recorded metric —
+        days with no data at all are not written), and "range" (the
+        start/end dates actually used).
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    try:
+        start, end = resolve_range(start_date, end_date, default_days=30)
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
+
+    try:
+        with _readonly_connection(HEALTH_DB_PATH) as conn:
+            cursor = conn.execute(
+                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " "
+                "FROM daily_metrics WHERE date BETWEEN ? AND ? ORDER BY date",
+                (start.isoformat(), end.isoformat()),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+    except db_error_types() as exc:
+        logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
+        if _is_locked_error(exc):
+            raise _tool_error(
+                ERR_DATABASE_LOCKED,
+                "Could not read the health database — it is locked by another process. Try again in a moment.",
+            ) from exc
+        raise _tool_error(
+            ERR_DATABASE_ERROR,
+            "Could not read the health database — it may be missing or corrupt. Try again, or re-run init_db.py.",
+        ) from exc
+
+    export_dir = HEALTH_DB_PATH.parent / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    out_path = export_dir / f"health_export_{start.isoformat()}_to_{end.isoformat()}.csv"
+
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["date", *METRIC_COLUMNS])
+        for row in rows:
+            redacted = _redact_private_fields(row)
+            writer.writerow([redacted["date"], *(redacted[col] for col in METRIC_COLUMNS)])
+
+    return ExportCsvResult(
+        path=str(out_path.resolve()),
+        rows_exported=len(rows),
+        range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
     )
 
 

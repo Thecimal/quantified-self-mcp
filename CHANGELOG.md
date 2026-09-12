@@ -8,6 +8,12 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 ## [Unreleased]
 
 ### Added
+- New `export_health_data_csv` tool: writes a date range of health
+  metrics to a CSV file on disk (next to the database) and returns only
+  the file's path and a row count, rather than the row values
+  themselves — so exporting a long history doesn't have to pass through
+  a cloud LLM's context. Respects `HEALTH_PRIVATE_FIELDS` the same way
+  `read_health_data` does.
 - `tests/test_logic.py`: real multi-threaded concurrency tests that hold
   a write lock on one connection while a second writes, and that fire
   several concurrent upserts at once — exercising WAL mode and

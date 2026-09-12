@@ -193,13 +193,16 @@ Clear today's mood entry.
 
 ## 🧠 MCP Tools
 
-The server currently provides three MCP tools:
+The server currently provides four MCP tools:
 
-| Tool               | Purpose                                              |
-| ------------------ | ---------------------------------------------------- |
-| `read_health_data` | Read health metrics for a selected date range        |
-| `log_daily_metric` | Record one or more health metrics for a specific day |
-| `clear_metric`     | Clear a single metric without affecting other data   |
+| Tool                     | Purpose                                                    |
+| ------------------------ | ----------------------------------------------------------- |
+| `read_health_data`       | Read health metrics for a selected date range                |
+| `log_daily_metric`       | Record one or more health metrics for a specific day         |
+| `clear_metric`           | Clear a single metric without affecting other data            |
+| `export_health_data_csv` | Write a date range of metrics to a local CSV file             |
+
+`export_health_data_csv` writes straight to disk next to the database and returns only the file's path and a row count — not the row values themselves — so exporting a long history doesn't have to pass through a cloud LLM's context just to get a file you can open elsewhere.
 
 The server also exposes read-only MCP resources for health metric schemas and individual days.
 
@@ -435,6 +438,9 @@ quantified-self-mcp/
 ├── requirements-dev.txt
 ├── SECURITY.md
 ├── CONTRIBUTING.md
+├── CODE_OF_CONDUCT.md
+├── CHANGELOG.md
+├── llms.txt
 ├── LICENSE
 └── README.md
 ```

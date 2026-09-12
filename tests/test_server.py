@@ -8,6 +8,7 @@ touch ./data/health.db or affect each other.
 """
 
 import asyncio
+import csv
 import json
 import sys
 from pathlib import Path
@@ -94,6 +95,47 @@ def test_read_health_data_rejects_inverted_range(health_db):
         health_db.read_health_data(start_date="2026-02-01", end_date="2026-01-01")
 
 
+def test_export_health_data_csv_writes_a_file_with_the_expected_rows(health_db):
+    health_db.log_daily_metric(date="2026-01-01", steps=5000, mood=4)
+    health_db.log_daily_metric(date="2026-01-02", steps=6000)
+
+    result = health_db.export_health_data_csv(start_date="2026-01-01", end_date="2026-01-02")
+
+    assert result.rows_exported == 2
+    out_path = Path(result.path)
+    assert out_path.exists()
+
+    with out_path.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]["date"] == "2026-01-01"
+    assert rows[0]["steps"] == "5000"
+    assert rows[0]["mood"] == "4"
+    assert rows[1]["date"] == "2026-01-02"
+    assert rows[1]["steps"] == "6000"
+    assert rows[1]["mood"] == ""
+
+
+def test_export_health_data_csv_redacts_private_fields(tmp_path, monkeypatch):
+    db_path = tmp_path / "health.db"
+    monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
+    monkeypatch.setenv("HEALTH_PRIVATE_FIELDS", "mood")
+    sys.modules.pop("server", None)
+    import server as health_db
+
+    health_db.log_daily_metric(date="2026-01-01", steps=5000, mood=4)
+    result = health_db.export_health_data_csv(start_date="2026-01-01", end_date="2026-01-01")
+
+    with Path(result.path).open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]["steps"] == "5000"
+    assert rows[0]["mood"] == ""
+
+
+def test_export_health_data_csv_rejects_inverted_range(health_db):
+    with pytest.raises(ToolError, match=r"\[invalid_range\]"):
+        health_db.export_health_data_csv(start_date="2026-02-01", end_date="2026-01-01")
+
+
 def test_database_locked_error_is_distinguished_from_generic_database_error(health_db, monkeypatch):
     """A concurrent-writer lock is retry-worthy; a missing/corrupt database
     isn't. Both used to surface as the same generic message — assert the
@@ -119,7 +161,12 @@ def test_every_tool_carries_the_cloud_model_warning(health_db):
     this warning verbatim, not just the module's own docs, and this stays
     true automatically for any tool added later.
     """
-    tools = (health_db.read_health_data, health_db.log_daily_metric, health_db.clear_metric)
+    tools = (
+        health_db.read_health_data,
+        health_db.log_daily_metric,
+        health_db.clear_metric,
+        health_db.export_health_data_csv,
+    )
     assert tools, "expected at least one tool to check"
     for tool in tools:
         assert health_db.CLOUD_MODEL_WARNING.strip() in tool.__doc__

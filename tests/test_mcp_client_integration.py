@@ -49,9 +49,14 @@ async def client(health_db):
         yield c
 
 
-async def test_list_tools_exposes_all_three_with_schemas_and_annotations(client):
+async def test_list_tools_exposes_all_four_with_schemas_and_annotations(client):
     tools = {tool.name: tool for tool in await client.list_tools()}
-    assert set(tools) == {"read_health_data", "log_daily_metric", "clear_metric"}
+    assert set(tools) == {
+        "read_health_data",
+        "log_daily_metric",
+        "clear_metric",
+        "export_health_data_csv",
+    }
 
     # Argument schemas come from the function signature via the protocol
     # layer, not something a direct call would ever check.
@@ -62,6 +67,7 @@ async def test_list_tools_exposes_all_three_with_schemas_and_annotations(client)
     # not just internal metadata.
     assert tools["read_health_data"].annotations.read_only_hint is True
     assert tools["clear_metric"].annotations.destructive_hint is True
+    assert tools["export_health_data_csv"].annotations.read_only_hint is True
 
 
 async def test_call_tool_round_trip_through_the_protocol(client):
