@@ -34,7 +34,7 @@ quantified-self-mcp = "server:main"
 quantified-self-init-db = "init_db:main"
 
 [tool.hatch.build.targets.wheel]
-include = ["server.py", "init_db.py", "logic.py", "import_adapters.py"]
+include = ["server.py", "init_db.py", "logic.py", "analytics.py", "import_adapters.py"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

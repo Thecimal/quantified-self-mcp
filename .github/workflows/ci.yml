@@ -58,4 +58,4 @@ jobs:
       - name: Verify wheel contains all required modules
         run: |
           pip install --force-reinstall dist/*.whl
-          python -c "import server, init_db, logic, import_adapters; print('wheel contents OK')"
+          python -c "import server, init_db, logic, analytics, import_adapters; print('wheel contents OK')"

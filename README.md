@@ -193,20 +193,40 @@ Clear today's mood entry.
 
 ## 🧠 MCP Tools
 
-The server currently provides four MCP tools:
+The server exposes twelve MCP tools, organized in three layers:
 
-| Tool                     | Purpose                                                    |
-| ------------------------ | ----------------------------------------------------------- |
-| `read_health_data`       | Read health metrics for a selected date range                |
-| `log_daily_metric`       | Record one or more health metrics for a specific day         |
-| `clear_metric`           | Clear a single metric without affecting other data            |
-| `export_health_data_csv` | Write a date range of metrics to a local CSV file             |
+**Layer 1 — Data**
+
+| Tool                     | Purpose                                                       |
+| ------------------------ | -------------------------------------------------------------- |
+| `read_health_data`       | Read all health metrics for a selected date range               |
+| `get_metric_history`     | Read a single metric's day-by-day values for a date range       |
+| `log_daily_metric`       | Record one or more health metrics for a specific day            |
+| `clear_metric`           | Clear a single metric without affecting other data              |
+| `export_health_data_csv` | Write a date range of metrics to a local CSV file                |
 
 `export_health_data_csv` writes straight to disk next to the database and returns only the file's path and a row count — not the row values themselves — so exporting a long history doesn't have to pass through a cloud LLM's context just to get a file you can open elsewhere.
 
+**Layer 2 — Analytics** (statistics computed over one or two metrics; see `analytics.py`)
+
+| Tool                       | Purpose                                                        |
+| -------------------------- | --------------------------------------------------------------- |
+| `get_baseline`              | Mean/median/stdev for a metric over a window — "what's normal"  |
+| `detect_metric_anomalies`   | Flag days that deviate sharply from a metric's own baseline     |
+| `calculate_metric_trend`    | Fit a straight-line trend (direction, slope, r²) over a window  |
+| `compare_metric_periods`    | Compare a metric's average between two date ranges              |
+| `find_metric_correlation`   | Pearson correlation between two metrics, with optional lag      |
+
+**Layer 3 — Personal intelligence** (composes Layer 2, returns facts rather than prose — the calling model still does the narration)
+
+| Tool                    | Purpose                                                              |
+| ------------------------ | --------------------------------------------------------------------- |
+| `get_recent_changes`     | Scan every metric for notable shifts, anomalies, or trends recently   |
+| `explain_metric_change`  | Build an evidence bundle for "why did X look like that on this day?"  |
+
 The server also exposes read-only MCP resources for health metric schemas and individual days.
 
-All data operations are scoped to the supported health metrics. The server does not expose arbitrary SQL execution to the model.
+All data operations are scoped to the supported health metrics. The server does not expose arbitrary SQL execution to the model. Any metric listed in `HEALTH_PRIVATE_FIELDS` is refused by every Layer 2/3 tool outright (not just redacted afterward), since a baseline or anomaly computed from a private metric would leak its shape even without ever printing a raw value.
 
 ---
 

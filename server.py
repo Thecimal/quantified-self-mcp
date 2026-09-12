@@ -41,6 +41,8 @@ import sqlite3
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date as date_type
+from datetime import timedelta
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -48,6 +50,14 @@ from fastmcp.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
+from analytics import (
+    Point,
+    calculate_trend,
+    compare_periods,
+    detect_anomalies,
+    find_correlations,
+)
+from analytics import baseline as compute_baseline
 from logic import (
     MAX_ROWS_RETURNED,
     METRIC_BOUNDS,
@@ -169,6 +179,109 @@ class ClearMetricResult(BaseModel):
     note: str | None = None
 
 
+# --- Layer 2 (analytics) / Layer 3 (personal intelligence) output models --
+#
+# These wrap the pure functions in analytics.py the same way the models
+# above wrap logic.py: FastMCP derives a JSON schema from the return type,
+# so a client gets structured_content it can consume directly rather than
+# re-parsing a free-form string.
+
+
+class MetricSeriesPoint(BaseModel):
+    date: str
+    value: float
+
+
+class GetMetricHistoryResult(BaseModel):
+    metric: str
+    range: DateRange
+    points: list[MetricSeriesPoint]
+
+
+class BaselineStats(BaseModel):
+    mean: float | None = None
+    median: float | None = None
+    stdev: float | None = None
+    n: int
+
+
+class GetBaselineResult(BaseModel):
+    metric: str
+    range: DateRange
+    baseline: BaselineStats
+
+
+class AnomalyPoint(BaseModel):
+    date: str
+    value: float
+    modified_z_score: float
+    direction: str
+
+
+class DetectAnomaliesResult(BaseModel):
+    metric: str
+    range: DateRange
+    threshold: float
+    anomalies: list[AnomalyPoint]
+
+
+class TrendStats(BaseModel):
+    direction: str
+    slope_per_day: float | None = None
+    r_squared: float | None = None
+    n: int
+
+
+class CalculateTrendResult(BaseModel):
+    metric: str
+    range: DateRange
+    trend: TrendStats
+
+
+class ComparePeriodsResult(BaseModel):
+    metric: str
+    period_a: DateRange
+    period_b: DateRange
+    period_a_stats: BaselineStats
+    period_b_stats: BaselineStats
+    delta: float | None = None
+    pct_change: float | None = None
+
+
+class CorrelationResult(BaseModel):
+    metric_a: str
+    metric_b: str
+    lag_days: int
+    r: float | None = None
+    n: int
+    note: str | None = None
+
+
+class ChangeNote(BaseModel):
+    metric: str
+    kind: str  # "shift" (period-over-period) | "anomaly" | "trend"
+    detail: str
+
+
+class GetRecentChangesResult(BaseModel):
+    recent_range: DateRange
+    baseline_range: DateRange
+    changes: list[ChangeNote]
+
+
+class ExplainMetricChangeResult(BaseModel):
+    metric: str
+    date: str
+    value: float | None = None
+    baseline_range: DateRange
+    baseline: BaselineStats
+    is_anomaly: bool
+    modified_z_score: float | None = None
+    trend: TrendStats
+    correlated_metrics: list[CorrelationResult]
+    narrative_facts: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -279,6 +392,57 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
     _ensure_db(db_path)
     with _logic_readonly_connection(db_path) as conn:
         yield conn
+
+
+def _fetch_metric_series(metric: str, start: date_type, end: date_type) -> list[Point]:
+    """Read a single metric's (date, value) series from daily_metrics,
+    skipping days where it's null.
+
+    Every Layer-2/Layer-3 tool below goes through this, so each gets the
+    same two guardrails read_health_data already applies: an unrecognized
+    metric name is rejected the same as an invalid_field error elsewhere in
+    this file, and a metric listed in HEALTH_PRIVATE_FIELDS is refused
+    outright rather than merely redacted — a baseline, trend, or anomaly
+    flag computed from a private metric would leak its *shape* to the
+    calling model even if the raw values were nulled out afterward, so
+    "private" has to mean "never fed into analytics," not just "never
+    printed raw."
+    """
+    if metric not in METRIC_COLUMNS:
+        raise _tool_error(ERR_INVALID_FIELD, f"metric must be one of: {', '.join(METRIC_COLUMNS)} — got {metric!r}")
+    if metric in PRIVATE_FIELDS:
+        raise _tool_error(
+            ERR_INVALID_FIELD,
+            f"{metric!r} is configured as private (HEALTH_PRIVATE_FIELDS) and can't be analyzed.",
+        )
+    try:
+        with _readonly_connection(HEALTH_DB_PATH) as conn:
+            cursor = conn.execute(
+                f"SELECT date, {metric} FROM daily_metrics "
+                f"WHERE date BETWEEN ? AND ? AND {metric} IS NOT NULL ORDER BY date",
+                (start.isoformat(), end.isoformat()),
+            )
+            rows = cursor.fetchall()
+    except db_error_types() as exc:
+        logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
+        if _is_locked_error(exc):
+            raise _tool_error(
+                ERR_DATABASE_LOCKED,
+                "Could not read the health database — it is locked by another process. Try again in a moment.",
+            ) from exc
+        raise _tool_error(
+            ERR_DATABASE_ERROR,
+            "Could not read the health database — it may be missing or corrupt. Try again, or re-run init_db.py.",
+        ) from exc
+    return [Point(parse_date(row["date"], "date"), float(row[metric])) for row in rows]
+
+
+def _baseline_stats(series: list[Point]) -> BaselineStats:
+    return BaselineStats(**compute_baseline(series))
+
+
+def _trend_stats(series: list[Point]) -> TrendStats:
+    return TrendStats(**calculate_trend(series))
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +823,535 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
     if row is None:
         return ClearMetricResult(cleared=field, note=f"No row exists for {day.isoformat()} — nothing to clear.")
     return ClearMetricResult(cleared=field, row=DailyMetricsRow(**_redact_private_fields(dict(row))))
+
+
+# ---------------------------------------------------------------------------
+# Layer 2: Analytics
+# ---------------------------------------------------------------------------
+#
+# Everything here is a thin MCP wrapper around a pure function in
+# analytics.py: fetch one metric's series with _fetch_metric_series (which
+# enforces HEALTH_PRIVATE_FIELDS), hand it to the analytics function, wrap
+# the result in a Pydantic model. None of these tools call each other over
+# MCP — they share plain Python functions instead, the same pattern
+# log_daily_metric/clear_metric already use for logic.py.
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get metric history",
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def get_metric_history(
+    metric: str, start_date: str | None = None, end_date: str | None = None
+) -> GetMetricHistoryResult:
+    """
+    Read one metric's day-by-day values, without the other six metrics
+    read_health_data always includes. Use this when you only care about a
+    single metric (e.g. before calling get_baseline or calculate_metric_trend
+    yourself) and don't need the full multi-metric payload.
+
+    Args:
+        metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
+            workout_minutes, mood, water_ml. Rejected if configured as
+            private via HEALTH_PRIVATE_FIELDS.
+        start_date: First day to include, formatted YYYY-MM-DD.
+            Defaults to 30 days before end_date.
+        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
+
+    Returns:
+        A GetMetricHistoryResult with "points" (date/value pairs; days with
+        no recorded value for this metric are simply absent).
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    try:
+        start, end = resolve_range(start_date, end_date, default_days=30)
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
+    series = _fetch_metric_series(metric, start, end)
+    return GetMetricHistoryResult(
+        metric=metric,
+        range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
+        points=[MetricSeriesPoint(date=p.day.isoformat(), value=p.value) for p in series],
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get metric baseline",
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def get_baseline(metric: str, start_date: str | None = None, end_date: str | None = None) -> GetBaselineResult:
+    """
+    Compute "what's normal" for one metric over a window: mean, median,
+    and standard deviation. This is the number every other analytics tool
+    below measures against, so a wider window (60-90+ days) gives a more
+    stable baseline than the 30-day default read_health_data uses.
+
+    Args:
+        metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
+            workout_minutes, mood, water_ml.
+        start_date: First day to include, formatted YYYY-MM-DD.
+            Defaults to 90 days before end_date.
+        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
+
+    Returns:
+        A GetBaselineResult with "baseline" (mean/median/stdev/n). All
+        fields are null and n is 0 if the metric has no data in range —
+        not an error, since "nothing logged yet" is an expected state.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    try:
+        start, end = resolve_range(start_date, end_date, default_days=90)
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
+    series = _fetch_metric_series(metric, start, end)
+    return GetBaselineResult(
+        metric=metric,
+        range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
+        baseline=_baseline_stats(series),
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Detect metric anomalies",
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def detect_metric_anomalies(
+    metric: str, start_date: str | None = None, end_date: str | None = None, threshold: float = 3.5
+) -> DetectAnomaliesResult:
+    """
+    Flag days where one metric deviated sharply from its own baseline over
+    the window, using a median/MAD-based modified z-score rather than a
+    mean/stdev z-score — more robust for short, noisy personal-health
+    series, where the mean/stdev version is easily dragged around by the
+    very outliers it's supposed to catch.
+
+    Args:
+        metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
+            workout_minutes, mood, water_ml.
+        start_date: First day to include, formatted YYYY-MM-DD.
+            Defaults to 90 days before end_date.
+        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
+        threshold: Modified z-score cutoff. 3.5 (the default, Iglewicz &
+            Hoaglin's standard value) flags only clear outliers; lower it
+            (e.g. 2.5) to see more borderline days.
+
+    Returns:
+        A DetectAnomaliesResult with "anomalies" (empty if fewer than 5
+        days have data, or if the metric has no meaningful spread).
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    try:
+        start, end = resolve_range(start_date, end_date, default_days=90)
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
+    series = _fetch_metric_series(metric, start, end)
+    anomalies = detect_anomalies(series, threshold=threshold)
+    return DetectAnomaliesResult(
+        metric=metric,
+        range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
+        threshold=threshold,
+        anomalies=[AnomalyPoint(**a) for a in anomalies],
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Calculate metric trend",
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def calculate_metric_trend(
+    metric: str, start_date: str | None = None, end_date: str | None = None
+) -> CalculateTrendResult:
+    """
+    Fit a simple straight-line trend to one metric over a window and
+    report its direction, slope (change per day), and r_squared (how well
+    a straight line actually fits — low r_squared means "noisy," not
+    "flat").
+
+    Args:
+        metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
+            workout_minutes, mood, water_ml.
+        start_date: First day to include, formatted YYYY-MM-DD.
+            Defaults to 30 days before end_date.
+        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
+
+    Returns:
+        A CalculateTrendResult with "trend". direction is
+        "insufficient_data" below 3 data points in range.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    try:
+        start, end = resolve_range(start_date, end_date, default_days=30)
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
+    series = _fetch_metric_series(metric, start, end)
+    return CalculateTrendResult(
+        metric=metric,
+        range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
+        trend=_trend_stats(series),
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Compare two periods",
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def compare_metric_periods(
+    metric: str,
+    period_a_start: str,
+    period_a_end: str,
+    period_b_start: str,
+    period_b_end: str,
+) -> ComparePeriodsResult:
+    """
+    Compare one metric's average between two date ranges — e.g. "this
+    month vs. last month" or "since starting a new medication vs. before."
+    The two ranges may be any length and need not be adjacent or equal in
+    size; each is summarized with its own baseline first.
+
+    Args:
+        metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
+            workout_minutes, mood, water_ml.
+        period_a_start, period_a_end: The "current"/later period, YYYY-MM-DD.
+        period_b_start, period_b_end: The period it's compared against, YYYY-MM-DD.
+
+    Returns:
+        A ComparePeriodsResult with each period's own baseline stats, plus
+        "delta" (period_a mean minus period_b mean) and "pct_change". Both
+        are null if either period has no data.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    try:
+        start_a, end_a = resolve_range(period_a_start, period_a_end, default_days=0)
+        start_b, end_b = resolve_range(period_b_start, period_b_end, default_days=0)
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
+    series_a = _fetch_metric_series(metric, start_a, end_a)
+    series_b = _fetch_metric_series(metric, start_b, end_b)
+    result = compare_periods(series_a, series_b)
+    return ComparePeriodsResult(
+        metric=metric,
+        period_a=DateRange(start_date=start_a.isoformat(), end_date=end_a.isoformat()),
+        period_b=DateRange(start_date=start_b.isoformat(), end_date=end_b.isoformat()),
+        period_a_stats=BaselineStats(**result["period_a"]),
+        period_b_stats=BaselineStats(**result["period_b"]),
+        delta=result["delta"],
+        pct_change=result["pct_change"],
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Find correlation between two metrics",
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def find_metric_correlation(
+    metric_a: str,
+    metric_b: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    lag_days: int = 0,
+) -> CorrelationResult:
+    """
+    Compute the Pearson correlation between two metrics over the same
+    window, joined by date. Correlation, not causation: a strong r just
+    means the two moved together, not that one caused the other.
+
+    Args:
+        metric_a, metric_b: Any two of steps, sleep_hours,
+            resting_heart_rate, weight_kg, workout_minutes, mood, water_ml.
+        start_date: First day to include, formatted YYYY-MM-DD.
+            Defaults to 90 days before end_date.
+        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
+        lag_days: Shift metric_b this many days later before joining — 1
+            tests whether metric_a today predicts metric_b tomorrow (e.g.
+            "does poor sleep tonight predict lower steps tomorrow?").
+            0 (default) compares same-day values.
+
+    Returns:
+        A CorrelationResult with "r" (-1 to 1) and "n" (overlapping days
+        used). "r" is null with fewer than 4 overlapping days.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    try:
+        start, end = resolve_range(start_date, end_date, default_days=90)
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
+    series_a = _fetch_metric_series(metric_a, start, end)
+    series_b = _fetch_metric_series(metric_b, start, end)
+    result = find_correlations(series_a, series_b, lag_days=lag_days)
+    return CorrelationResult(metric_a=metric_a, metric_b=metric_b, **result)
+
+
+# ---------------------------------------------------------------------------
+# Layer 3: Personal intelligence
+# ---------------------------------------------------------------------------
+#
+# These compose the Layer-2 functions above rather than calling any LLM
+# themselves — each returns structured facts (numbers, flags, short plain
+# strings), never generated prose. Turning those facts into a narrative
+# answer is left to whichever model is calling this server: an MCP tool
+# that phoned out to an LLM internally would double the latency and cost of
+# every call, and would need its own API key/network access, undermining
+# the fully-local, single-model design the rest of this server relies on.
+# get_health_summary, get_behavior_patterns, and get_personal_baseline
+# (percentile-flavored framing of get_baseline) are natural next additions
+# in this same style: fetch via _fetch_metric_series, compute via
+# analytics.py, return facts.
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Get recent changes",
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
+    """
+    Scan every (non-private) metric for what's changed lately: a recent
+    period vs. the four-times-as-long period before it (period-over-period
+    shift), any anomalies inside the recent period, and a trend over it.
+    The single best tool to start a "how have I been doing?" conversation
+    with — it does the scanning across all metrics that would otherwise
+    take one get_baseline/detect_metric_anomalies/calculate_metric_trend
+    call per metric.
+
+    Args:
+        days: Length of the "recent" window in days (default 7). The
+            comparison baseline is the 4x-as-long period immediately
+            before it, so a 7-day recent window compares against the
+            preceding 28 days.
+
+    Returns:
+        A GetRecentChangesResult with "changes": one entry per metric per
+        notable finding (a >=15% period-over-period shift, any anomaly in
+        the recent window, or a clear non-flat trend with r_squared >=
+        0.3). Metrics with nothing notable, or no data, are simply absent
+        — this tool reports signal, not a status page for every metric.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    if days < 2:
+        raise _tool_error(ERR_INVALID_RANGE, "days must be at least 2.")
+    end = date_type.today()
+    recent_start = end - timedelta(days=days)
+    baseline_start = recent_start - timedelta(days=days * 4)
+    baseline_end = recent_start - timedelta(days=1)
+
+    changes: list[ChangeNote] = []
+    for metric in METRIC_COLUMNS:
+        if metric in PRIVATE_FIELDS:
+            continue
+        recent_series = _fetch_metric_series(metric, recent_start, end)
+        baseline_series = _fetch_metric_series(metric, baseline_start, baseline_end)
+
+        comparison = compare_periods(recent_series, baseline_series)
+        if comparison["pct_change"] is not None and abs(comparison["pct_change"]) >= 15:
+            direction = "up" if comparison["pct_change"] > 0 else "down"
+            changes.append(
+                ChangeNote(
+                    metric=metric,
+                    kind="shift",
+                    detail=(
+                        f"{metric} is {direction} {abs(comparison['pct_change'])}% over the last {days} days "
+                        f"(avg {comparison['period_a']['mean']}) vs. the {days * 4} days before that "
+                        f"(avg {comparison['period_b']['mean']})."
+                    ),
+                )
+            )
+
+        for anomaly in detect_anomalies(recent_series):
+            changes.append(
+                ChangeNote(
+                    metric=metric,
+                    kind="anomaly",
+                    detail=(
+                        f"{metric} on {anomaly['date']} was {anomaly['value']} "
+                        f"({anomaly['direction']} the recent median, "
+                        f"modified z-score {anomaly['modified_z_score']})."
+                    ),
+                )
+            )
+
+        trend = calculate_trend(recent_series)
+        if trend["direction"] not in ("flat", "insufficient_data") and (trend["r_squared"] or 0) >= 0.3:
+            changes.append(
+                ChangeNote(
+                    metric=metric,
+                    kind="trend",
+                    detail=f"{metric} has been {trend['direction']} over the last {days} days "
+                    f"({trend['slope_per_day']:+g}/day, r²={trend['r_squared']}).",
+                )
+            )
+
+    return GetRecentChangesResult(
+        recent_range=DateRange(start_date=recent_start.isoformat(), end_date=end.isoformat()),
+        baseline_range=DateRange(start_date=baseline_start.isoformat(), end_date=baseline_end.isoformat()),
+        changes=changes,
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Explain a metric change",
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
+    """
+    Build an evidence bundle for "why did my <metric> look like that on
+    <date>?": that day's value against a 90-day baseline, whether it
+    qualifies as an anomaly, the trend leading into it, and any other
+    metric that correlates with it strongly enough to be worth mentioning.
+    Returns facts, not an explanation — turning "sleep was 2.6 stdev below
+    baseline and resting heart rate correlates at r=0.71" into an actual
+    answer for the person is what the calling model should do with these
+    facts, not something this tool guesses at itself.
+
+    Args:
+        metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
+            workout_minutes, mood, water_ml.
+        date: The day to explain, formatted YYYY-MM-DD.
+
+    Returns:
+        An ExplainMetricChangeResult with the day's value, the 90-day
+        baseline it's measured against, whether it's an anomaly, the
+        30-day trend ending on that date, and up to 5 other metrics with
+        |r| >= 0.5 over the same 90-day window (each still just a
+        correlation — see find_metric_correlation's note on causation).
+        "narrative_facts" restates the above as short plain-English
+        sentences, for convenience when composing a reply.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+    """
+    try:
+        target_day = parse_date(date, "date")
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
+
+    baseline_start = target_day - timedelta(days=90)
+    series = _fetch_metric_series(metric, baseline_start, target_day)
+    stats = compute_baseline(series)
+    target_point = next((p for p in series if p.day == target_day), None)
+    value = target_point.value if target_point else None
+
+    anomalies = detect_anomalies(series)
+    matching_anomaly = next((a for a in anomalies if a["date"] == target_day.isoformat()), None)
+
+    trend_start = target_day - timedelta(days=30)
+    trend_series = _fetch_metric_series(metric, trend_start, target_day)
+    trend = calculate_trend(trend_series)
+
+    correlated: list[CorrelationResult] = []
+    for other in METRIC_COLUMNS:
+        if other == metric or other in PRIVATE_FIELDS:
+            continue
+        other_series = _fetch_metric_series(other, baseline_start, target_day)
+        result = find_correlations(series, other_series, lag_days=0)
+        if result["r"] is not None and abs(result["r"]) >= 0.5:
+            correlated.append(CorrelationResult(metric_a=metric, metric_b=other, **result))
+    correlated.sort(key=lambda c: abs(c.r or 0), reverse=True)
+    correlated = correlated[:5]
+
+    facts: list[str] = []
+    if value is None:
+        facts.append(f"No {metric} value is logged for {date}.")
+    else:
+        facts.append(f"{metric} on {date} was {value}.")
+    if stats["mean"] is not None:
+        facts.append(
+            f"Over the preceding 90 days, {metric} averaged {stats['mean']} "
+            f"(median {stats['median']}, n={stats['n']})."
+        )
+    if matching_anomaly:
+        facts.append(
+            f"That value is a statistical anomaly: {matching_anomaly['direction']} the 90-day median "
+            f"(modified z-score {matching_anomaly['modified_z_score']})."
+        )
+    if trend["direction"] not in ("flat", "insufficient_data"):
+        facts.append(
+            f"{metric} had been {trend['direction']} over the 30 days leading up to {date} "
+            f"(r²={trend['r_squared']})."
+        )
+    for c in correlated:
+        facts.append(f"{c.metric_b} correlates with {metric} over this window (r={c.r}, n={c.n}).")
+
+    return ExplainMetricChangeResult(
+        metric=metric,
+        date=date,
+        value=value,
+        baseline_range=DateRange(start_date=baseline_start.isoformat(), end_date=target_day.isoformat()),
+        baseline=BaselineStats(**stats),
+        is_anomaly=matching_anomaly is not None,
+        modified_z_score=matching_anomaly["modified_z_score"] if matching_anomaly else None,
+        trend=_trend_stats(trend_series),
+        correlated_metrics=correlated,
+        narrative_facts=facts,
+    )
 
 
 # ---------------------------------------------------------------------------
