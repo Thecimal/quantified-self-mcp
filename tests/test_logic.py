@@ -26,6 +26,7 @@ from logic import (
     MIGRATIONS,
     SCHEMA_VERSION,
     V5_ADDED_COLUMNS,
+    WORKOUT_INTENSITIES,
     aggregate_measurements_to_daily,
     connect_writable,
     db_error_types,
@@ -34,9 +35,11 @@ from logic import (
     ensure_schema,
     get_metric_provenance,
     insert_measurement,
+    insert_workout_session,
     numeric_stats,
     parse_date,
     query_measurements,
+    query_workout_sessions,
     readonly_connection,
     resolve_range,
     resolve_source_conflicts,
@@ -301,6 +304,54 @@ def test_query_measurements_filters_by_metric_and_date_range(tmp_path):
         assert len(by_source) == 1 and by_source[0]["value"] == 100
     finally:
         conn.close()
+
+
+def test_insert_workout_session_returns_id_and_persists_row(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        row_id = insert_workout_session(
+            conn,
+            date="2026-09-12",
+            activity_type="running",
+            duration_minutes=60,
+            start_time="18:30",
+            intensity="high",
+            avg_heart_rate=150,
+            max_heart_rate=172,
+            source="Apple Watch",
+            notes="Loop around the park",
+        )
+        conn.row_factory = row_class()
+        row = dict(conn.execute("SELECT * FROM workout_sessions WHERE id = ?", (row_id,)).fetchone())
+        assert row["activity_type"] == "running"
+        assert row["duration_minutes"] == 60
+        assert row["intensity"] == "high"
+        assert row["avg_heart_rate"] == 150
+        assert row["source"] == "Apple Watch"
+    finally:
+        conn.close()
+
+
+def test_query_workout_sessions_filters_by_date_range_and_activity_type(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_workout_session(conn, date="2026-09-10", activity_type="running", duration_minutes=30)
+        insert_workout_session(conn, date="2026-09-12", activity_type="cycling", duration_minutes=45)
+        insert_workout_session(conn, date="2026-09-12", activity_type="running", duration_minutes=20)
+
+        by_date = query_workout_sessions(conn, start="2026-09-12", end="2026-09-12")
+        assert len(by_date) == 2
+
+        by_activity = query_workout_sessions(conn, activity_type="cycling")
+        assert len(by_activity) == 1 and by_activity[0]["duration_minutes"] == 45
+    finally:
+        conn.close()
+
+
+def test_workout_intensities_is_a_small_fixed_vocabulary():
+    assert WORKOUT_INTENSITIES == {"low", "moderate", "high"}
 
 
 def test_aggregate_measurements_to_daily_sums_and_averages_correctly(tmp_path):

@@ -69,15 +69,18 @@ from analytics import baseline as compute_baseline
 from logic import (
     MAX_ROWS_RETURNED,
     METRIC_BOUNDS,
+    WORKOUT_INTENSITIES,
     aggregate_measurements_to_daily,
     connect_writable,
     db_error_types,
     default_data_dir,
     ensure_schema,
     insert_measurement,
+    insert_workout_session,
     numeric_stats,
     parse_date,
     query_measurements,
+    query_workout_sessions,
     resolve_range,
     row_class,
     upsert_metrics,
@@ -337,6 +340,29 @@ class GetRecentChangesResult(BaseModel):
     changes: list[ChangeNote]
 
 
+class WorkoutSessionRow(BaseModel):
+    id: int
+    date: str
+    activity_type: str
+    start_time: str | None = None
+    duration_minutes: int
+    intensity: str | None = None
+    avg_heart_rate: int | None = None
+    max_heart_rate: int | None = None
+    source: str | None = None
+    notes: str | None = None
+    created_at: str
+
+
+class LogWorkoutSessionResult(BaseModel):
+    session: WorkoutSessionRow
+
+
+class ReadWorkoutSessionsResult(BaseModel):
+    sessions: list[WorkoutSessionRow]
+    count: int
+
+
 class ExplainMetricChangeResult(BaseModel):
     metric: str
     date: str
@@ -347,6 +373,7 @@ class ExplainMetricChangeResult(BaseModel):
     modified_z_score: float | None = None
     trend: TrendStats
     correlated_metrics: list[CorrelationResult]
+    sessions: list[WorkoutSessionRow] = []
     narrative_facts: list[str]
 
 
@@ -533,6 +560,9 @@ ERR_DATABASE_LOCKED = "database_locked"
 ERR_DATABASE_ERROR = "database_error"
 ERR_INVALID_TIMESTAMP = "invalid_timestamp"
 ERR_INVALID_METRIC = "invalid_metric"
+ERR_INVALID_ACTIVITY_TYPE = "invalid_activity_type"
+ERR_INVALID_DURATION = "invalid_duration"
+ERR_INVALID_INTENSITY = "invalid_intensity"
 
 
 def _tool_error(code: str, message: str) -> ToolError:
@@ -1037,6 +1067,154 @@ def read_measurements(
         raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
 
     return ReadMeasurementsResult(measurements=[MeasurementRow(**row) for row in rows], count=len(rows))
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Log a workout session",
+        readOnlyHint=False,
+        destructiveHint=False,  # always inserts a new row, never overwrites one
+        idempotentHint=False,  # calling it twice logs two sessions, not one
+        openWorldHint=False,
+    )
+)
+def log_workout_session(
+    date: str,
+    activity_type: str,
+    duration_minutes: int,
+    start_time: str | None = None,
+    intensity: str | None = None,
+    avg_heart_rate: int | None = None,
+    max_heart_rate: int | None = None,
+    source: str | None = None,
+    notes: str | None = None,
+) -> LogWorkoutSessionResult:
+    """
+    Record one workout as a structured event — activity, timing, intensity,
+    and heart-rate response — rather than folding it into the day's
+    workout_minutes total. Use this alongside (not instead of)
+    log_daily_metric/log_measurement for workout_minutes: this is what lets
+    explain_metric_change say *what* the workout was, not just how long it
+    ran. A day can have more than one session; each call adds a new row.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
+    Args:
+        date: The day the workout happened, YYYY-MM-DD.
+        activity_type: What kind of workout, e.g. "running", "cycling",
+            "strength". Free-form.
+        duration_minutes: How long it lasted, in minutes.
+        start_time: When it started, HH:MM (24-hour) or a full ISO
+            timestamp. Optional.
+        intensity: One of "low", "moderate", "high". Optional.
+        avg_heart_rate: Average heart rate during the workout, bpm. Optional.
+        max_heart_rate: Peak heart rate during the workout, bpm. Optional.
+        source: Where this came from, e.g. "Apple Watch", "manual". Optional.
+        notes: Free-text notes, e.g. route or how it felt. Optional.
+
+    Returns:
+        A LogWorkoutSessionResult with the stored row, including its new id.
+    """
+    try:
+        parse_date(date, "date")
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
+    if not activity_type.strip():
+        raise _tool_error(ERR_INVALID_ACTIVITY_TYPE, "activity_type must be a non-empty string.")
+    if duration_minutes <= 0:
+        raise _tool_error(ERR_INVALID_DURATION, "duration_minutes must be a positive integer.")
+    if intensity is not None and intensity not in WORKOUT_INTENSITIES:
+        raise _tool_error(
+            ERR_INVALID_INTENSITY,
+            f"intensity must be one of {sorted(WORKOUT_INTENSITIES)}, got {intensity!r}.",
+        )
+
+    try:
+        conn = connect_writable(HEALTH_DB_PATH)
+        try:
+            ensure_schema(conn)
+            new_id = insert_workout_session(
+                conn,
+                date=date,
+                activity_type=activity_type,
+                duration_minutes=duration_minutes,
+                start_time=start_time,
+                intensity=intensity,
+                avg_heart_rate=avg_heart_rate,
+                max_heart_rate=max_heart_rate,
+                source=source,
+                notes=notes,
+            )
+            conn.row_factory = row_class()
+            row = conn.execute("SELECT * FROM workout_sessions WHERE id = ?", (new_id,)).fetchone()
+        finally:
+            conn.close()
+    except db_error_types() as exc:
+        logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
+        code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
+        raise _tool_error(
+            code,
+            "Could not write to the health database — it may be locked by another process. Try again in a moment.",
+        ) from exc
+
+    return LogWorkoutSessionResult(session=WorkoutSessionRow(**dict(row)))
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Read workout sessions",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def read_workout_sessions(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    activity_type: str | None = None,
+    limit: int = 200,
+) -> ReadWorkoutSessionsResult:
+    """
+    Read individual workout sessions (not the daily_metrics
+    workout_minutes total), most recent day first. Use this to see what
+    each workout actually was — activity, timing, intensity, heart rate —
+    rather than just a day's summed minutes.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
+    Args:
+        start_date: Only return sessions on/after this date (YYYY-MM-DD). Omit for no lower bound.
+        end_date: Only return sessions on/before this date (YYYY-MM-DD). Omit for no upper bound.
+        activity_type: Only return sessions of this activity type. Omit for all types.
+        limit: Maximum rows to return (default 200).
+
+    Returns:
+        A ReadWorkoutSessionsResult with the matching rows and a count.
+    """
+    try:
+        conn = connect_writable(HEALTH_DB_PATH)
+        try:
+            ensure_schema(conn)
+            conn.row_factory = row_class()
+            rows = query_workout_sessions(
+                conn, start=start_date, end=end_date, activity_type=activity_type, limit=limit
+            )
+        finally:
+            conn.close()
+    except db_error_types() as exc:
+        logger.error("Database error reading from %s: %s", HEALTH_DB_PATH, exc)
+        raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
+
+    return ReadWorkoutSessionsResult(sessions=[WorkoutSessionRow(**row) for row in rows], count=len(rows))
 
 
 @mcp.tool(
@@ -1682,6 +1860,28 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     for c in correlated:
         facts.append(f"{c.metric_b} correlates with {metric} over this window (r={c.r}, n={c.n}).")
 
+    sessions: list[WorkoutSessionRow] = []
+    if metric == "workout_minutes":
+        try:
+            conn = connect_writable(HEALTH_DB_PATH)
+            try:
+                ensure_schema(conn)
+                conn.row_factory = row_class()
+                session_rows = query_workout_sessions(conn, start=date, end=date)
+            finally:
+                conn.close()
+        except db_error_types() as exc:
+            logger.error("Database error reading from %s: %s", HEALTH_DB_PATH, exc)
+        else:
+            sessions = [WorkoutSessionRow(**row) for row in session_rows]
+            for s in sessions:
+                detail = f"Logged workout: {s.activity_type}, {s.duration_minutes} min"
+                if s.intensity:
+                    detail += f", {s.intensity} intensity"
+                if s.avg_heart_rate:
+                    detail += f", avg HR {s.avg_heart_rate}"
+                facts.append(detail + ".")
+
     return ExplainMetricChangeResult(
         metric=metric,
         date=date,
@@ -1692,6 +1892,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         modified_z_score=matching_anomaly["modified_z_score"] if matching_anomaly else None,
         trend=_trend_stats(trend_series),
         correlated_metrics=correlated,
+        sessions=sessions,
         narrative_facts=facts,
     )
 

@@ -62,6 +62,8 @@ async def test_list_tools_exposes_all_expected_tools_with_schemas_and_annotation
         # Raw measurements / provenance
         "log_measurement",
         "read_measurements",
+        "log_workout_session",
+        "read_workout_sessions",
         "aggregate_measurements",
         "get_metric_provenance",
         # Layer 2: analytics
@@ -262,3 +264,56 @@ async def test_get_recent_changes_and_explain_metric_change(client):
     assert result["value"] == 2000
     assert result["is_anomaly"] is True
     assert any("anomaly" in fact for fact in result["narrative_facts"])
+
+
+async def test_log_and_read_workout_sessions_round_trip(client):
+    logged = await client.call_tool(
+        "log_workout_session",
+        {
+            "date": "2026-09-12",
+            "activity_type": "running",
+            "duration_minutes": 60,
+            "start_time": "18:30",
+            "intensity": "high",
+            "avg_heart_rate": 150,
+            "source": "Apple Watch",
+        },
+    )
+    session = logged.structured_content["session"]
+    assert session["activity_type"] == "running"
+    assert session["intensity"] == "high"
+
+    read_back = await client.call_tool(
+        "read_workout_sessions", {"start_date": "2026-09-12", "end_date": "2026-09-12"}
+    )
+    assert read_back.structured_content["count"] == 1
+    assert read_back.structured_content["sessions"][0]["avg_heart_rate"] == 150
+
+    rejected = await client.call_tool(
+        "log_workout_session",
+        {"date": "2026-09-12", "activity_type": "running", "duration_minutes": 30, "intensity": "extreme"},
+        raise_on_error=False,
+    )
+    assert rejected.is_error is True
+    assert "[invalid_intensity]" in rejected.content[0].text
+
+
+async def test_explain_metric_change_includes_workout_sessions_for_workout_minutes(client):
+    await client.call_tool("log_daily_metric", {"date": "2026-09-12", "workout_minutes": 60})
+    await client.call_tool(
+        "log_workout_session",
+        {
+            "date": "2026-09-12",
+            "activity_type": "running",
+            "duration_minutes": 60,
+            "intensity": "high",
+            "avg_heart_rate": 150,
+        },
+    )
+
+    explanation = await client.call_tool(
+        "explain_metric_change", {"metric": "workout_minutes", "date": "2026-09-12"}
+    )
+    result = explanation.structured_content
+    assert result["sessions"][0]["activity_type"] == "running"
+    assert any("running" in fact for fact in result["narrative_facts"])

@@ -139,12 +139,49 @@ def _migrate_v5_add_heart_rate_hrv_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {name} {sqltype}")
 
 
+# workout_sessions holds one row per discrete workout, with the structured
+# detail a single workout_minutes number can't carry: what kind of activity
+# it was, when it started, how intense it was, and the heart-rate response
+# to it. This sits alongside daily_metrics/measurements rather than
+# replacing either — workout_minutes on daily_metrics stays the fast daily
+# total analytics.py reads, while a day's workout_sessions rows are what
+# explain_metric_change and get_recent_changes pull in to say *why* that
+# total looks the way it does.
+WORKOUT_SESSIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS workout_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    activity_type TEXT NOT NULL,
+    start_time TEXT,
+    duration_minutes INTEGER NOT NULL,
+    intensity TEXT,
+    avg_heart_rate INTEGER,
+    max_heart_rate INTEGER,
+    source TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_workout_sessions_date ON workout_sessions (date);
+"""
+
+# Free-form activity_type is allowed (see insert_workout_session), but
+# intensity is kept to a fixed, small vocabulary so callers building
+# on top of it (analytics, explain_metric_change) can compare/group on it
+# reliably instead of dealing with arbitrary strings.
+WORKOUT_INTENSITIES = frozenset({"low", "moderate", "high"})
+
+
+def _migrate_v6_create_workout_sessions_table(conn: sqlite3.Connection) -> None:
+    conn.executescript(WORKOUT_SESSIONS_SCHEMA)
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "create daily_metrics table", _migrate_v1_create_table),
     (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
     (3, "create measurements table", _migrate_v3_create_measurements_table),
     (4, "add importer, imported_at provenance columns to measurements", _migrate_v4_add_measurement_provenance_columns),
     (5, "add heart_rate, hrv_ms columns", _migrate_v5_add_heart_rate_hrv_columns),
+    (6, "create workout_sessions table", _migrate_v6_create_workout_sessions_table),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -547,6 +584,86 @@ def query_measurements(
     rows = cursor.execute(
         f"SELECT id, timestamp, metric, value, unit, source, source_type, importer, imported_at, created_at "
         f"FROM measurements {where} ORDER BY timestamp DESC LIMIT :limit",
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def insert_workout_session(
+    conn: sqlite3.Connection,
+    date: str,
+    activity_type: str,
+    duration_minutes: int,
+    start_time: str | None = None,
+    intensity: str | None = None,
+    avg_heart_rate: int | None = None,
+    max_heart_rate: int | None = None,
+    source: str | None = None,
+    notes: str | None = None,
+) -> int:
+    """Insert one workout_sessions row and return its id.
+
+    Always inserts rather than upserting — a day can have more than one
+    workout. `date` and `duration_minutes` are the only fields daily
+    totals need; everything else is optional context that either isn't
+    always known or isn't always tracked by every source. `intensity`,
+    if given, must be one of WORKOUT_INTENSITIES (checked by callers
+    such as server.py's log_workout_session, not here, so this stays
+    usable from import_adapters.py for sources with their own scale).
+    Requires a writable connection; commits before returning.
+    """
+    cursor = conn.execute(
+        "INSERT INTO workout_sessions "
+        "(date, activity_type, start_time, duration_minutes, intensity, "
+        "avg_heart_rate, max_heart_rate, source, notes) "
+        "VALUES (:date, :activity_type, :start_time, :duration_minutes, :intensity, "
+        ":avg_heart_rate, :max_heart_rate, :source, :notes)",
+        {
+            "date": date,
+            "activity_type": activity_type,
+            "start_time": start_time,
+            "duration_minutes": duration_minutes,
+            "intensity": intensity,
+            "avg_heart_rate": avg_heart_rate,
+            "max_heart_rate": max_heart_rate,
+            "source": source,
+            "notes": notes,
+        },
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def query_workout_sessions(
+    conn: sqlite3.Connection,
+    start: str | None = None,
+    end: str | None = None,
+    activity_type: str | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    """Return workout_sessions rows matching the given filters, most
+    recent day first (then most recently inserted within a day). start/end
+    compare against `date` (YYYY-MM-DD) inclusively. All filters are
+    optional; omitting them all returns the most recent `limit` sessions.
+    """
+    clauses, params = [], {}
+    if start is not None:
+        clauses.append("date >= :start")
+        params["start"] = start
+    if end is not None:
+        clauses.append("date <= :end")
+        params["end"] = end
+    if activity_type is not None:
+        clauses.append("activity_type = :activity_type")
+        params["activity_type"] = activity_type
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params["limit"] = limit
+    cursor = conn.cursor()
+    cursor.row_factory = row_class()
+    rows = cursor.execute(
+        f"SELECT id, date, activity_type, start_time, duration_minutes, intensity, "
+        f"avg_heart_rate, max_heart_rate, source, notes, created_at "
+        f"FROM workout_sessions {where} ORDER BY date DESC, id DESC LIMIT :limit",
         params,
     ).fetchall()
     return [dict(row) for row in rows]

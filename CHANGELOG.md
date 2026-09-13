@@ -8,6 +8,13 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 ## [Unreleased]
 
 ### Added
+- **`workout_sessions` table (schema v6)** — one row per workout instead
+  of a single daily `workout_minutes` total: `activity_type`,
+  `start_time`, `duration_minutes`, `intensity` (low/moderate/high),
+  `avg_heart_rate`, `max_heart_rate`, `source`, `notes`. New
+  `log_workout_session` / `read_workout_sessions` tools, and
+  `explain_metric_change` now attaches the day's sessions (and a
+  narrative fact per session) when explaining `workout_minutes`.
 - **Provenance columns on `measurements` (schema v4)** — `importer` (which
   import path wrote the row, e.g. `"apple-health"`) and `imported_at`
   (when that import ran), alongside the existing `source`/`source_type`.
