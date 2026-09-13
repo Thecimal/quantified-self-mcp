@@ -142,6 +142,8 @@ Quantified Self MCP currently supports:
 * 👟 Daily steps
 * 😴 Sleep duration
 * ❤️ Resting heart rate
+* ❤️ Heart rate
+* 📈 Heart-rate variability (HRV)
 * ⚖️ Weight
 * 🏋️ Workout minutes
 * 🙂 Mood
@@ -193,40 +195,79 @@ Clear today's mood entry.
 
 ## 🧠 MCP Tools
 
-The server exposes twelve MCP tools, organized in three layers:
+The server exposes **thirteen MCP tools**, organized in three layers:
 
 **Layer 1 — Data**
 
-| Tool                     | Purpose                                                       |
-| ------------------------ | -------------------------------------------------------------- |
-| `read_health_data`       | Read all health metrics for a selected date range               |
-| `get_metric_history`     | Read a single metric's day-by-day values for a date range       |
-| `log_daily_metric`       | Record one or more health metrics for a specific day            |
-| `clear_metric`           | Clear a single metric without affecting other data              |
-| `export_health_data_csv` | Write a date range of metrics to a local CSV file                |
+| Tool                     | Purpose                                                                 |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `read_health_data`       | Read all health metrics for a selected date range                       |
+| `get_metric_history`     | Read a single metric's day-by-day values for a date range               |
+| `log_daily_metric`       | Record one or more health metrics for a specific day                    |
+| `clear_metric`           | Clear a single metric without affecting other data                      |
+| `export_health_data_csv` | Write a date range of metrics to a local CSV file                       |
+| `get_metric_provenance`  | Retrieve provenance information for a health metric and its source data |
 
 `export_health_data_csv` writes straight to disk next to the database and returns only the file's path and a row count — not the row values themselves — so exporting a long history doesn't have to pass through a cloud LLM's context just to get a file you can open elsewhere.
 
 **Layer 2 — Analytics** (statistics computed over one or two metrics; see `analytics.py`)
 
-| Tool                       | Purpose                                                        |
-| -------------------------- | --------------------------------------------------------------- |
-| `get_baseline`              | Mean/median/stdev for a metric over a window — "what's normal"  |
-| `detect_metric_anomalies`   | Flag days that deviate sharply from a metric's own baseline     |
-| `calculate_metric_trend`    | Fit a straight-line trend (direction, slope, r²) over a window  |
-| `compare_metric_periods`    | Compare a metric's average between two date ranges              |
-| `find_metric_correlation`   | Pearson correlation between two metrics, with optional lag      |
+| Tool                      | Purpose                                                        |
+| ------------------------- | -------------------------------------------------------------- |
+| `get_baseline`            | Mean/median/stdev for a metric over a window — "what's normal" |
+| `detect_metric_anomalies` | Flag days that deviate sharply from a metric's own baseline    |
+| `calculate_metric_trend`  | Fit a straight-line trend (direction, slope, r²) over a window |
+| `compare_metric_periods`  | Compare a metric's average between two date ranges             |
+| `find_metric_correlation` | Pearson correlation between two metrics, with optional lag     |
 
 **Layer 3 — Personal intelligence** (composes Layer 2, returns facts rather than prose — the calling model still does the narration)
 
 | Tool                    | Purpose                                                              |
-| ------------------------ | --------------------------------------------------------------------- |
-| `get_recent_changes`     | Scan every metric for notable shifts, anomalies, or trends recently   |
-| `explain_metric_change`  | Build an evidence bundle for "why did X look like that on this day?"  |
+| ----------------------- | -------------------------------------------------------------------- |
+| `get_recent_changes`    | Scan every metric for notable shifts, anomalies, or trends recently  |
+| `explain_metric_change` | Build an evidence bundle for "why did X look like that on this day?" |
 
 The server also exposes read-only MCP resources for health metric schemas and individual days.
 
 All data operations are scoped to the supported health metrics. The server does not expose arbitrary SQL execution to the model. Any metric listed in `HEALTH_PRIVATE_FIELDS` is refused by every Layer 2/3 tool outright (not just redacted afterward), since a baseline or anomaly computed from a private metric would leak its shape even without ever printing a raw value.
+
+---
+
+## 📚 Documentation Source of Truth
+
+The MCP server implementation is the authoritative source for its available tools and schemas.
+
+Because MCP clients and directories such as Glama inspect the running server directly, manually maintained tool lists can become outdated as new tools and metrics are added.
+
+The project therefore treats the registered MCP tools and their schemas as the source of truth for tool documentation.
+
+Tool documentation should be generated from the server's registered tools rather than maintained independently wherever practical.
+
+A documentation check should ensure that:
+
+```text
+MCP Server
+    ↓
+Registered Tools
+    ↓
+Generated Documentation
+    ↓
+README / TOOLS.md
+```
+
+remain synchronized.
+
+This prevents discrepancies between:
+
+```text
+Actual implementation
+        ≠
+GitHub documentation
+        ≠
+MCP directory inspection
+```
+
+and makes the available MCP interface easier for users, contributors, AI agents, and MCP directories to understand.
 
 ---
 
@@ -245,6 +286,8 @@ date
 steps
 sleep_hours
 resting_heart_rate
+heart_rate
+hrv_ms
 weight_kg
 workout_minutes
 mood
@@ -490,15 +533,17 @@ Quantified Self MCP is available through the **Glama MCP directory**.
 
 ### Glama Score
 
-**A / A / B**
+**A / A / A**
 
 | Category    | Score |
 | ----------- | ----- |
 | License     | **A** |
 | Quality     | **A** |
-| Maintenance | **B** |
+| Maintenance | **A** |
 
-The project is listed as a **Python / Local** MCP server on Glama, and its current MCP inspection shows three health-data tools with maintained activity.
+The project is listed as a **Python / Local** MCP server on Glama. Glama performs its own inspection of the MCP server and may expose the current registered tools and schemas directly.
+
+Because the server implementation is the source of truth, the Glama inspection may reflect newly registered tools or metrics before corresponding manually written documentation has been updated.
 
 **[View Quantified Self MCP on Glama →](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)**
 
