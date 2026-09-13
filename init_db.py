@@ -28,9 +28,14 @@ Required CSV columns (header names are matched case-insensitively):
     date
 
 The original columns (steps, sleep_hours, resting_heart_rate) and the
-newer ones (weight_kg, workout_minutes, mood, water_ml) are all read only
-if present in a given CSV's header — this is what makes the incremental
-update described below work for any of them, not just the newer ones.
+newer ones (weight_kg, workout_minutes, mood, water_ml, heart_rate,
+hrv_ms) are all read only if present in a given CSV's header — this is
+what makes the incremental update described below work for any of them,
+not just the newer ones.
+
+If your CSV uses different header names (e.g. "Daily Steps" instead of
+"steps"), pass --map COLUMN=HEADER instead of renaming columns yourself:
+    python init_db.py health.csv --map date=Date --map steps="Daily Steps"
 
 Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Numbers may
 include "$" and "," (stripped automatically, kept for consistency with
@@ -57,7 +62,14 @@ from datetime import datetime
 from pathlib import Path
 
 from import_adapters import ADAPTERS, RowError, detect_adapter
-from logic import connect_writable, default_data_dir, ensure_schema, insert_measurement, upsert_metrics, validate_metrics
+from logic import (
+    connect_writable,
+    default_data_dir,
+    ensure_schema,
+    insert_measurement,
+    upsert_metrics,
+    validate_metrics,
+)
 
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = default_data_dir(BASE_DIR)
@@ -75,7 +87,7 @@ CORE_METRIC_COLUMNS = ["steps", "sleep_hours", "resting_heart_rate"]
 
 # Columns added after the original release. Kept separate from
 # CORE_METRIC_COLUMNS only to document that history; treated identically.
-OPTIONAL_COLUMNS = ["weight_kg", "workout_minutes", "mood", "water_ml"]
+OPTIONAL_COLUMNS = ["weight_kg", "workout_minutes", "mood", "water_ml", "heart_rate", "hrv_ms"]
 
 DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y"]
 
@@ -114,8 +126,18 @@ def _to_float(raw: str) -> float | None:
         raise RowError(f"expected a number, got {raw!r}") from exc
 
 
-def _read_csv(csv_path: Path) -> tuple[list[dict[str, str]], list[str]]:
+def _read_csv(
+    csv_path: Path, column_map: dict[str, str] | None = None
+) -> tuple[list[dict[str, str]], list[str]]:
     """Read csv_path, matching column names case-insensitively.
+
+    column_map (canonical column -> this CSV's actual header text, e.g.
+    {"date": "Date", "steps": "Daily Steps"}) overrides the
+    case-insensitive name match for whichever canonical columns it
+    covers, so a CSV that doesn't use this project's exact header names
+    can still be imported without renaming columns first — see --map
+    in main() below. Columns not mentioned in column_map still fall back
+    to the case-insensitive match.
 
     Returns (rows, present_columns) — the latter is whichever metric
     columns (core or added-later) actually appeared in this CSV's header,
@@ -123,18 +145,33 @@ def _read_csv(csv_path: Path) -> tuple[list[dict[str, str]], list[str]]:
     leave untouched. "date" is the only column required to be in the
     header at all; a CSV with just date + one metric column is valid.
     """
+    column_map = column_map or {}
     with csv_path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
             sys.exit(f"Error: {csv_path} appears to be empty.")
         header_map = {name.strip().lower(): name for name in reader.fieldnames}
-        if "date" not in header_map:
+
+        def resolve(canonical: str) -> str | None:
+            mapped = column_map.get(canonical)
+            if mapped is not None:
+                if mapped not in reader.fieldnames:
+                    sys.exit(
+                        f"Error: --map {canonical}={mapped!r} but {csv_path} has no such "
+                        f"column. Found columns: {', '.join(reader.fieldnames)}"
+                    )
+                return mapped
+            return header_map.get(canonical)
+
+        date_col = resolve("date")
+        if date_col is None:
             sys.exit(
-                f"Error: {csv_path} is missing required column: date. "
+                f"Error: {csv_path} is missing required column: date (use --map "
+                f"date=<your column name> if it's named differently). "
                 f"Found columns: {', '.join(reader.fieldnames)}"
             )
-        present_columns = [c for c in ALL_METRIC_COLUMNS if c in header_map]
-        wanted = {"date": header_map["date"], **{c: header_map[c] for c in present_columns}}
+        present_columns = [c for c in ALL_METRIC_COLUMNS if resolve(c) is not None]
+        wanted = {"date": date_col, **{c: resolve(c) for c in present_columns}}
         rows = []
         for raw_row in reader:
             rows.append({canonical: raw_row.get(original) for canonical, original in wanted.items()})
@@ -152,17 +189,22 @@ _METRIC_PARSERS = {
     "workout_minutes": _to_int,
     "mood": _to_int,
     "water_ml": _to_int,
+    "heart_rate": _to_int,
+    "hrv_ms": _to_float,
 }
 
 
-def _load_csv_rows(csv_path: Path) -> tuple[list[dict], list[str], int]:
+def _load_csv_rows(
+    csv_path: Path, column_map: dict[str, str] | None = None
+) -> tuple[list[dict], list[str], int]:
     """This project's own CSV format, exactly as before this module split
-    out other adapters — unchanged so existing tests (and existing CSV
-    exports people already have from this project) keep working exactly
-    as they did. Returns (parsed_rows, present_columns, skipped) to match
-    the shape init_health_db needs regardless of which source it read.
+    out other adapters — unchanged (aside from optional column_map, see
+    _read_csv) so existing tests (and existing CSV exports people already
+    have from this project) keep working exactly as they did. Returns
+    (parsed_rows, present_columns, skipped) to match the shape
+    init_health_db needs regardless of which source it read.
     """
-    raw_rows, present_columns = _read_csv(csv_path)
+    raw_rows, present_columns = _read_csv(csv_path, column_map)
 
     parsed_rows, skipped = [], 0
     for i, row in enumerate(raw_rows, start=2):  # +2: header is line 1
@@ -184,20 +226,28 @@ def _load_csv_rows(csv_path: Path) -> tuple[list[dict], list[str], int]:
     return parsed_rows, present_columns, skipped
 
 
-def init_health_db(source_path: Path, db_path: Path, replace: bool, source: str = "auto") -> None:
+def init_health_db(
+    source_path: Path,
+    db_path: Path,
+    replace: bool,
+    source: str = "auto",
+    column_map: dict[str, str] | None = None,
+) -> None:
     """Import source_path into db_path.
 
     source picks which import_adapters.ADAPTERS entry reads source_path;
     "auto" (the default) guesses from the file extension via
     import_adapters.detect_adapter, "csv" is always this project's own
     format (handled directly here — see _load_csv_rows), and any other
-    name must be a key in import_adapters.ADAPTERS.
+    name must be a key in import_adapters.ADAPTERS. column_map only
+    applies to the csv path (see --map in main()) and is ignored
+    otherwise.
     """
     adapter_name = detect_adapter(source_path) if source == "auto" else source
     raw_measurements: list[dict] = []
 
     if adapter_name == "csv":
-        parsed_rows, present_columns, skipped = _load_csv_rows(source_path)
+        parsed_rows, present_columns, skipped = _load_csv_rows(source_path, column_map)
     else:
         if adapter_name not in ADAPTERS:
             sys.exit(f"Error: unknown import source {adapter_name!r}. Available: csv, {', '.join(ADAPTERS)}")
@@ -267,6 +317,18 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--map",
+        action="append",
+        metavar="COLUMN=HEADER",
+        dest="column_map",
+        help=(
+            "Map a canonical column to a differently-named header in your CSV, so you "
+            "don't have to rename columns yourself. Repeatable, csv source only. Example: "
+            '--map date=Date --map steps="Daily Steps" --map sleep_hours="Sleep Duration". '
+            f"COLUMN must be one of: date, {', '.join(ALL_METRIC_COLUMNS)}."
+        ),
+    )
+    parser.add_argument(
         "--replace",
         action="store_true",
         help="Clear existing rows in the table first, instead of appending/upserting.",
@@ -287,9 +349,24 @@ def main() -> None:
     if not args.source_path.exists():
         sys.exit(f"Error: source file not found at {args.source_path}")
 
+    column_map: dict[str, str] = {}
+    for item in args.column_map or []:
+        canonical, sep, header = item.partition("=")
+        canonical, header = canonical.strip().lower(), header.strip()
+        if not sep:
+            sys.exit(f"Error: --map expects COLUMN=HEADER, got {item!r}")
+        if canonical != "date" and canonical not in ALL_METRIC_COLUMNS:
+            sys.exit(
+                f"Error: --map column {canonical!r} is not recognized. "
+                f"Valid: date, {', '.join(ALL_METRIC_COLUMNS)}"
+            )
+        if not header:
+            sys.exit(f"Error: --map {item!r} has an empty header")
+        column_map[canonical] = header
+
     db_path = args.db_path.expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    init_health_db(args.source_path, db_path, args.replace, args.source)
+    init_health_db(args.source_path, db_path, args.replace, args.source, column_map)
 
 
 if __name__ == "__main__":

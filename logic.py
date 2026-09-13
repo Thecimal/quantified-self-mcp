@@ -124,11 +124,27 @@ def _migrate_v4_add_measurement_provenance_columns(conn: sqlite3.Connection) -> 
             conn.execute(f"ALTER TABLE measurements ADD COLUMN {name} {sqltype}")
 
 
+V5_ADDED_COLUMNS = {
+    "heart_rate": "INTEGER",
+    "hrv_ms": "REAL",
+}
+
+
+def _migrate_v5_add_heart_rate_hrv_columns(conn: sqlite3.Connection) -> None:
+    # Same guarded-existence pattern as v2: safe against a daily_metrics
+    # table that already has one or both columns.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
+    for name, sqltype in V5_ADDED_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {name} {sqltype}")
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "create daily_metrics table", _migrate_v1_create_table),
     (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
     (3, "create measurements table", _migrate_v3_create_measurements_table),
     (4, "add importer, imported_at provenance columns to measurements", _migrate_v4_add_measurement_provenance_columns),
+    (5, "add heart_rate, hrv_ms columns", _migrate_v5_add_heart_rate_hrv_columns),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -552,6 +568,8 @@ MEASUREMENT_AGGREGATION = {
     "workout_minutes": "sum",
     "mood": "avg",
     "water_ml": "sum",
+    "heart_rate": "avg",
+    "hrv_ms": "avg",
 }
 
 
@@ -699,6 +717,8 @@ METRIC_BOUNDS = {
     "workout_minutes": (0, 1440, "workout_minutes"),
     "mood": (1, 10, "mood (expected on a 1-10 scale)"),
     "water_ml": (0, 10_000, "water_ml"),
+    "heart_rate": (20, 250, "heart_rate (bpm)"),
+    "hrv_ms": (0, 300, "hrv_ms (ms)"),
 }
 
 

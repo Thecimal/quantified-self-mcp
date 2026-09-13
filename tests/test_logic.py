@@ -25,6 +25,7 @@ from logic import (
     DB_PASSPHRASE_ENV,
     MIGRATIONS,
     SCHEMA_VERSION,
+    V5_ADDED_COLUMNS,
     aggregate_measurements_to_daily,
     connect_writable,
     db_error_types,
@@ -95,6 +96,7 @@ def test_ensure_schema_creates_table_with_all_columns():
         "sleep_hours",
         "resting_heart_rate",
         *ADDED_COLUMNS,
+        *V5_ADDED_COLUMNS,
     }
 
 

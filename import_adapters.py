@@ -15,17 +15,28 @@ export format by writing one function here with the
 init_db.py's CLI and its validate_metrics/upsert_metrics pipeline don't
 need to change.
 
-Currently supported: "apple-health" — a deliberately partial reading of
-an Apple Health "export.xml" (Health app -> profile icon -> Export All
-Health Data). See APPLE_HEALTH_QUANTITY_IDENTIFIERS below for exactly
-which record types are mapped; anything else in the export (blood
-pressure, ECG, mindful minutes, dozens of others) is silently ignored.
-There's no HealthKit identifier for mood, so that column is never
-populated by this adapter — log it separately with log_daily_metric.
+Currently supported:
+
+- "apple-health" — a deliberately partial reading of an Apple Health
+  "export.xml" (Health app -> profile icon -> Export All Health Data).
+  See APPLE_HEALTH_QUANTITY_IDENTIFIERS below for exactly which record
+  types are mapped; anything else in the export (blood pressure, ECG,
+  mindful minutes, dozens of others) is silently ignored. There's no
+  HealthKit identifier for mood, so that column is never populated by
+  this adapter — log it separately with log_daily_metric.
+- "health-connect" — reads Health Connect's public record JSON shape
+  (a JSON array of records, or {"records": [...]}), each with a
+  "recordType" key and that record type's own documented fields, as
+  produced by export/interop tools built on the Health Connect API.
+  This is NOT the same as Health Connect's own "Backup and restore"
+  export, which is an undocumented raw SQLite snapshot and isn't
+  parsed here. See adapt_health_connect for exactly which record types
+  are mapped.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -66,6 +77,8 @@ class AdaptedImport(NamedTuple):
 APPLE_HEALTH_QUANTITY_IDENTIFIERS: dict[str, str] = {
     "HKQuantityTypeIdentifierStepCount": "steps",
     "HKQuantityTypeIdentifierRestingHeartRate": "resting_heart_rate",
+    "HKQuantityTypeIdentifierHeartRate": "heart_rate",
+    "HKQuantityTypeIdentifierHeartRateVariabilitySDNN": "hrv_ms",
     "HKQuantityTypeIdentifierBodyMass": "weight_kg",
     "HKQuantityTypeIdentifierAppleExerciseTime": "workout_minutes",
     "HKQuantityTypeIdentifierDietaryWater": "water_ml",
@@ -105,7 +118,11 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
       sums HKQuantityTypeIdentifierAppleExerciseTime rather than Workout
       elements, since the latter's many activity types would each need
       their own separate mapping decision this adapter doesn't make)
-    - resting_heart_rate: averaged per day, rounded to the nearest bpm
+    - resting_heart_rate, heart_rate: each averaged per day, rounded to
+      the nearest bpm (heart_rate averages every non-resting reading in
+      the day, typically many per hour from a watch)
+    - hrv_ms: averaged per day (Apple records SDNN in ms already, so no
+      unit conversion is needed)
     - weight_kg: the day's latest reading by startDate (converted from lb
       if that record's unit attribute says so)
     - sleep_hours: summed duration (endDate - startDate) of "asleep"
@@ -117,6 +134,8 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
     exercise_sum: dict[str, float] = defaultdict(float)
     water_sum: dict[str, float] = defaultdict(float)
     resting_hr_readings: dict[str, list[float]] = defaultdict(list)
+    heart_rate_readings: dict[str, list[float]] = defaultdict(list)
+    hrv_readings: dict[str, list[float]] = defaultdict(list)
     weight_latest: dict[str, tuple[datetime, float]] = {}
     sleep_seconds: dict[str, float] = defaultdict(float)
     raw_measurements: list[dict[str, Any]] = []
@@ -145,6 +164,10 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                     step_sum[day] += value
                 elif col == "resting_heart_rate":
                     resting_hr_readings[day].append(value)
+                elif col == "heart_rate":
+                    heart_rate_readings[day].append(value)
+                elif col == "hrv_ms":
+                    hrv_readings[day].append(value)
                 elif col == "weight_kg":
                     if unit in _LB_UNITS:
                         value *= 0.45359237
@@ -185,6 +208,8 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
     all_days = (
         set(step_sum)
         | set(resting_hr_readings)
+        | set(heart_rate_readings)
+        | set(hrv_readings)
         | set(weight_latest)
         | set(exercise_sum)
         | set(water_sum)
@@ -197,6 +222,8 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
             ("steps", bool(step_sum)),
             ("sleep_hours", bool(sleep_seconds)),
             ("resting_heart_rate", bool(resting_hr_readings)),
+            ("heart_rate", bool(heart_rate_readings)),
+            ("hrv_ms", bool(hrv_readings)),
             ("weight_kg", bool(weight_latest)),
             ("workout_minutes", bool(exercise_sum)),
             ("water_ml", bool(water_sum)),
@@ -214,6 +241,11 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
         if day in resting_hr_readings:
             readings = resting_hr_readings[day]
             row["resting_heart_rate"] = int(round(sum(readings) / len(readings)))
+        if day in heart_rate_readings:
+            readings = heart_rate_readings[day]
+            row["heart_rate"] = int(round(sum(readings) / len(readings)))
+        if day in hrv_readings:
+            row["hrv_ms"] = round(sum(hrv_readings[day]) / len(hrv_readings[day]), 1)
         if day in weight_latest:
             row["weight_kg"] = round(weight_latest[day][1], 2)
         if day in exercise_sum:
@@ -223,6 +255,156 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
         rows.append(row)
 
     return AdaptedImport(rows=rows, present_columns=present_columns, skipped=skipped, raw_measurements=raw_measurements)
+
+
+# Health Connect SleepSessionRecord stage-type strings counted as
+# actually asleep (as opposed to AWAKE/OUT_OF_BED/UNKNOWN), per the
+# Health Connect API's SleepSessionRecord.Stage.
+_HC_ASLEEP_STAGES = {
+    "STAGE_TYPE_SLEEPING",
+    "STAGE_TYPE_LIGHT",
+    "STAGE_TYPE_DEEP",
+    "STAGE_TYPE_REM",
+}
+
+
+def _parse_hc_datetime(raw: str) -> datetime:
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, AttributeError) as exc:
+        raise RowError(f"unparseable Health Connect timestamp {raw!r}") from exc
+
+
+def adapt_health_connect(path: Path) -> AdaptedImport:
+    """Parse a Health Connect record-JSON export (see the module
+    docstring for exactly which export shape this expects) and aggregate
+    per calendar day:
+
+    - steps: summed StepsRecord.count, attributed to startTime's day
+    - heart_rate: averaged HeartRateRecord sample beatsPerMinute
+    - resting_heart_rate: averaged RestingHeartRateRecord.beatsPerMinute
+    - hrv_ms: averaged HeartRateVariabilityRmssdRecord.heartRateVariabilityMillis
+    - weight_kg: the day's latest WeightRecord.weight.value (converted
+      from pounds if that record's unit says so)
+    - workout_minutes: summed ExerciseSessionRecord duration
+    - sleep_hours: summed duration of SleepSessionRecord stages in
+      _HC_ASLEEP_STAGES, or the whole session if a record has no stages
+      (attributed to the day the session/stage started)
+
+    Any other recordType is silently ignored, same as an unmapped Apple
+    Health identifier.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sys.exit(f"Error: couldn't read {path} as Health Connect JSON: {exc}")
+    records = data.get("records", data) if isinstance(data, dict) else data
+    if not isinstance(records, list):
+        sys.exit(f"Error: {path} doesn't look like a Health Connect export (expected a JSON array of records).")
+
+    step_sum: dict[str, float] = defaultdict(float)
+    heart_rate_readings: dict[str, list[float]] = defaultdict(list)
+    resting_hr_readings: dict[str, list[float]] = defaultdict(list)
+    hrv_readings: dict[str, list[float]] = defaultdict(list)
+    weight_latest: dict[str, tuple[datetime, float]] = {}
+    exercise_minutes: dict[str, float] = defaultdict(float)
+    sleep_seconds: dict[str, float] = defaultdict(float)
+    skipped = 0
+
+    for record in records:
+        try:
+            rtype = record.get("recordType")
+            if rtype == "StepsRecord":
+                when = _parse_hc_datetime(record["startTime"])
+                step_sum[when.date().isoformat()] += float(record["count"])
+            elif rtype == "HeartRateRecord":
+                for sample in record.get("samples", []):
+                    when = _parse_hc_datetime(sample["time"])
+                    heart_rate_readings[when.date().isoformat()].append(float(sample["beatsPerMinute"]))
+            elif rtype == "RestingHeartRateRecord":
+                when = _parse_hc_datetime(record["time"])
+                resting_hr_readings[when.date().isoformat()].append(float(record["beatsPerMinute"]))
+            elif rtype in ("HeartRateVariabilityRmssdRecord", "HeartRateVariabilityRecord"):
+                when = _parse_hc_datetime(record["time"])
+                ms = record.get("heartRateVariabilityMillis", record.get("heartRateVariabilityRmssd"))
+                hrv_readings[when.date().isoformat()].append(float(ms))
+            elif rtype == "WeightRecord":
+                when = _parse_hc_datetime(record["time"])
+                weight = record["weight"]
+                value, unit = float(weight["value"]), (weight.get("unit") or "").strip().lower()
+                if unit in _LB_UNITS:
+                    value *= 0.45359237
+                day = when.date().isoformat()
+                prior = weight_latest.get(day)
+                if prior is None or when > prior[0]:
+                    weight_latest[day] = (when, value)
+            elif rtype == "ExerciseSessionRecord":
+                start = _parse_hc_datetime(record["startTime"])
+                end = _parse_hc_datetime(record["endTime"])
+                exercise_minutes[start.date().isoformat()] += (end - start).total_seconds() / 60
+            elif rtype == "SleepSessionRecord":
+                start = _parse_hc_datetime(record["startTime"])
+                day = start.date().isoformat()
+                stages = record.get("stages") or []
+                if stages:
+                    for stage in stages:
+                        if stage.get("stage") in _HC_ASLEEP_STAGES:
+                            s = _parse_hc_datetime(stage["startTime"])
+                            e = _parse_hc_datetime(stage["endTime"])
+                            sleep_seconds[day] += (e - s).total_seconds()
+                else:
+                    end = _parse_hc_datetime(record["endTime"])
+                    sleep_seconds[day] += (end - start).total_seconds()
+        except (KeyError, TypeError, ValueError, RowError) as exc:
+            print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+            skipped += 1
+
+    all_days = (
+        set(step_sum)
+        | set(heart_rate_readings)
+        | set(resting_hr_readings)
+        | set(hrv_readings)
+        | set(weight_latest)
+        | set(exercise_minutes)
+        | set(sleep_seconds)
+    )
+
+    present_columns = [
+        col
+        for col, has_data in (
+            ("steps", bool(step_sum)),
+            ("sleep_hours", bool(sleep_seconds)),
+            ("heart_rate", bool(heart_rate_readings)),
+            ("resting_heart_rate", bool(resting_hr_readings)),
+            ("hrv_ms", bool(hrv_readings)),
+            ("weight_kg", bool(weight_latest)),
+            ("workout_minutes", bool(exercise_minutes)),
+        )
+        if has_data
+    ]
+
+    rows: list[dict[str, Any]] = []
+    for day in sorted(all_days):
+        row: dict[str, Any] = {"date": day}
+        if day in step_sum:
+            row["steps"] = int(round(step_sum[day]))
+        if day in sleep_seconds:
+            row["sleep_hours"] = round(sleep_seconds[day] / 3600, 2)
+        if day in heart_rate_readings:
+            readings = heart_rate_readings[day]
+            row["heart_rate"] = int(round(sum(readings) / len(readings)))
+        if day in resting_hr_readings:
+            readings = resting_hr_readings[day]
+            row["resting_heart_rate"] = int(round(sum(readings) / len(readings)))
+        if day in hrv_readings:
+            row["hrv_ms"] = round(sum(hrv_readings[day]) / len(hrv_readings[day]), 1)
+        if day in weight_latest:
+            row["weight_kg"] = round(weight_latest[day][1], 2)
+        if day in exercise_minutes:
+            row["workout_minutes"] = int(round(exercise_minutes[day]))
+        rows.append(row)
+
+    return AdaptedImport(rows=rows, present_columns=present_columns, skipped=skipped)
 
 
 def detect_adapter(path: Path) -> str:
@@ -235,4 +417,5 @@ def detect_adapter(path: Path) -> str:
 
 ADAPTERS: dict[str, Callable[[Path], AdaptedImport]] = {
     "apple-health": adapt_apple_health,
+    "health-connect": adapt_health_connect,
 }

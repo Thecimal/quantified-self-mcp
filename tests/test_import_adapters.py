@@ -14,7 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from import_adapters import ADAPTERS, adapt_apple_health, detect_adapter  # noqa: E402
+import json
+
+from import_adapters import ADAPTERS, adapt_apple_health, adapt_health_connect, detect_adapter  # noqa: E402
 
 
 def _write_export(tmp_path, records_xml: str) -> Path:
@@ -212,3 +214,119 @@ def test_apple_health_raw_measurements_empty_when_no_matching_records(tmp_path):
 
 def test_apple_health_is_registered_in_adapters():
     assert ADAPTERS["apple-health"] is adapt_apple_health
+
+
+def test_apple_health_averages_heart_rate_and_hrv_per_day(tmp_path):
+    path = _write_export(
+        tmp_path,
+        """
+        <Record type="HKQuantityTypeIdentifierHeartRate" unit="count/min"
+                startDate="2026-01-15 08:00:00 -0500" endDate="2026-01-15 08:00:00 -0500" value="60"/>
+        <Record type="HKQuantityTypeIdentifierHeartRate" unit="count/min"
+                startDate="2026-01-15 09:00:00 -0500" endDate="2026-01-15 09:00:00 -0500" value="80"/>
+        <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" unit="ms"
+                startDate="2026-01-15 08:00:00 -0500" endDate="2026-01-15 08:00:00 -0500" value="40"/>
+        <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" unit="ms"
+                startDate="2026-01-15 20:00:00 -0500" endDate="2026-01-15 20:00:00 -0500" value="60"/>
+        """,
+    )
+    result = adapt_apple_health(path)
+    assert result.rows == [{"date": "2026-01-15", "heart_rate": 70, "hrv_ms": 50.0}]
+    assert set(result.present_columns) == {"heart_rate", "hrv_ms"}
+
+
+# --- Health Connect ---------------------------------------------------
+
+
+def _write_hc_export(tmp_path, records: list[dict], filename: str = "health_connect.json") -> Path:
+    path = tmp_path / filename
+    path.write_text(json.dumps({"records": records}), encoding="utf-8")
+    return path
+
+
+def _hc_steps(start: str, end: str, count: int) -> dict:
+    return {"recordType": "StepsRecord", "startTime": start, "endTime": end, "count": count}
+
+
+def test_health_connect_sums_steps_and_averages_heart_rate(tmp_path):
+    path = _write_hc_export(
+        tmp_path,
+        [
+            _hc_steps("2026-01-15T08:00:00Z", "2026-01-15T08:05:00Z", 1000),
+            _hc_steps("2026-01-15T09:00:00Z", "2026-01-15T09:05:00Z", 500),
+            {
+                "recordType": "HeartRateRecord",
+                "startTime": "2026-01-15T08:00:00Z",
+                "endTime": "2026-01-15T08:10:00Z",
+                "samples": [
+                    {"time": "2026-01-15T08:00:00Z", "beatsPerMinute": 60},
+                    {"time": "2026-01-15T08:05:00Z", "beatsPerMinute": 80},
+                ],
+            },
+        ],
+    )
+    result = adapt_health_connect(path)
+    assert result.rows == [{"date": "2026-01-15", "steps": 1500, "heart_rate": 70}]
+
+
+def test_health_connect_sleep_session_uses_asleep_stages_only(tmp_path):
+    awake = {"stage": "STAGE_TYPE_AWAKE", "startTime": "2026-01-15T23:00:00Z", "endTime": "2026-01-15T23:15:00Z"}
+    deep = {"stage": "STAGE_TYPE_DEEP", "startTime": "2026-01-15T23:15:00Z", "endTime": "2026-01-16T07:00:00Z"}
+    path = _write_hc_export(
+        tmp_path,
+        [
+            {
+                "recordType": "SleepSessionRecord",
+                "startTime": "2026-01-15T23:00:00Z",
+                "endTime": "2026-01-16T07:00:00Z",
+                "stages": [awake, deep],
+            }
+        ],
+    )
+    result = adapt_health_connect(path)
+    assert result.rows == [{"date": "2026-01-15", "sleep_hours": 7.75}]
+
+
+def test_health_connect_weight_converts_pounds_and_keeps_latest(tmp_path):
+    path = _write_hc_export(
+        tmp_path,
+        [
+            {
+                "recordType": "WeightRecord",
+                "time": "2026-01-15T08:00:00Z",
+                "weight": {"value": 150, "unit": "pounds"},
+            },
+            {
+                "recordType": "WeightRecord",
+                "time": "2026-01-15T20:00:00Z",
+                "weight": {"value": 68, "unit": "kilograms"},
+            },
+        ],
+    )
+    result = adapt_health_connect(path)
+    assert result.rows == [{"date": "2026-01-15", "weight_kg": 68.0}]
+
+
+def test_health_connect_skips_unparseable_records_without_aborting(tmp_path):
+    path = _write_hc_export(
+        tmp_path,
+        [
+            _hc_steps("not-a-date", "2026-01-15T08:05:00Z", 1000),
+            _hc_steps("2026-01-15T09:00:00Z", "2026-01-15T09:05:00Z", 500),
+        ],
+    )
+    result = adapt_health_connect(path)
+    assert result.rows == [{"date": "2026-01-15", "steps": 500}]
+    assert result.skipped == 1
+
+
+def test_health_connect_accepts_bare_list_as_well_as_records_key(tmp_path):
+    path = tmp_path / "health_connect_list.json"
+    record = _hc_steps("2026-01-15T08:00:00Z", "2026-01-15T08:05:00Z", 42)
+    path.write_text(json.dumps([record]), encoding="utf-8")
+    result = adapt_health_connect(path)
+    assert result.rows == [{"date": "2026-01-15", "steps": 42}]
+
+
+def test_health_connect_is_registered_in_adapters():
+    assert ADAPTERS["health-connect"] is adapt_health_connect

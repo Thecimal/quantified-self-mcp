@@ -152,6 +152,45 @@ def test_read_csv_exits_on_empty_file(tmp_path):
         _read_csv(path)
 
 
+def test_read_csv_column_map_resolves_differently_named_headers(tmp_path):
+    csv_path = _write_csv(
+        tmp_path,
+        ["Date", "Daily Steps", "Sleep Duration"],
+        [["2026-01-01", "8000", "7.5"]],
+    )
+    rows, present_columns = _read_csv(
+        csv_path, column_map={"date": "Date", "steps": "Daily Steps", "sleep_hours": "Sleep Duration"}
+    )
+    assert present_columns == ["steps", "sleep_hours"]
+    assert rows[0] == {"date": "2026-01-01", "steps": "8000", "sleep_hours": "7.5"}
+
+
+def test_read_csv_column_map_only_overrides_mapped_columns(tmp_path):
+    """Columns not mentioned in column_map still fall back to the normal
+    case-insensitive match."""
+    csv_path = _write_csv(
+        tmp_path,
+        ["Date", "Daily Steps", "mood"],
+        [["2026-01-01", "8000", "4"]],
+    )
+    rows, present_columns = _read_csv(csv_path, column_map={"date": "Date", "steps": "Daily Steps"})
+    assert present_columns == ["steps", "mood"]
+    assert rows[0]["mood"] == "4"
+
+
+def test_read_csv_column_map_exits_on_unmatched_header(tmp_path):
+    csv_path = _write_csv(tmp_path, ["Date", "Steps"], [["2026-01-01", "8000"]])
+    with pytest.raises(SystemExit, match="no such"):
+        _read_csv(csv_path, column_map={"date": "Date", "steps": "Nonexistent Column"})
+
+
+def test_read_csv_column_map_covers_missing_date_column(tmp_path):
+    csv_path = _write_csv(tmp_path, ["Day", "Steps"], [["2026-01-01", "8000"]])
+    rows, present_columns = _read_csv(csv_path, column_map={"date": "Day"})
+    assert present_columns == ["steps"]
+    assert rows[0]["date"] == "2026-01-01"
+
+
 # ---------------------------------------------------------------------------
 # init_health_db
 # ---------------------------------------------------------------------------
@@ -352,6 +391,39 @@ def test_cli_health_db_path_env_var_overrides_default_location(tmp_path):
     )
     assert result.returncode == 0
     assert db_path.exists()
+
+
+def test_cli_map_flag_imports_csv_with_custom_headers(tmp_path):
+    csv_path = _write_csv(
+        tmp_path,
+        ["Date", "Daily Steps", "Sleep Duration"],
+        [["2026-01-01", "8000", "7.5"]],
+    )
+    db_path = tmp_path / "health.db"
+    result = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "init_db.py"), str(csv_path), "--db-path", str(db_path),
+            "--map", "date=Date", "--map", "steps=Daily Steps", "--map", "sleep_hours=Sleep Duration",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT steps, sleep_hours FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
+    conn.close()
+    assert row == (8000, 7.5)
+
+
+def test_cli_map_flag_rejects_unrecognized_column(tmp_path):
+    csv_path = _write_csv(tmp_path, ["Date", "Steps"], [["2026-01-01", "8000"]])
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "init_db.py"), str(csv_path), "--map", "not_a_column=Steps"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "not recognized" in result.stderr
 
 
 def test_cli_exits_cleanly_on_missing_csv(tmp_path):
