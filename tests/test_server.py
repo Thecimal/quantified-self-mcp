@@ -157,19 +157,37 @@ def test_every_tool_carries_the_cloud_model_warning(health_db):
     """Whatever a tool returns is sent to whichever model the MCP client is
     configured with — if that's a cloud model, the data leaves the machine
     at that point even though the SQLite file itself never does. Every
-    tool's description (the text an LLM/agent actually sees) must carry
-    this warning verbatim, not just the module's own docs, and this stays
-    true automatically for any tool added later.
+    registered tool's protocol-level *description* — what an LLM/agent
+    calling this server over MCP actually receives, not this file's own
+    Python docstrings — must carry this warning.
+
+    Checking a tool's raw __doc__ (as a previous version of this test did)
+    is not equivalent to checking this: FastMCP derives description from
+    inspect.getdoc() via Griffe, which (a) dedents the docstring, so a
+    warning copy-pasted with the docstring's own 4-space indentation won't
+    substring-match CLOUD_MODEL_WARNING's dedented form, and (b) only keeps
+    the *leading* text block before "Args:" — a warning appended after
+    "Returns:", as this project's tools originally had it, is silently
+    dropped from what a client ever sees, even though it's right there in
+    __doc__. Both failure modes reproduce with read_health_data's exact
+    original docstring layout; see git history around this test for a
+    concrete before/after.
+
+    Tools are discovered via mcp.list_tools() rather than a hand-maintained
+    tuple, so this stays true automatically for any tool added later —
+    unlike the previous version of this test, whose docstring claimed that
+    but didn't actually do it (a hardcoded tuple silently missed every tool
+    added after it was written).
     """
-    tools = (
-        health_db.read_health_data,
-        health_db.log_daily_metric,
-        health_db.clear_metric,
-        health_db.export_health_data_csv,
-    )
-    assert tools, "expected at least one tool to check"
-    for tool in tools:
-        assert health_db.CLOUD_MODEL_WARNING.strip() in tool.__doc__
+
+    async def _descriptions() -> dict[str, str]:
+        tools = await health_db.mcp.list_tools()
+        return {tool.name: (tool.description or "") for tool in tools}
+
+    descriptions = asyncio.run(_descriptions())
+    assert descriptions, "expected at least one registered tool to check"
+    missing = [name for name, desc in descriptions.items() if health_db.CLOUD_MODEL_WARNING not in desc]
+    assert not missing, f"tools missing the cloud-model warning from their protocol-level description: {missing}"
 
 
 def test_metrics_schema_reflects_bounds_and_privacy(tmp_path, monkeypatch):

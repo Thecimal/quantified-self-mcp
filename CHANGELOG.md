@@ -7,6 +7,29 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Fixed
+- **Every tool's "Privacy note" cloud-model warning was silently never
+  reaching any real MCP client.** FastMCP derives a tool's client-facing
+  `description` from its docstring via `inspect.getdoc()` + Griffe, which
+  (a) dedents the docstring before parsing, so the warning's own 4-space
+  indentation (copied from the source file's indentation) meant it could
+  never substring-match a plain, undedented comparison string, and (b)
+  only keeps the *leading* text block before `Args:` — a paragraph placed
+  after `Returns:`, as every tool here had it, is parsed but then
+  dropped, never making it into `description` at all. The existing test
+  (`test_every_tool_carries_the_cloud_model_warning`) didn't catch this
+  because it checked each function's raw Python `__doc__` rather than
+  what `list_tools()` actually returns over the protocol — those two
+  things are not the same, and diverged silently. Fixed by moving the
+  warning to right after each tool's opening summary (before `Args:`)
+  and rewriting `CLOUD_MODEL_WARNING` without the indentation that
+  never survives dedenting. The test itself now asserts against
+  `mcp.list_tools()`'s real `description` field, and discovers tools
+  automatically instead of checking a hand-maintained tuple that had
+  already silently missed several tools added after it was written.
+  Verified against an actual `fastmcp.Client` round-trip, not just the
+  server-side object, before and after.
+
 ### Added
 - New `export_health_data_csv` tool: writes a date range of health
   metrics to a CSV file on disk (next to the database) and returns only

@@ -82,18 +82,26 @@ from logic import (
 # model (as opposed to one running locally), your health data leaves your
 # machine at that point, same as pasting it into a chat. This is true of any
 # MCP server, not something specific to a bug here — so each tool's own
-# docstring below ends with this exact paragraph (verbatim, so it shows up
-# in the tool description an LLM/agent actually sees, not just in this
-# file's own docs). Kept here too as the single source of truth for that
-# wording, and to let tests/test_server.py assert every tool still carries
-# it word-for-word rather than the warning silently drifting or being
-# dropped by a future edit.
+# docstring below places this exact paragraph right after its opening
+# summary, before "Args:" (verbatim, so it shows up in the tool description
+# an LLM/agent actually sees — see tests/test_server.py's comment on why
+# position matters here, not just wording). Kept here too as the single
+# source of truth for that wording, and to let tests/test_server.py assert
+# every registered tool's *protocol-level* description still carries it
+# word-for-word rather than the warning silently drifting, moving to a
+# position that gets dropped, or being removed by a future edit.
+#
+# Written without the docstrings' own 4-space indentation on continuation
+# lines: FastMCP derives each tool's description via inspect.getdoc(), which
+# dedents a docstring before parsing it, so that indentation never survives
+# into what a client actually receives — matching against the undedented
+# form here would silently never match.
 CLOUD_MODEL_WARNING = (
-    "    Privacy note: this server and its SQLite file are entirely local, but\n"
-    "    the data returned by this tool becomes part of the conversation sent\n"
-    "    to whatever model the calling client is configured with. If that\n"
-    "    model runs in the cloud rather than on your machine, treat this the\n"
-    "    same as pasting the data into a chat with that provider."
+    "Privacy note: this server and its SQLite file are entirely local, but\n"
+    "the data returned by this tool becomes part of the conversation sent\n"
+    "to whatever model the calling client is configured with. If that\n"
+    "model runs in the cloud rather than on your machine, treat this the\n"
+    "same as pasting the data into a chat with that provider."
 )
 
 # All non-date columns in daily_metrics, in the order they're selected and
@@ -503,6 +511,12 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
     resting heart rate, weight (kg), workout minutes, mood, and water
     intake (ml).
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         start_date: First day to include, formatted YYYY-MM-DD.
             Defaults to 30 days before end_date. Ranges over ~10 years are rejected.
@@ -524,12 +538,6 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
     Any metric listed in the HEALTH_PRIVATE_FIELDS environment variable is
     always reported as null here (in both "rows" and "summary"), regardless
     of what's actually stored for it.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -587,6 +595,12 @@ def export_health_data_csv(start_date: str | None = None, end_date: str | None =
     next to the database, instead of returning every row through this
     tool's own result.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Unlike read_health_data, this is not capped at MAX_ROWS_RETURNED and
     the row values themselves are not included in this tool's response —
     only the resulting file's path and a row count are. That means a
@@ -607,12 +621,6 @@ def export_health_data_csv(start_date: str | None = None, end_date: str | None =
         path), "rows_exported" (days with at least one recorded metric —
         days with no data at all are not written), and "range" (the
         start/end dates actually used).
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -680,6 +688,12 @@ def log_daily_metric(
     Record one or more health metrics for a single day, creating that
     day's row if it doesn't already have one.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Only the metrics you pass are written — anything left as null is not
     touched, so logging just today's mood doesn't erase today's steps if
     they were set earlier. To undo a value logged by mistake, use
@@ -701,12 +715,6 @@ def log_daily_metric(
         including any set previously). Any field listed in
         HEALTH_PRIVATE_FIELDS is always null in "row", regardless of what
         was just written for it.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         day = parse_date(date, "date")
@@ -773,6 +781,12 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
     for undoing a bad value — e.g. a mood logged for the wrong day, or a
     weight entered with the wrong units.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         date: The day to clear a field for, formatted YYYY-MM-DD.
         field: Which metric to blank out. One of: steps, sleep_hours,
@@ -784,12 +798,6 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
         for that date, "row" is null and "note" explains there was
         nothing to clear. Any field listed in HEALTH_PRIVATE_FIELDS is
         always null in "row".
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         day = parse_date(date, "date")
@@ -854,6 +862,12 @@ def get_metric_history(
     single metric (e.g. before calling get_baseline or calculate_metric_trend
     yourself) and don't need the full multi-metric payload.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml. Rejected if configured as
@@ -865,12 +879,6 @@ def get_metric_history(
     Returns:
         A GetMetricHistoryResult with "points" (date/value pairs; days with
         no recorded value for this metric are simply absent).
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -899,6 +907,12 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
     below measures against, so a wider window (60-90+ days) gives a more
     stable baseline than the 30-day default read_health_data uses.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml.
@@ -910,12 +924,6 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
         A GetBaselineResult with "baseline" (mean/median/stdev/n). All
         fields are null and n is 0 if the metric has no data in range —
         not an error, since "nothing logged yet" is an expected state.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -947,6 +955,12 @@ def detect_metric_anomalies(
     series, where the mean/stdev version is easily dragged around by the
     very outliers it's supposed to catch.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml.
@@ -960,12 +974,6 @@ def detect_metric_anomalies(
     Returns:
         A DetectAnomaliesResult with "anomalies" (empty if fewer than 5
         days have data, or if the metric has no meaningful spread).
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -998,6 +1006,12 @@ def calculate_metric_trend(
     a straight line actually fits — low r_squared means "noisy," not
     "flat").
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml.
@@ -1008,12 +1022,6 @@ def calculate_metric_trend(
     Returns:
         A CalculateTrendResult with "trend". direction is
         "insufficient_data" below 3 data points in range.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -1048,6 +1056,12 @@ def compare_metric_periods(
     The two ranges may be any length and need not be adjacent or equal in
     size; each is summarized with its own baseline first.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml.
@@ -1058,12 +1072,6 @@ def compare_metric_periods(
         A ComparePeriodsResult with each period's own baseline stats, plus
         "delta" (period_a mean minus period_b mean) and "pct_change". Both
         are null if either period has no data.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         start_a, end_a = resolve_range(period_a_start, period_a_end, default_days=0)
@@ -1104,6 +1112,12 @@ def find_metric_correlation(
     window, joined by date. Correlation, not causation: a strong r just
     means the two moved together, not that one caused the other.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         metric_a, metric_b: Any two of steps, sleep_hours,
             resting_heart_rate, weight_kg, workout_minutes, mood, water_ml.
@@ -1118,12 +1132,6 @@ def find_metric_correlation(
     Returns:
         A CorrelationResult with "r" (-1 to 1) and "n" (overlapping days
         used). "r" is null with fewer than 4 overlapping days.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -1170,6 +1178,12 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
     take one get_baseline/detect_metric_anomalies/calculate_metric_trend
     call per metric.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         days: Length of the "recent" window in days (default 7). The
             comparison baseline is the 4x-as-long period immediately
@@ -1182,12 +1196,6 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
         the recent window, or a clear non-flat trend with r_squared >=
         0.3). Metrics with nothing notable, or no data, are simply absent
         — this tool reports signal, not a status page for every metric.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     if days < 2:
         raise _tool_error(ERR_INVALID_RANGE, "days must be at least 2.")
@@ -1268,6 +1276,12 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     answer for the person is what the calling model should do with these
     facts, not something this tool guesses at itself.
 
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml.
@@ -1281,12 +1295,6 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         correlation — see find_metric_correlation's note on causation).
         "narrative_facts" restates the above as short plain-English
         sentences, for convenience when composing a reply.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
     """
     try:
         target_day = parse_date(date, "date")
