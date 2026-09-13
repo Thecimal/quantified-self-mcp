@@ -74,7 +74,6 @@ from logic import (
     db_error_types,
     default_data_dir,
     ensure_schema,
-    get_metric_provenance as _get_metric_provenance,
     insert_measurement,
     numeric_stats,
     parse_date,
@@ -83,6 +82,9 @@ from logic import (
     row_class,
     upsert_metrics,
     validate_metrics,
+)
+from logic import (
+    get_metric_provenance as _get_metric_provenance,
 )
 from logic import (
     readonly_connection as _logic_readonly_connection,
@@ -126,6 +128,8 @@ METRIC_COLUMNS = [
     "workout_minutes",
     "mood",
     "water_ml",
+    "heart_rate",
+    "hrv_ms",
 ]
 
 # ---------------------------------------------------------------------------
@@ -151,6 +155,8 @@ class DailyMetricsRow(BaseModel):
     workout_minutes: int | None = None
     mood: int | None = None
     water_ml: int | None = None
+    heart_rate: int | None = None
+    hrv_ms: float | None = None
 
 
 class DateRange(BaseModel):
@@ -173,6 +179,8 @@ class HealthDataSummary(BaseModel):
     workout_minutes: MetricStats
     mood: MetricStats
     water_ml: MetricStats
+    heart_rate: MetricStats
+    hrv_ms: MetricStats
 
 
 class ReadHealthDataResult(BaseModel):
@@ -581,7 +589,8 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
         - "range": the start/end dates actually used
         - "rows": one entry per day that has at least one recorded metric
           (date plus whichever of steps, sleep_hours, resting_heart_rate,
-          weight_kg, workout_minutes, mood, water_ml were logged for that
+          weight_kg, workout_minutes, mood, water_ml, heart_rate, hrv_ms
+          were logged for that
           day — fields with no data are null, not absent). Days with no
           data at all are simply absent from "rows". Capped at the most
           recent 400 matching days; see "truncated".
@@ -737,6 +746,8 @@ def log_daily_metric(
     workout_minutes: int | None = None,
     mood: int | None = None,
     water_ml: int | None = None,
+    heart_rate: int | None = None,
+    hrv_ms: float | None = None,
 ) -> LogDailyMetricResult:
     """
     Record one or more health metrics for a single day, creating that
@@ -762,6 +773,8 @@ def log_daily_metric(
         workout_minutes: Minutes of exercise. 0-1,440.
         mood: Mood rating on a 1-10 scale.
         water_ml: Water intake in millilitres. 0-10,000.
+        heart_rate: Non-resting heart rate reading in bpm. 20-250.
+        hrv_ms: Heart rate variability in milliseconds. 0-300.
 
     Returns:
         A LogDailyMetricResult with "logged" (just the fields this call set)
@@ -785,6 +798,8 @@ def log_daily_metric(
             "workout_minutes": workout_minutes,
             "mood": mood,
             "water_ml": water_ml,
+            "heart_rate": heart_rate,
+            "hrv_ms": hrv_ms,
         }.items()
         if v is not None
     }
@@ -844,7 +859,7 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
     Args:
         date: The day to clear a field for, formatted YYYY-MM-DD.
         field: Which metric to blank out. One of: steps, sleep_hours,
-            resting_heart_rate, weight_kg, workout_minutes, mood, water_ml.
+            resting_heart_rate, weight_kg, workout_minutes, mood, water_ml, heart_rate, hrv_ms.
 
     Returns:
         A ClearMetricResult with "cleared" (the field name) and "row" (the
@@ -1189,7 +1204,7 @@ def get_metric_history(
 
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
-            workout_minutes, mood, water_ml. Rejected if configured as
+            workout_minutes, mood, water_ml, heart_rate, hrv_ms. Rejected if configured as
             private via HEALTH_PRIVATE_FIELDS.
         start_date: First day to include, formatted YYYY-MM-DD.
             Defaults to 30 days before end_date.
@@ -1234,7 +1249,7 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
 
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
-            workout_minutes, mood, water_ml.
+            workout_minutes, mood, water_ml, heart_rate, hrv_ms.
         start_date: First day to include, formatted YYYY-MM-DD.
             Defaults to 90 days before end_date.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
@@ -1282,7 +1297,7 @@ def detect_metric_anomalies(
 
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
-            workout_minutes, mood, water_ml.
+            workout_minutes, mood, water_ml, heart_rate, hrv_ms.
         start_date: First day to include, formatted YYYY-MM-DD.
             Defaults to 90 days before end_date.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
@@ -1333,7 +1348,7 @@ def calculate_metric_trend(
 
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
-            workout_minutes, mood, water_ml.
+            workout_minutes, mood, water_ml, heart_rate, hrv_ms.
         start_date: First day to include, formatted YYYY-MM-DD.
             Defaults to 30 days before end_date.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
@@ -1383,7 +1398,7 @@ def compare_metric_periods(
 
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
-            workout_minutes, mood, water_ml.
+            workout_minutes, mood, water_ml, heart_rate, hrv_ms.
         period_a_start, period_a_end: The "current"/later period, YYYY-MM-DD.
         period_b_start, period_b_end: The period it's compared against, YYYY-MM-DD.
 
@@ -1439,7 +1454,7 @@ def find_metric_correlation(
 
     Args:
         metric_a, metric_b: Any two of steps, sleep_hours,
-            resting_heart_rate, weight_kg, workout_minutes, mood, water_ml.
+            resting_heart_rate, weight_kg, workout_minutes, mood, water_ml, heart_rate, hrv_ms.
         start_date: First day to include, formatted YYYY-MM-DD.
             Defaults to 90 days before end_date.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
@@ -1603,7 +1618,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
 
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
-            workout_minutes, mood, water_ml.
+            workout_minutes, mood, water_ml, heart_rate, hrv_ms.
         date: The day to explain, formatted YYYY-MM-DD.
 
     Returns:

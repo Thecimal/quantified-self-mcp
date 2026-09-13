@@ -59,6 +59,11 @@ async def test_list_tools_exposes_all_expected_tools_with_schemas_and_annotation
         "clear_metric",
         "export_health_data_csv",
         "get_metric_history",
+        # Raw measurements / provenance
+        "log_measurement",
+        "read_measurements",
+        "aggregate_measurements",
+        "get_metric_provenance",
         # Layer 2: analytics
         "get_baseline",
         "detect_metric_anomalies",
