@@ -357,16 +357,17 @@ quantified-self-init-db your-health-data.csv
 
 ### 3. Connect the MCP server
 
-Connect Quantified Self MCP to an MCP-compatible AI agent.
+Pick your client and follow the tested, step-by-step guide — each one takes you from a fresh clone to an answered question in about 5 minutes:
 
-### 4. Choose your model
+| Client | Guide |
+| --- | --- |
+| Claude Desktop | [docs/clients/claude-desktop.md](docs/clients/claude-desktop.md) |
+| LM Studio (local models) | [docs/clients/lm-studio.md](docs/clients/lm-studio.md) |
+| Open WebUI | [docs/clients/open-webui.md](docs/clients/open-webui.md) |
 
-Use either:
+Any other MCP-compatible client works too — point it at `server.py` the same way, using the `.venv` Python interpreter.
 
-* **A local LLM**
-* **A cloud-based LLM**
-
-### 5. Ask your health data questions
+### 4. Ask your health data questions
 
 ```text
 How has my sleep changed over the last 30 days?
