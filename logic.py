@@ -50,6 +50,29 @@ ADDED_COLUMNS = {
     "water_ml": "INTEGER",
 }
 
+# Raw, source-level measurements — one row per observation rather than one
+# row per day. daily_metrics stays the aggregate table analytics.py reads;
+# measurements is the finer-grained layer underneath it: multiple
+# measurements of the same metric on the same day (e.g. several workouts,
+# or an Apple Watch reading heart rate every few minutes) can each be kept,
+# with enough context (timestamp, source, source_type) to later explain a
+# daily_metrics value rather than just state it. Nothing currently derives
+# daily_metrics rows from this table automatically — see
+# aggregate_measurements_to_daily for a helper that does that on request.
+MEASUREMENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS measurements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    value REAL NOT NULL,
+    unit TEXT,
+    source TEXT,
+    source_type TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_measurements_metric_timestamp ON measurements (metric, timestamp);
+"""
+
 
 def _migrate_v1_create_table(conn: sqlite3.Connection) -> None:
     conn.executescript(HEALTH_SCHEMA)
@@ -72,9 +95,14 @@ def _migrate_v2_add_weight_workout_mood_water(conn: sqlite3.Connection) -> None:
 # description, function) entry here; never edit or remove an existing one,
 # even to fix a mistake, since a migration may have already run against a
 # real database — write a new migration to correct it instead.
+def _migrate_v3_create_measurements_table(conn: sqlite3.Connection) -> None:
+    conn.executescript(MEASUREMENTS_SCHEMA)
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "create daily_metrics table", _migrate_v1_create_table),
     (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
+    (3, "create measurements table", _migrate_v3_create_measurements_table),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -402,6 +430,131 @@ def upsert_metrics(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None
         sql += f" ON CONFLICT(date) DO UPDATE SET {update_clause}" if update_clause else " ON CONFLICT(date) DO NOTHING"
         conn.executemany(sql, group_rows)
     conn.commit()
+
+
+def insert_measurement(
+    conn: sqlite3.Connection,
+    timestamp: str,
+    metric: str,
+    value: float,
+    unit: str | None = None,
+    source: str | None = None,
+    source_type: str | None = None,
+) -> int:
+    """Insert one raw measurement row and return its id.
+
+    Unlike upsert_metrics, this always inserts a new row rather than
+    upserting by date — a day can have many measurements of the same
+    metric (multiple workouts, repeated heart-rate readings, etc.).
+    Requires a writable connection; commits before returning.
+    """
+    cursor = conn.execute(
+        "INSERT INTO measurements (timestamp, metric, value, unit, source, source_type) "
+        "VALUES (:timestamp, :metric, :value, :unit, :source, :source_type)",
+        {
+            "timestamp": timestamp,
+            "metric": metric,
+            "value": value,
+            "unit": unit,
+            "source": source,
+            "source_type": source_type,
+        },
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def query_measurements(
+    conn: sqlite3.Connection,
+    metric: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    """Return raw measurement rows matching the given filters, most recent
+    first. start/end compare against `timestamp` lexicographically, so
+    both plain dates (YYYY-MM-DD) and full ISO timestamps work. All
+    filters are optional; omitting them all returns the most recent
+    `limit` measurements across every metric.
+    """
+    clauses, params = [], {}
+    if metric is not None:
+        clauses.append("metric = :metric")
+        params["metric"] = metric
+    if start is not None:
+        clauses.append("timestamp >= :start")
+        params["start"] = start
+    if end is not None:
+        clauses.append("timestamp <= :end")
+        params["end"] = end
+    if source is not None:
+        clauses.append("source = :source")
+        params["source"] = source
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params["limit"] = limit
+    cursor = conn.cursor()
+    cursor.row_factory = row_class()
+    rows = cursor.execute(
+        f"SELECT id, timestamp, metric, value, unit, source, source_type, created_at "
+        f"FROM measurements {where} ORDER BY timestamp DESC LIMIT :limit",
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# Which daily_metrics column each measurements.metric name rolls up into,
+# and how same-day values combine — "sum" for cumulative-through-the-day
+# metrics (steps, water), "avg" for point-in-time readings (heart rate,
+# weight), "last" for whichever was recorded latest. Deliberately a small,
+# explicit map rather than assuming metric name == column name, since a
+# measurement's metric label (e.g. "resting_heart_rate" from one source,
+# "restingHeartRate" from another) isn't guaranteed to match daily_metrics'
+# column naming without normalization happening somewhere.
+MEASUREMENT_AGGREGATION = {
+    "steps": "sum",
+    "sleep_hours": "sum",
+    "resting_heart_rate": "avg",
+    "weight_kg": "last",
+    "workout_minutes": "sum",
+    "mood": "avg",
+    "water_ml": "sum",
+}
+
+
+def aggregate_measurements_to_daily(conn: sqlite3.Connection, day: str) -> dict[str, Any]:
+    """Roll up one day's measurements into a daily_metrics-shaped dict
+    (date + whichever metrics have measurements that day), using
+    MEASUREMENT_AGGREGATION to decide how same-day values combine. Does
+    not write anything itself — pass the result to upsert_metrics to
+    actually update daily_metrics. Metrics with no rows for `day`, or no
+    entry in MEASUREMENT_AGGREGATION, are omitted rather than written as
+    null, matching upsert_metrics' "only touch what's provided" contract.
+    """
+    cursor = conn.cursor()
+    cursor.row_factory = row_class()
+    rows = cursor.execute(
+        "SELECT metric, value, timestamp FROM measurements "
+        "WHERE timestamp >= :start AND timestamp < :end",
+        {"start": day, "end": day + "T24:00:00"},
+    ).fetchall()
+    by_metric: dict[str, list[tuple[float, str]]] = {}
+    for row in rows:
+        by_metric.setdefault(row["metric"], []).append((row["value"], row["timestamp"]))
+
+    result: dict[str, Any] = {"date": day}
+    for metric, values in by_metric.items():
+        how = MEASUREMENT_AGGREGATION.get(metric)
+        if how is None:
+            continue
+        raw = [v for v, _ts in values]
+        if how == "sum":
+            result[metric] = sum(raw)
+        elif how == "avg":
+            result[metric] = round(sum(raw) / len(raw), 1)
+        elif how == "last":
+            result[metric] = max(values, key=lambda pair: pair[1])[0]
+    return result
 
 
 # Sanity bounds for each metric: (min, max, human label used in error messages).

@@ -25,13 +25,16 @@ from logic import (
     DB_PASSPHRASE_ENV,
     MIGRATIONS,
     SCHEMA_VERSION,
+    aggregate_measurements_to_daily,
     connect_writable,
     db_error_types,
     default_data_dir,
     encryption_available,
     ensure_schema,
+    insert_measurement,
     numeric_stats,
     parse_date,
+    query_measurements,
     readonly_connection,
     resolve_range,
     row_class,
@@ -257,6 +260,80 @@ def test_validate_metrics_rejects_out_of_range_value():
 def test_validate_metrics_rejects_negative_where_not_allowed():
     with pytest.raises(ValueError, match="resting_heart_rate"):
         validate_metrics({"resting_heart_rate": -5})
+
+
+def test_insert_measurement_returns_id_and_persists_row(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        row_id = insert_measurement(
+            conn, "2026-06-01T08:00:00", "resting_heart_rate", 58, unit="bpm", source="Apple Watch",
+            source_type="wearable",
+        )
+        conn.row_factory = row_class()
+        row = dict(conn.execute("SELECT * FROM measurements WHERE id = ?", (row_id,)).fetchone())
+        assert row["metric"] == "resting_heart_rate"
+        assert row["value"] == 58
+        assert row["source"] == "Apple Watch"
+    finally:
+        conn.close()
+
+
+def test_query_measurements_filters_by_metric_and_date_range(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_measurement(conn, "2026-06-01T08:00:00", "steps", 100, source="A")
+        insert_measurement(conn, "2026-06-02T08:00:00", "steps", 200, source="B")
+        insert_measurement(conn, "2026-06-02T08:00:00", "mood", 7, source="B")
+
+        steps_only = query_measurements(conn, metric="steps")
+        assert {r["value"] for r in steps_only} == {100, 200}
+
+        ranged = query_measurements(conn, start="2026-06-02", end="2026-06-02T23:59:59")
+        assert len(ranged) == 2
+
+        by_source = query_measurements(conn, source="A")
+        assert len(by_source) == 1 and by_source[0]["value"] == 100
+    finally:
+        conn.close()
+
+
+def test_aggregate_measurements_to_daily_sums_and_averages_correctly(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_measurement(conn, "2026-06-01T07:00:00", "steps", 3000)
+        insert_measurement(conn, "2026-06-01T18:00:00", "steps", 4000)
+        insert_measurement(conn, "2026-06-01T07:00:00", "resting_heart_rate", 60)
+        insert_measurement(conn, "2026-06-01T20:00:00", "resting_heart_rate", 64)
+        insert_measurement(conn, "2026-06-01T07:00:00", "weight_kg", 80.0)
+        insert_measurement(conn, "2026-06-01T20:00:00", "weight_kg", 79.5)
+
+        result = aggregate_measurements_to_daily(conn, "2026-06-01")
+        assert result["date"] == "2026-06-01"
+        assert result["steps"] == 7000
+        assert result["resting_heart_rate"] == 62.0
+        assert result["weight_kg"] == 79.5  # "last" picks the latest timestamp, not max value
+    finally:
+        conn.close()
+
+
+def test_aggregate_measurements_to_daily_omits_metrics_with_no_rows(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_measurement(conn, "2026-06-01T07:00:00", "steps", 1000)
+        result = aggregate_measurements_to_daily(conn, "2026-06-01")
+        assert set(result) == {"date", "steps"}
+    finally:
+        conn.close()
+
+
+def test_measurements_migration_is_included_and_versioned():
+    versions = [v for v, _desc, _fn in MIGRATIONS]
+    assert 3 in versions
+    assert SCHEMA_VERSION >= 3
 
 
 def test_connect_writable_sets_busy_timeout(tmp_path):

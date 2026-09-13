@@ -11,6 +11,12 @@ Tools exposed:
 - log_daily_metric: record one or more of those metrics for a given day
 - clear_metric: blank out a single metric for a given day, undoing a bad
   log_daily_metric call
+- log_measurement: record a single raw, timestamped observation (with
+  source/unit) instead of a whole day's summary
+- read_measurements: read back raw measurement rows, filterable by
+  metric/date range/source
+- aggregate_measurements: roll a day's raw measurements into its
+  daily_metrics row, so existing analytics tools pick them up
 
 Resources exposed (read-only, addressed by URI rather than invoked):
 - health://metrics/schema: valid range and privacy status for each metric
@@ -61,12 +67,15 @@ from analytics import baseline as compute_baseline
 from logic import (
     MAX_ROWS_RETURNED,
     METRIC_BOUNDS,
+    aggregate_measurements_to_daily,
     connect_writable,
     db_error_types,
     default_data_dir,
     ensure_schema,
+    insert_measurement,
     numeric_stats,
     parse_date,
+    query_measurements,
     resolve_range,
     row_class,
     upsert_metrics,
@@ -185,6 +194,32 @@ class ClearMetricResult(BaseModel):
     cleared: str
     row: DailyMetricsRow | None = None
     note: str | None = None
+
+
+class MeasurementRow(BaseModel):
+    id: int
+    timestamp: str
+    metric: str
+    value: float
+    unit: str | None = None
+    source: str | None = None
+    source_type: str | None = None
+    created_at: str
+
+
+class LogMeasurementResult(BaseModel):
+    measurement: MeasurementRow
+
+
+class ReadMeasurementsResult(BaseModel):
+    measurements: list[MeasurementRow]
+    count: int
+
+
+class AggregateMeasurementsResult(BaseModel):
+    date: str
+    aggregated: dict[str, float]
+    row: DailyMetricsRow
 
 
 # --- Layer 2 (analytics) / Layer 3 (personal intelligence) output models --
@@ -471,6 +506,8 @@ ERR_INVALID_METRIC_VALUE = "invalid_metric_value"
 ERR_INVALID_FIELD = "invalid_field"
 ERR_DATABASE_LOCKED = "database_locked"
 ERR_DATABASE_ERROR = "database_error"
+ERR_INVALID_TIMESTAMP = "invalid_timestamp"
+ERR_INVALID_METRIC = "invalid_metric"
 
 
 def _tool_error(code: str, message: str) -> ToolError:
@@ -831,6 +868,209 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
     if row is None:
         return ClearMetricResult(cleared=field, note=f"No row exists for {day.isoformat()} — nothing to clear.")
     return ClearMetricResult(cleared=field, row=DailyMetricsRow(**_redact_private_fields(dict(row))))
+
+
+# ---------------------------------------------------------------------------
+# Raw measurements
+# ---------------------------------------------------------------------------
+#
+# daily_metrics (above) is one row per day — good for "how many steps
+# today" but not for "why did resting heart rate jump after that workout",
+# which needs the individual observations: when each was taken, and where
+# it came from. measurements is that finer-grained layer: every
+# log_measurement call is its own row, never upserted over a previous one,
+# so a day can hold several readings of the same metric. Nothing here
+# changes daily_metrics automatically — aggregate_measurements collapses a
+# day's measurements into it on request, using logic.MEASUREMENT_AGGREGATION
+# to decide how same-day values combine.
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Log a raw measurement",
+        readOnlyHint=False,
+        destructiveHint=False,  # always inserts a new row, never overwrites one
+        idempotentHint=False,  # calling it twice logs two measurements, not one
+        openWorldHint=False,
+    )
+)
+def log_measurement(
+    timestamp: str,
+    metric: str,
+    value: float,
+    unit: str | None = None,
+    source: str | None = None,
+    source_type: str | None = None,
+) -> LogMeasurementResult:
+    """
+    Record a single raw observation — one metric, one value, one point in
+    time — rather than a whole day's summary. Use this instead of
+    log_daily_metric when the source, exact time, or the fact that there
+    were *multiple* readings that day matters (e.g. three separate
+    workouts, or a wearable's periodic heart-rate samples).
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
+    Args:
+        timestamp: When the observation was taken, YYYY-MM-DD or a full
+            ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS).
+        metric: Name of the metric, e.g. "resting_heart_rate", "steps".
+            Free-form — not limited to daily_metrics' fixed columns.
+        value: The numeric reading.
+        unit: Unit the value is in, e.g. "bpm", "kg". Optional.
+        source: Where this came from, e.g. "Apple Watch", "manual". Optional.
+        source_type: Category of source, e.g. "wearable", "manual", "app". Optional.
+
+    Returns:
+        A LogMeasurementResult with the stored row, including its new id.
+    """
+    try:
+        parse_date(timestamp[:10], "timestamp")
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_TIMESTAMP, str(exc)) from exc
+    if not metric.strip():
+        raise _tool_error(ERR_INVALID_METRIC, "metric must be a non-empty string.")
+
+    try:
+        conn = connect_writable(HEALTH_DB_PATH)
+        try:
+            ensure_schema(conn)
+            new_id = insert_measurement(conn, timestamp, metric, value, unit, source, source_type)
+            conn.row_factory = row_class()
+            row = conn.execute("SELECT * FROM measurements WHERE id = ?", (new_id,)).fetchone()
+        finally:
+            conn.close()
+    except db_error_types() as exc:
+        logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
+        code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
+        raise _tool_error(
+            code,
+            "Could not write to the health database — it may be locked by another process. Try again in a moment.",
+        ) from exc
+
+    return LogMeasurementResult(measurement=MeasurementRow(**dict(row)))
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Read raw measurements",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def read_measurements(
+    metric: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    source: str | None = None,
+    limit: int = 200,
+) -> ReadMeasurementsResult:
+    """
+    Read individual measurement rows (not the daily_metrics aggregate),
+    most recent first. Use this to see exactly when and where each
+    reading came from, rather than just a day's summarized value.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
+    Args:
+        metric: Only return this metric. Omit for all metrics.
+        start_date: Only return rows on/after this date (YYYY-MM-DD). Omit for no lower bound.
+        end_date: Only return rows on/before this date (YYYY-MM-DD). Omit for no upper bound.
+        source: Only return rows from this source, e.g. "Apple Watch". Omit for all sources.
+        limit: Maximum rows to return (default 200).
+
+    Returns:
+        A ReadMeasurementsResult with the matching rows and a count.
+    """
+    try:
+        conn = connect_writable(HEALTH_DB_PATH)
+        try:
+            ensure_schema(conn)
+            conn.row_factory = row_class()
+            rows = query_measurements(conn, metric=metric, start=start_date, end=end_date, source=source, limit=limit)
+        finally:
+            conn.close()
+    except db_error_types() as exc:
+        logger.error("Database error reading from %s: %s", HEALTH_DB_PATH, exc)
+        raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
+
+    return ReadMeasurementsResult(measurements=[MeasurementRow(**row) for row in rows], count=len(rows))
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Aggregate measurements into a day",
+        readOnlyHint=False,
+        destructiveHint=False,  # only overwrites the metrics that have measurements that day
+        idempotentHint=True,  # re-running for the same day with the same measurements gives the same result
+        openWorldHint=False,
+    )
+)
+def aggregate_measurements(date: str) -> AggregateMeasurementsResult:
+    """
+    Roll up one day's raw measurements into that day's daily_metrics row,
+    so existing analytics tools (which all read daily_metrics) benefit
+    from data logged via log_measurement. Steps/water/workout_minutes sum
+    across the day, resting_heart_rate/mood average, weight_kg takes the
+    latest reading — see logic.MEASUREMENT_AGGREGATION.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
+    Args:
+        date: The day to aggregate, formatted YYYY-MM-DD.
+
+    Returns:
+        An AggregateMeasurementsResult with which metrics were written and
+        the day's resulting daily_metrics row.
+    """
+    try:
+        day = parse_date(date, "date")
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
+
+    try:
+        conn = connect_writable(HEALTH_DB_PATH)
+        try:
+            ensure_schema(conn)
+            conn.row_factory = row_class()
+            aggregated = aggregate_measurements_to_daily(conn, day.isoformat())
+            metrics_only = {k: v for k, v in aggregated.items() if k != "date"}
+            if metrics_only:
+                upsert_metrics(conn, [aggregated])
+            row = conn.execute(
+                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
+                (day.isoformat(),),
+            ).fetchone()
+        finally:
+            conn.close()
+    except db_error_types() as exc:
+        logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
+        code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
+        raise _tool_error(
+            code,
+            "Could not write to the health database — it may be locked by another process. Try again in a moment.",
+        ) from exc
+
+    row_dict = dict(row) if row is not None else {"date": day.isoformat()}
+    return AggregateMeasurementsResult(
+        date=day.isoformat(),
+        aggregated=metrics_only,
+        row=DailyMetricsRow(**_redact_private_fields(row_dict)),
+    )
 
 
 # ---------------------------------------------------------------------------

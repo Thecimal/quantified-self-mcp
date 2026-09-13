@@ -7,6 +7,20 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Added
+- **`measurements` table (schema v3)** — a raw, source-level layer under
+  `daily_metrics`: one row per observation (`timestamp`, `metric`,
+  `value`, `unit`, `source`, `source_type`), instead of one row per day.
+  Lets a day hold several readings of the same metric (multiple
+  workouts, repeated wearable samples) with enough context to explain a
+  value, not just report it.
+- **`log_measurement` / `read_measurements` / `aggregate_measurements`
+  tools** — record a raw observation, read raw rows back with
+  metric/date/source filters, and roll a day's raw measurements into its
+  `daily_metrics` row (`logic.MEASUREMENT_AGGREGATION` decides sum vs.
+  average vs. latest per metric) so existing analytics tools pick them
+  up unchanged.
+
 ### Fixed
 - **Every tool's "Privacy note" cloud-model warning was silently never
   reaching any real MCP client.** FastMCP derives a tool's client-facing
