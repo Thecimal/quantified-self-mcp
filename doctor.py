@@ -34,7 +34,13 @@ def _warn(msg: str) -> None:
 
 
 def check_python() -> bool:
-    if sys.version_info >= (3, 10):
+    # ruff's UP036 assumes this comparison is dead code given
+    # requires-python = ">=3.10" in pyproject.toml, but that constraint
+    # only applies to `pip install`-managed environments — this script is
+    # also run directly (e.g. a stray `python3 doctor.py` from a system
+    # interpreter pip never touched), which is exactly the case this
+    # check exists to catch.
+    if sys.version_info >= (3, 10):  # noqa: UP036
         _ok(f"Python {sys.version_info.major}.{sys.version_info.minor} installed")
         return True
     _fail(f"Python {sys.version_info.major}.{sys.version_info.minor} found, 3.10+ required")
