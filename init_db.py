@@ -57,7 +57,7 @@ from datetime import datetime
 from pathlib import Path
 
 from import_adapters import ADAPTERS, RowError, detect_adapter
-from logic import connect_writable, default_data_dir, ensure_schema, upsert_metrics, validate_metrics
+from logic import connect_writable, default_data_dir, ensure_schema, insert_measurement, upsert_metrics, validate_metrics
 
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = default_data_dir(BASE_DIR)
@@ -194,6 +194,7 @@ def init_health_db(source_path: Path, db_path: Path, replace: bool, source: str 
     name must be a key in import_adapters.ADAPTERS.
     """
     adapter_name = detect_adapter(source_path) if source == "auto" else source
+    raw_measurements: list[dict] = []
 
     if adapter_name == "csv":
         parsed_rows, present_columns, skipped = _load_csv_rows(source_path)
@@ -210,6 +211,7 @@ def init_health_db(source_path: Path, db_path: Path, replace: bool, source: str 
                 print(f"Skipping {source_path} date {row.get('date')}: {exc}", file=sys.stderr)
                 skipped += 1
         present_columns = adapted.present_columns
+        raw_measurements = adapted.raw_measurements
 
     conn = connect_writable(db_path)
     try:
@@ -217,11 +219,27 @@ def init_health_db(source_path: Path, db_path: Path, replace: bool, source: str 
         if replace:
             conn.execute("DELETE FROM daily_metrics")
         upsert_metrics(conn, parsed_rows)
+        if raw_measurements:
+            imported_at = datetime.now().isoformat(timespec="seconds")
+            for m in raw_measurements:
+                insert_measurement(
+                    conn,
+                    m["timestamp"],
+                    m["metric"],
+                    m["value"],
+                    unit=m.get("unit"),
+                    source=m.get("source"),
+                    source_type="wearable",
+                    importer=adapter_name,
+                    imported_at=imported_at,
+                )
     finally:
         conn.close()
 
     if present_columns:
         print(f"Loaded columns: {', '.join(present_columns)}")
+    if raw_measurements:
+        print(f"Loaded {len(raw_measurements)} raw measurement(s) with source provenance.")
     print(
         f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, "
         f"{skipped} skipped. (source: {adapter_name})"

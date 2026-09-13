@@ -184,5 +184,31 @@ def test_apple_health_multiple_days_produce_separate_rows(tmp_path):
     ]
 
 
+def test_apple_health_records_raw_measurements_with_source_provenance(tmp_path):
+    path = _write_export(
+        tmp_path,
+        """
+        <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Ben's Apple Watch" unit="count/min"
+                startDate="2026-01-15 08:00:00 -0500" endDate="2026-01-15 08:00:00 -0500" value="62"/>
+        <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Ben's iPhone" unit="count"
+                startDate="2026-01-15 09:00:00 -0500" endDate="2026-01-15 09:05:00 -0500" value="120"/>
+        """,
+    )
+    result = adapt_apple_health(path)
+    assert len(result.raw_measurements) == 2
+    hr = next(m for m in result.raw_measurements if m["metric"] == "resting_heart_rate")
+    assert hr["source"] == "Ben's Apple Watch"
+    assert hr["value"] == 62
+    assert hr["unit"] == "count/min"
+    steps = next(m for m in result.raw_measurements if m["metric"] == "steps")
+    assert steps["source"] == "Ben's iPhone"
+
+
+def test_apple_health_raw_measurements_empty_when_no_matching_records(tmp_path):
+    path = _write_export(tmp_path, "")
+    result = adapt_apple_health(path)
+    assert result.raw_measurements == []
+
+
 def test_apple_health_is_registered_in_adapters():
     assert ADAPTERS["apple-health"] is adapt_apple_health

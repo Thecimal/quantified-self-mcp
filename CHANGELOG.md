@@ -8,6 +8,23 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 ## [Unreleased]
 
 ### Added
+- **Provenance columns on `measurements` (schema v4)** — `importer` (which
+  import path wrote the row, e.g. `"apple-health"`) and `imported_at`
+  (when that import ran), alongside the existing `source`/`source_type`.
+- **Apple Health import now records raw, source-tagged measurements** —
+  each `sourceName` (e.g. "Ben's Apple Watch") is preserved per
+  observation in `measurements`, not just blended into the daily
+  aggregate. CSV import doesn't have a per-record source, so it still
+  only writes `daily_metrics` as before.
+- **`get_metric_provenance` tool** — breaks a metric's readings for a
+  day down by source and flags a `conflict` when two sources disagree
+  by more than a small tolerance, instead of silently averaging
+  different devices together.
+- **`resolve_source_conflicts` / `source_priority`** — `aggregate_measurements`
+  now takes an optional ordered source list so a multi-source day
+  aggregates from one chosen device rather than blending readings from
+  different sources; without a priority, falls back to whichever source
+  was imported most recently.
 - **`measurements` table (schema v3)** — a raw, source-level layer under
   `daily_metrics`: one row per observation (`timestamp`, `metric`,
   `value`, `unit`, `source`, `source_type`), instead of one row per day.

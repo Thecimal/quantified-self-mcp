@@ -47,6 +47,18 @@ class AdaptedImport(NamedTuple):
     rows: list[dict[str, Any]]  # each: {"date": "YYYY-MM-DD", <metric>: <typed value>, ...}
     present_columns: list[str]  # canonical metric column names that appeared anywhere in the source
     skipped: int  # source records this adapter itself couldn't parse (already printed to stderr)
+    # Individual, unaggregated observations this adapter could recover
+    # provenance for — each: {"timestamp", "metric", "value", "unit",
+    # "source"}. Provenance-aware sources (currently just Apple Health,
+    # via each Record's `sourceName` attribute — e.g. "Ben's Apple
+    # Watch") populate this; init_db.py writes it straight to the
+    # measurements table (see logic.insert_measurement) alongside the
+    # aggregated `rows` upsert into daily_metrics, so "which device said
+    # this" survives the import instead of being lost in the day-level
+    # average. Empty for adapters that can't identify a per-record
+    # source (or, for the same reason, the CSV path, which init_db.py
+    # handles separately from this NamedTuple entirely).
+    raw_measurements: list[dict[str, Any]] = []
 
 
 # HealthKit quantity-type identifier -> our column name, for the record
@@ -107,6 +119,7 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
     resting_hr_readings: dict[str, list[float]] = defaultdict(list)
     weight_latest: dict[str, tuple[datetime, float]] = {}
     sleep_seconds: dict[str, float] = defaultdict(float)
+    raw_measurements: list[dict[str, Any]] = []
     skipped = 0
 
     for _, elem in ET.iterparse(str(path), events=("end",)):
@@ -127,6 +140,7 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                     raise RowError(f"{rtype} record has non-numeric value {value_raw!r}") from exc
                 unit = (elem.get("unit") or "").strip().lower()
                 col = APPLE_HEALTH_QUANTITY_IDENTIFIERS[rtype]
+                source_name = elem.get("sourceName")
                 if col == "steps":
                     step_sum[day] += value
                 elif col == "resting_heart_rate":
@@ -143,6 +157,18 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                     if unit in _LITER_UNITS:
                         value *= 1000
                     water_sum[day] += value
+                # Recorded pre-conversion, in the source's own unit — this
+                # is the provenance layer, not the daily_metrics aggregate
+                # above, so it keeps exactly what the device reported.
+                raw_measurements.append(
+                    {
+                        "timestamp": when.isoformat(),
+                        "metric": col,
+                        "value": float(elem.get("value")),
+                        "unit": elem.get("unit"),
+                        "source": source_name,
+                    }
+                )
             elif rtype == "HKCategoryTypeIdentifierSleepAnalysis" and elem.get("value") in _SLEEP_ASLEEP_VALUES:
                 start_raw, end_raw = elem.get("startDate"), elem.get("endDate")
                 if start_raw is None or end_raw is None:
@@ -196,7 +222,7 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
             row["water_ml"] = int(round(water_sum[day]))
         rows.append(row)
 
-    return AdaptedImport(rows=rows, present_columns=present_columns, skipped=skipped)
+    return AdaptedImport(rows=rows, present_columns=present_columns, skipped=skipped, raw_measurements=raw_measurements)
 
 
 def detect_adapter(path: Path) -> str:

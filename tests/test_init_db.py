@@ -257,6 +257,42 @@ def test_init_health_db_auto_detects_apple_health_from_xml_extension(tmp_path):
     assert row == (4000,)
 
 
+def test_init_health_db_writes_raw_measurements_with_provenance_from_apple_health(tmp_path):
+    export = tmp_path / "export.xml"
+    export.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<HealthData locale="en_US">\n'
+        '<Record type="HKQuantityTypeIdentifierStepCount" sourceName="Ben\'s iPhone" unit="count" '
+        'startDate="2026-01-15 08:00:00 -0500" endDate="2026-01-15 08:05:00 -0500" value="4000"/>\n'
+        "</HealthData>\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "health.db"
+
+    init_health_db(export, db_path, replace=False)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    row = dict(conn.execute("SELECT * FROM measurements WHERE metric = 'steps'").fetchone())
+    conn.close()
+    assert row["value"] == 4000
+    assert row["source"] == "Ben's iPhone"
+    assert row["importer"] == "apple-health"
+    assert row["imported_at"] is not None
+
+
+def test_init_health_db_from_csv_writes_no_measurements(tmp_path):
+    csv_path = tmp_path / "health.csv"
+    csv_path.write_text("date,steps\n2026-01-15,4000\n", encoding="utf-8")
+    db_path = tmp_path / "health.db"
+
+    init_health_db(csv_path, db_path, replace=False)
+
+    conn = sqlite3.connect(db_path)
+    count = conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0]
+    conn.close()
+    assert count == 0
+
+
 def test_init_health_db_explicit_source_overrides_extension_guess(tmp_path):
     # A .csv file force-read as apple-health should fail to parse as XML
     # rather than silently falling back to the CSV reader.

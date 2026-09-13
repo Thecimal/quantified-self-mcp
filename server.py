@@ -17,6 +17,8 @@ Tools exposed:
   metric/date range/source
 - aggregate_measurements: roll a day's raw measurements into its
   daily_metrics row, so existing analytics tools pick them up
+- get_metric_provenance: break a metric's readings for a day down by
+  source, to spot when two sources disagree
 
 Resources exposed (read-only, addressed by URI rather than invoked):
 - health://metrics/schema: valid range and privacy status for each metric
@@ -72,6 +74,7 @@ from logic import (
     db_error_types,
     default_data_dir,
     ensure_schema,
+    get_metric_provenance as _get_metric_provenance,
     insert_measurement,
     numeric_stats,
     parse_date,
@@ -220,6 +223,20 @@ class AggregateMeasurementsResult(BaseModel):
     date: str
     aggregated: dict[str, float]
     row: DailyMetricsRow
+
+
+class SourceBreakdown(BaseModel):
+    source: str | None = None
+    value: float
+    n: int
+    latest_timestamp: str
+
+
+class GetMetricProvenanceResult(BaseModel):
+    metric: str
+    date: str
+    sources: list[SourceBreakdown]
+    conflict: bool
 
 
 # --- Layer 2 (analytics) / Layer 3 (personal intelligence) output models --
@@ -1016,13 +1033,19 @@ def read_measurements(
         openWorldHint=False,
     )
 )
-def aggregate_measurements(date: str) -> AggregateMeasurementsResult:
+def aggregate_measurements(date: str, source_priority: list[str] | None = None) -> AggregateMeasurementsResult:
     """
     Roll up one day's raw measurements into that day's daily_metrics row,
     so existing analytics tools (which all read daily_metrics) benefit
     from data logged via log_measurement. Steps/water/workout_minutes sum
     across the day, resting_heart_rate/mood average, weight_kg takes the
     latest reading — see logic.MEASUREMENT_AGGREGATION.
+
+    If a metric has measurements from more than one source that day (e.g.
+    an Apple Watch and a Garmin both logging resting_heart_rate), use
+    get_metric_provenance first to see whether they actually disagree,
+    then pass source_priority to pick a winner rather than blending two
+    devices' readings into one meaningless average.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1032,6 +1055,12 @@ def aggregate_measurements(date: str) -> AggregateMeasurementsResult:
 
     Args:
         date: The day to aggregate, formatted YYYY-MM-DD.
+        source_priority: Ordered list of source names, e.g. ["Apple
+            Watch", "Garmin"]. For any metric with more than one source
+            that day, the first name in this list that's actually present
+            wins and the other source's readings for that metric are
+            dropped from the aggregate. Omit to fall back to whichever
+            source was imported most recently.
 
     Returns:
         An AggregateMeasurementsResult with which metrics were written and
@@ -1047,7 +1076,7 @@ def aggregate_measurements(date: str) -> AggregateMeasurementsResult:
         try:
             ensure_schema(conn)
             conn.row_factory = row_class()
-            aggregated = aggregate_measurements_to_daily(conn, day.isoformat())
+            aggregated = aggregate_measurements_to_daily(conn, day.isoformat(), source_priority)
             metrics_only = {k: v for k, v in aggregated.items() if k != "date"}
             if metrics_only:
                 upsert_metrics(conn, [aggregated])
@@ -1071,6 +1100,56 @@ def aggregate_measurements(date: str) -> AggregateMeasurementsResult:
         aggregated=metrics_only,
         row=DailyMetricsRow(**_redact_private_fields(row_dict)),
     )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Break a metric down by source",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def get_metric_provenance(metric: str, date: str) -> GetMetricProvenanceResult:
+    """
+    Show one metric's raw measurements for one day, broken down by which
+    source reported them — answers "which one is correct?" when e.g. an
+    Apple Watch and a Garmin disagree on resting heart rate, instead of
+    silently averaging two different devices into one number.
+
+    Privacy note: this server and its SQLite file are entirely local, but
+    the data returned by this tool becomes part of the conversation sent
+    to whatever model the calling client is configured with. If that
+    model runs in the cloud rather than on your machine, treat this the
+    same as pasting the data into a chat with that provider.
+
+    Args:
+        metric: Name of the metric to inspect, e.g. "resting_heart_rate".
+        date: The day to inspect, formatted YYYY-MM-DD.
+
+    Returns:
+        A GetMetricProvenanceResult listing each source's average value,
+        reading count, and latest timestamp that day, plus "conflict"
+        (true when 2+ sources disagree by more than a small tolerance).
+    """
+    try:
+        day = parse_date(date, "date")
+    except ValueError as exc:
+        raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
+
+    try:
+        conn = connect_writable(HEALTH_DB_PATH)
+        try:
+            ensure_schema(conn)
+            result = _get_metric_provenance(conn, metric, day.isoformat())
+        finally:
+            conn.close()
+    except db_error_types() as exc:
+        logger.error("Database error reading from %s: %s", HEALTH_DB_PATH, exc)
+        raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
+
+    return GetMetricProvenanceResult(**result)
 
 
 # ---------------------------------------------------------------------------

@@ -59,6 +59,22 @@ ADDED_COLUMNS = {
 # daily_metrics value rather than just state it. Nothing currently derives
 # daily_metrics rows from this table automatically — see
 # aggregate_measurements_to_daily for a helper that does that on request.
+# Provenance columns added after measurements' original release (schema
+# v3 -> v4) — *where* an observation came from, distinct from `source`
+# (the device/app itself): `importer` is which import path wrote the row
+# ("apple-health", "csv", or None for a manually logged measurement),
+# `imported_at` is when that import ran, separate from `timestamp` (when
+# the observation itself happened) and `created_at` (when this row was
+# inserted, i.e. import time as well but not intended to be app-facing).
+# Kept as a v4 ALTER TABLE (rather than folding into MEASUREMENTS_SCHEMA's
+# CREATE TABLE) for the same reason ADDED_COLUMNS/v2 is separate from
+# HEALTH_SCHEMA: CREATE TABLE IF NOT EXISTS is a no-op against a
+# measurements table that already exists from schema v3.
+MEASUREMENT_PROVENANCE_COLUMNS = {
+    "importer": "TEXT",
+    "imported_at": "TEXT",
+}
+
 MEASUREMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS measurements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,10 +115,20 @@ def _migrate_v3_create_measurements_table(conn: sqlite3.Connection) -> None:
     conn.executescript(MEASUREMENTS_SCHEMA)
 
 
+def _migrate_v4_add_measurement_provenance_columns(conn: sqlite3.Connection) -> None:
+    # Guarded existence check, same reasoning as v2 above: safe to re-run
+    # against a measurements table that already has these columns.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(measurements)")}
+    for name, sqltype in MEASUREMENT_PROVENANCE_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE measurements ADD COLUMN {name} {sqltype}")
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "create daily_metrics table", _migrate_v1_create_table),
     (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
     (3, "create measurements table", _migrate_v3_create_measurements_table),
+    (4, "add importer, imported_at provenance columns to measurements", _migrate_v4_add_measurement_provenance_columns),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -440,17 +466,22 @@ def insert_measurement(
     unit: str | None = None,
     source: str | None = None,
     source_type: str | None = None,
+    importer: str | None = None,
+    imported_at: str | None = None,
 ) -> int:
     """Insert one raw measurement row and return its id.
 
     Unlike upsert_metrics, this always inserts a new row rather than
     upserting by date — a day can have many measurements of the same
     metric (multiple workouts, repeated heart-rate readings, etc.).
+    importer/imported_at record provenance for rows written by an
+    automated import (see import_adapters.py) — leave both None for a
+    measurement logged directly (e.g. via the log_measurement tool).
     Requires a writable connection; commits before returning.
     """
     cursor = conn.execute(
-        "INSERT INTO measurements (timestamp, metric, value, unit, source, source_type) "
-        "VALUES (:timestamp, :metric, :value, :unit, :source, :source_type)",
+        "INSERT INTO measurements (timestamp, metric, value, unit, source, source_type, importer, imported_at) "
+        "VALUES (:timestamp, :metric, :value, :unit, :source, :source_type, :importer, :imported_at)",
         {
             "timestamp": timestamp,
             "metric": metric,
@@ -458,6 +489,8 @@ def insert_measurement(
             "unit": unit,
             "source": source,
             "source_type": source_type,
+            "importer": importer,
+            "imported_at": imported_at,
         },
     )
     conn.commit()
@@ -496,7 +529,7 @@ def query_measurements(
     cursor = conn.cursor()
     cursor.row_factory = row_class()
     rows = cursor.execute(
-        f"SELECT id, timestamp, metric, value, unit, source, source_type, created_at "
+        f"SELECT id, timestamp, metric, value, unit, source, source_type, importer, imported_at, created_at "
         f"FROM measurements {where} ORDER BY timestamp DESC LIMIT :limit",
         params,
     ).fetchall()
@@ -522,7 +555,92 @@ MEASUREMENT_AGGREGATION = {
 }
 
 
-def aggregate_measurements_to_daily(conn: sqlite3.Connection, day: str) -> dict[str, Any]:
+def get_metric_provenance(conn: sqlite3.Connection, metric: str, day: str) -> dict[str, Any]:
+    """Break one metric's measurements for one day down by source, so a
+    caller can see e.g. "Apple Watch says 62, Garmin says 67" instead of
+    a single blended number with no way to tell they disagreed.
+
+    Returns {"metric", "date", "sources": [{"source", "value" (avg across
+    that source's readings that day), "n", "latest_timestamp"}, ...]
+    sorted by n descending, "conflict": bool}. "conflict" is True only
+    when 2+ distinct non-null sources are present *and* their per-source
+    averages differ by more than CONFLICT_TOLERANCE_PCT of the smaller
+    one — a single source reporting multiple similar readings is not a
+    conflict. Rows with no source recorded are grouped under None.
+    """
+    cursor = conn.cursor()
+    cursor.row_factory = row_class()
+    rows = cursor.execute(
+        "SELECT source, value, timestamp FROM measurements "
+        "WHERE metric = :metric AND timestamp >= :start AND timestamp < :end",
+        {"metric": metric, "start": day, "end": day + "T24:00:00"},
+    ).fetchall()
+
+    by_source: dict[str | None, list[tuple[float, str]]] = {}
+    for row in rows:
+        by_source.setdefault(row["source"], []).append((row["value"], row["timestamp"]))
+
+    sources = [
+        {
+            "source": source,
+            "value": round(sum(v for v, _ts in readings) / len(readings), 2),
+            "n": len(readings),
+            "latest_timestamp": max(readings, key=lambda pair: pair[1])[1],
+        }
+        for source, readings in by_source.items()
+    ]
+    sources.sort(key=lambda s: s["n"], reverse=True)
+
+    conflict = False
+    distinct_values = [s["value"] for s in sources if s["source"] is not None]
+    if len(distinct_values) > 1:
+        lo, hi = min(distinct_values), max(distinct_values)
+        conflict = lo == 0 or (hi - lo) / lo > CONFLICT_TOLERANCE_PCT
+
+    return {"metric": metric, "date": day, "sources": sources, "conflict": conflict}
+
+
+# How far apart two sources' same-day averages for a metric can be before
+# get_metric_provenance/resolve_source_conflicts calls it a conflict
+# rather than ordinary reading-to-reading noise.
+CONFLICT_TOLERANCE_PCT = 0.05
+
+
+def resolve_source_conflicts(
+    rows: list[dict[str, Any]], source_priority: list[str] | None = None
+) -> tuple[list[dict[str, Any]], bool]:
+    """Given measurement rows (as from query_measurements) for a single
+    metric/day, decide which to keep when more than one source is present.
+
+    With source_priority given, keeps only the rows from the
+    highest-priority source that actually appears (first match in the
+    list wins) — e.g. ["Apple Watch", "Garmin"] prefers Apple Watch data
+    whenever both are present for that day. Without a priority list,
+    falls back to whichever source has the most recent imported_at (or
+    created_at if imported_at is null) — i.e. "trust the most recently
+    imported source". A single source (or no rows) is returned unchanged.
+    Returns (kept_rows, conflict) — conflict is True whenever this
+    function actually had to choose between 2+ distinct sources.
+    """
+    sources = {r.get("source") for r in rows}
+    if len(sources) <= 1:
+        return rows, False
+
+    if source_priority:
+        for preferred in source_priority:
+            if preferred in sources:
+                return [r for r in rows if r.get("source") == preferred], True
+
+    def _recency_key(row: dict[str, Any]) -> str:
+        return row.get("imported_at") or row.get("created_at") or ""
+
+    newest_source = max(rows, key=_recency_key).get("source")
+    return [r for r in rows if r.get("source") == newest_source], True
+
+
+def aggregate_measurements_to_daily(
+    conn: sqlite3.Connection, day: str, source_priority: list[str] | None = None
+) -> dict[str, Any]:
     """Roll up one day's measurements into a daily_metrics-shaped dict
     (date + whichever metrics have measurements that day), using
     MEASUREMENT_AGGREGATION to decide how same-day values combine. Does
@@ -530,28 +648,38 @@ def aggregate_measurements_to_daily(conn: sqlite3.Connection, day: str) -> dict[
     actually update daily_metrics. Metrics with no rows for `day`, or no
     entry in MEASUREMENT_AGGREGATION, are omitted rather than written as
     null, matching upsert_metrics' "only touch what's provided" contract.
+
+    When a metric has measurements from more than one source that day,
+    resolve_source_conflicts picks which to keep (using source_priority
+    if given) before aggregating, rather than blending readings from
+    different devices into one number. See get_metric_provenance to
+    inspect a disagreement before deciding on a priority.
     """
     cursor = conn.cursor()
     cursor.row_factory = row_class()
-    rows = cursor.execute(
-        "SELECT metric, value, timestamp FROM measurements "
-        "WHERE timestamp >= :start AND timestamp < :end",
-        {"start": day, "end": day + "T24:00:00"},
-    ).fetchall()
-    by_metric: dict[str, list[tuple[float, str]]] = {}
+    rows = [
+        dict(r)
+        for r in cursor.execute(
+            "SELECT metric, value, timestamp, source, imported_at, created_at FROM measurements "
+            "WHERE timestamp >= :start AND timestamp < :end",
+            {"start": day, "end": day + "T24:00:00"},
+        ).fetchall()
+    ]
+    by_metric: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        by_metric.setdefault(row["metric"], []).append((row["value"], row["timestamp"]))
+        by_metric.setdefault(row["metric"], []).append(row)
 
     result: dict[str, Any] = {"date": day}
-    for metric, values in by_metric.items():
+    for metric, metric_rows in by_metric.items():
         how = MEASUREMENT_AGGREGATION.get(metric)
         if how is None:
             continue
-        raw = [v for v, _ts in values]
+        kept_rows, _conflict = resolve_source_conflicts(metric_rows, source_priority)
+        values = [(r["value"], r["timestamp"]) for r in kept_rows]
         if how == "sum":
-            result[metric] = sum(raw)
+            result[metric] = sum(v for v, _ts in values)
         elif how == "avg":
-            result[metric] = round(sum(raw) / len(raw), 1)
+            result[metric] = round(sum(v for v, _ts in values) / len(values), 1)
         elif how == "last":
             result[metric] = max(values, key=lambda pair: pair[1])[0]
     return result

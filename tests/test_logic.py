@@ -31,12 +31,14 @@ from logic import (
     default_data_dir,
     encryption_available,
     ensure_schema,
+    get_metric_provenance,
     insert_measurement,
     numeric_stats,
     parse_date,
     query_measurements,
     readonly_connection,
     resolve_range,
+    resolve_source_conflicts,
     row_class,
     upsert_metrics,
     validate_metrics,
@@ -334,6 +336,107 @@ def test_measurements_migration_is_included_and_versioned():
     versions = [v for v, _desc, _fn in MIGRATIONS]
     assert 3 in versions
     assert SCHEMA_VERSION >= 3
+
+
+def test_provenance_migration_adds_importer_and_imported_at():
+    versions = [v for v, _desc, _fn in MIGRATIONS]
+    assert 4 in versions
+    assert SCHEMA_VERSION >= 4
+
+
+def test_insert_measurement_stores_provenance_fields(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        row_id = insert_measurement(
+            conn, "2026-06-01T08:00:00", "steps", 1000, source="Apple Watch",
+            importer="apple-health", imported_at="2026-06-02T09:00:00",
+        )
+        conn.row_factory = row_class()
+        row = dict(conn.execute("SELECT * FROM measurements WHERE id = ?", (row_id,)).fetchone())
+        assert row["importer"] == "apple-health"
+        assert row["imported_at"] == "2026-06-02T09:00:00"
+    finally:
+        conn.close()
+
+
+def test_get_metric_provenance_reports_no_conflict_for_single_source(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_measurement(conn, "2026-06-01T08:00:00", "resting_heart_rate", 60, source="Apple Watch")
+        insert_measurement(conn, "2026-06-01T20:00:00", "resting_heart_rate", 62, source="Apple Watch")
+        result = get_metric_provenance(conn, "resting_heart_rate", "2026-06-01")
+        assert result["conflict"] is False
+        assert len(result["sources"]) == 1
+        assert result["sources"][0]["source"] == "Apple Watch"
+        assert result["sources"][0]["n"] == 2
+    finally:
+        conn.close()
+
+
+def test_get_metric_provenance_flags_conflict_across_sources(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_measurement(conn, "2026-06-01T08:00:00", "resting_heart_rate", 62, source="Apple Watch")
+        insert_measurement(conn, "2026-06-01T08:05:00", "resting_heart_rate", 67, source="Garmin")
+        result = get_metric_provenance(conn, "resting_heart_rate", "2026-06-01")
+        assert result["conflict"] is True
+        assert {s["source"] for s in result["sources"]} == {"Apple Watch", "Garmin"}
+    finally:
+        conn.close()
+
+
+def test_get_metric_provenance_ignores_close_readings_as_non_conflict(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_measurement(conn, "2026-06-01T08:00:00", "resting_heart_rate", 60, source="Apple Watch")
+        insert_measurement(conn, "2026-06-01T08:05:00", "resting_heart_rate", 61, source="Garmin")
+        result = get_metric_provenance(conn, "resting_heart_rate", "2026-06-01")
+        assert result["conflict"] is False
+    finally:
+        conn.close()
+
+
+def test_resolve_source_conflicts_prefers_explicit_priority():
+    rows = [
+        {"source": "Garmin", "value": 67, "imported_at": "2026-06-02T09:00:00"},
+        {"source": "Apple Watch", "value": 62, "imported_at": "2026-06-01T09:00:00"},
+    ]
+    kept, conflict = resolve_source_conflicts(rows, source_priority=["Apple Watch", "Garmin"])
+    assert conflict is True
+    assert {r["source"] for r in kept} == {"Apple Watch"}
+
+
+def test_resolve_source_conflicts_falls_back_to_most_recently_imported():
+    rows = [
+        {"source": "Garmin", "value": 67, "imported_at": "2026-06-02T09:00:00"},
+        {"source": "Apple Watch", "value": 62, "imported_at": "2026-06-01T09:00:00"},
+    ]
+    kept, conflict = resolve_source_conflicts(rows)
+    assert conflict is True
+    assert {r["source"] for r in kept} == {"Garmin"}
+
+
+def test_resolve_source_conflicts_is_a_noop_for_a_single_source():
+    rows = [{"source": "Apple Watch", "value": 62, "imported_at": None}]
+    kept, conflict = resolve_source_conflicts(rows)
+    assert kept == rows
+    assert conflict is False
+
+
+def test_aggregate_measurements_to_daily_uses_source_priority_to_resolve_conflict(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_measurement(conn, "2026-06-01T08:00:00", "resting_heart_rate", 62, source="Apple Watch")
+        insert_measurement(conn, "2026-06-01T08:05:00", "resting_heart_rate", 67, source="Garmin")
+        result = aggregate_measurements_to_daily(conn, "2026-06-01", source_priority=["Apple Watch"])
+        assert result["resting_heart_rate"] == 62.0
+    finally:
+        conn.close()
 
 
 def test_connect_writable_sets_busy_timeout(tmp_path):
