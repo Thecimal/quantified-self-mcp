@@ -8,6 +8,7 @@ Usage:
     python init_db.py path/to/health.csv
     python init_db.py path/to/export.xml            # Apple Health export
     python init_db.py path/to/health.csv --source csv
+    python init_db.py path/to/export.xml --report    # print a full import report
 
 By default the source format is guessed from the file extension (--source
 auto, the default: .xml -> apple-health, anything else -> this project's
@@ -226,12 +227,72 @@ def _load_csv_rows(
     return parsed_rows, present_columns, skipped
 
 
+# Human-readable label per metric column, used only by the --report table
+# (e.g. "Steps" rather than the raw "steps" column name).
+_METRIC_LABELS = {
+    "steps": "Steps",
+    "sleep_hours": "Sleep",
+    "resting_heart_rate": "Resting HR",
+    "heart_rate": "Heart Rate",
+    "hrv_ms": "HRV",
+    "weight_kg": "Weight",
+    "workout_minutes": "Workout Minutes",
+    "mood": "Mood",
+    "water_ml": "Water",
+}
+
+
+def _print_import_report(
+    source_path: Path,
+    adapter_name: str,
+    parsed_rows: list[dict],
+    present_columns: list[str],
+    skipped: int,
+    unsupported_types: dict[str, int],
+) -> None:
+    """Print the human-facing "what actually happened" summary for
+    --report: what was found in source_path, what made it into the
+    database, what was skipped, and what this importer doesn't
+    understand at all. Complements (doesn't replace) the one-line
+    machine-parseable summary init_health_db always prints.
+    """
+    dates = [r["date"] for r in parsed_rows if r.get("date")]
+    print()
+    print("IMPORT COMPLETE")
+    print()
+    print(f"Source: {adapter_name} ({source_path.name})")
+    if dates:
+        print(f"Date range: {min(dates)} -> {max(dates)}")
+    print()
+    print("Imported:")
+    if present_columns:
+        for col in present_columns:
+            days = sum(1 for r in parsed_rows if r.get(col) is not None)
+            label = _METRIC_LABELS.get(col, col)
+            print(f"  {label:<16} {days} day(s)")
+    else:
+        print("  (nothing — no recognized columns had data)")
+    print()
+    print(f"Skipped: {skipped} record(s)")
+    if unsupported_types:
+        total_unsupported = sum(unsupported_types.values())
+        print(f"Unsupported: {len(unsupported_types)} record type(s), {total_unsupported} record(s) total")
+        for rtype, count in sorted(unsupported_types.items(), key=lambda kv: -kv[1])[:10]:
+            print(f"  {rtype}: {count}")
+        if len(unsupported_types) > 10:
+            print(f"  ...and {len(unsupported_types) - 10} more type(s)")
+    else:
+        print("Unsupported: 0 record types")
+    print()
+
+
 def init_health_db(
     source_path: Path,
     db_path: Path,
     replace: bool,
     source: str = "auto",
     column_map: dict[str, str] | None = None,
+    report: bool = False,
 ) -> None:
     """Import source_path into db_path.
 
@@ -241,10 +302,13 @@ def init_health_db(
     format (handled directly here — see _load_csv_rows), and any other
     name must be a key in import_adapters.ADAPTERS. column_map only
     applies to the csv path (see --map in main()) and is ignored
-    otherwise.
+    otherwise. report prints the fuller "what was found / imported /
+    skipped / unsupported" breakdown (see --report), in addition to the
+    one-line summary this always prints.
     """
     adapter_name = detect_adapter(source_path) if source == "auto" else source
     raw_measurements: list[dict] = []
+    unsupported_types: dict[str, int] = {}
 
     if adapter_name == "csv":
         parsed_rows, present_columns, skipped = _load_csv_rows(source_path, column_map)
@@ -262,6 +326,7 @@ def init_health_db(
                 skipped += 1
         present_columns = adapted.present_columns
         raw_measurements = adapted.raw_measurements
+        unsupported_types = adapted.unsupported_types
 
     conn = connect_writable(db_path)
     try:
@@ -285,6 +350,9 @@ def init_health_db(
                 )
     finally:
         conn.close()
+
+    if report:
+        _print_import_report(source_path, adapter_name, parsed_rows, present_columns, skipped, unsupported_types)
 
     if present_columns:
         print(f"Loaded columns: {', '.join(present_columns)}")
@@ -334,6 +402,15 @@ def main() -> None:
         help="Clear existing rows in the table first, instead of appending/upserting.",
     )
     parser.add_argument(
+        "--report",
+        action="store_true",
+        help=(
+            "Print a fuller import report — source, date range, imported day counts per "
+            "metric, records skipped, and record types this importer doesn't map at all — "
+            "in addition to the usual one-line summary."
+        ),
+    )
+    parser.add_argument(
         "--db-path",
         type=Path,
         default=DEFAULT_DB_PATH,
@@ -366,7 +443,7 @@ def main() -> None:
 
     db_path = args.db_path.expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    init_health_db(args.source_path, db_path, args.replace, args.source, column_map)
+    init_health_db(args.source_path, db_path, args.replace, args.source, column_map, args.report)
 
 
 if __name__ == "__main__":

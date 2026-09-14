@@ -328,6 +328,45 @@ quantified-self-init-db export.xml
 
 The importer maps supported Apple Health records into the local database.
 
+**Android users**: Health Connect doesn't have a built-in export button
+like Apple Health, so it needs one extra step — see
+[docs/clients/android-health-connect.md](docs/clients/android-health-connect.md).
+
+### See exactly what an import found, imported, skipped, and ignored
+
+Add `--report` to any import to print a full breakdown instead of just a
+one-line summary:
+
+```bash
+quantified-self-init-db export.xml --report
+```
+
+```text
+IMPORT COMPLETE
+
+Source: apple-health (export.xml)
+Date range: 2025-03-01 -> 2026-09-13
+
+Imported:
+  Steps            420 day(s)
+  Sleep            398 day(s)
+  Heart Rate       410 day(s)
+  HRV              180 day(s)
+  Weight            30 day(s)
+
+Skipped: 42 record(s)
+Unsupported: 18 record type(s), 6,204 record(s) total
+  HKQuantityTypeIdentifierBloodPressureSystolic: 3,102
+  HKCategoryTypeIdentifierMindfulSession: 890
+  ...
+```
+
+"Skipped" is records this import tried and failed to parse (bad
+date/value — see the warnings printed alongside). "Unsupported" is
+record types the importer doesn't map to any column at all — nothing
+here is silently lost; it's counted and named so you know what a fuller
+importer would need to add.
+
 ---
 
 ## ⚡ Installation

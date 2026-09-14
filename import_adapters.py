@@ -70,6 +70,12 @@ class AdaptedImport(NamedTuple):
     # source (or, for the same reason, the CSV path, which init_db.py
     # handles separately from this NamedTuple entirely).
     raw_measurements: list[dict[str, Any]] = []
+    # Record/recordType strings this adapter saw but doesn't map to any
+    # column (e.g. Apple Health's BloodPressure, ECG, MindfulSession —
+    # dozens of types this project doesn't track), each with how many
+    # times it appeared. Powers `--report`'s "Unsupported" section; empty
+    # for the csv path, which has no such concept.
+    unsupported_types: dict[str, int] = {}
 
 
 # HealthKit quantity-type identifier -> our column name, for the record
@@ -139,6 +145,7 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
     weight_latest: dict[str, tuple[datetime, float]] = {}
     sleep_seconds: dict[str, float] = defaultdict(float)
     raw_measurements: list[dict[str, Any]] = []
+    unsupported_types: defaultdict[str, int] = defaultdict(int)
     skipped = 0
 
     for _, elem in ET.iterparse(str(path), events=("end",)):
@@ -199,6 +206,13 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                 start_dt = _parse_apple_datetime(start_raw)
                 end_dt = _parse_apple_datetime(end_raw)
                 sleep_seconds[start_dt.date().isoformat()] += (end_dt - start_dt).total_seconds()
+            elif rtype and rtype != "HKCategoryTypeIdentifierSleepAnalysis":
+                # A record type (or a Sleep record whose value isn't one
+                # of _SLEEP_ASLEEP_VALUES, e.g. InBed/Awake) this adapter
+                # doesn't map to a column. Counted, not treated as an
+                # error — this is expected for most of what's in a real
+                # export.xml (BloodPressure, ECG, MindfulSession, etc.).
+                unsupported_types[rtype] += 1
         except RowError as exc:
             print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
             skipped += 1
@@ -254,7 +268,13 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
             row["water_ml"] = int(round(water_sum[day]))
         rows.append(row)
 
-    return AdaptedImport(rows=rows, present_columns=present_columns, skipped=skipped, raw_measurements=raw_measurements)
+    return AdaptedImport(
+        rows=rows,
+        present_columns=present_columns,
+        skipped=skipped,
+        raw_measurements=raw_measurements,
+        unsupported_types=dict(unsupported_types),
+    )
 
 
 # Health Connect SleepSessionRecord stage-type strings counted as
@@ -309,6 +329,7 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
     weight_latest: dict[str, tuple[datetime, float]] = {}
     exercise_minutes: dict[str, float] = defaultdict(float)
     sleep_seconds: dict[str, float] = defaultdict(float)
+    unsupported_types: defaultdict[str, int] = defaultdict(int)
     skipped = 0
 
     for record in records:
@@ -355,6 +376,11 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
                 else:
                     end = _parse_hc_datetime(record["endTime"])
                     sleep_seconds[day] += (end - start).total_seconds()
+            elif rtype:
+                # A recordType this adapter doesn't map to a column (e.g.
+                # BloodPressureRecord, OxygenSaturationRecord, dozens of
+                # others Health Connect exposes). Counted, not an error.
+                unsupported_types[rtype] += 1
         except (KeyError, TypeError, ValueError, RowError) as exc:
             print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
             skipped += 1
@@ -404,7 +430,12 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
             row["workout_minutes"] = int(round(exercise_minutes[day]))
         rows.append(row)
 
-    return AdaptedImport(rows=rows, present_columns=present_columns, skipped=skipped)
+    return AdaptedImport(
+        rows=rows,
+        present_columns=present_columns,
+        skipped=skipped,
+        unsupported_types=dict(unsupported_types),
+    )
 
 
 def detect_adapter(path: Path) -> str:
