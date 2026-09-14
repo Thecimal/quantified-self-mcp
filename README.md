@@ -223,6 +223,19 @@ The server exposes **eighteen MCP tools**, organized in three layers:
 Use `log_measurement`/`log_workout_session` when the source, exact time, or multiple same-day readings matter (e.g. two wearables both logging heart rate); `aggregate_measurements` then folds those into `daily_metrics` so every Layer 2/3 tool below can use them.
 
 
+**Layer 1b — Raw measurements & workout sessions**
+
+| Tool                     | Purpose                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| `log_measurement`        | Record one raw observation (metric, value, timestamp, source) instead of a day total |
+| `read_measurements`      | Read individual measurement rows, most recent first, filterable by metric/source     |
+| `log_workout_session`    | Record one workout as a structured event (activity, duration, intensity, heart rate) |
+| `read_workout_sessions`  | Read individual workout sessions, most recent day first                              |
+| `aggregate_measurements` | Roll up a day's raw measurements into that day's `daily_metrics` row for analytics    |
+
+Use `log_measurement`/`log_workout_session` when the source, exact time, or multiple same-day readings matter (e.g. two wearables both logging heart rate); `aggregate_measurements` then folds those into `daily_metrics` so every Layer 2/3 tool below can use them.
+
+
 **Layer 2 — Analytics** (statistics computed over one or two metrics; see `analytics.py`)
 
 | Tool                      | Purpose                                                        |
