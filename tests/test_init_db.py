@@ -192,6 +192,71 @@ def test_read_csv_column_map_covers_missing_date_column(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _read_csv — COLUMN_ALIASES (alternate header spellings, no --map needed)
+# ---------------------------------------------------------------------------
+
+
+def test_read_csv_recognizes_step_count_alias(tmp_path):
+    csv_path = _write_csv(tmp_path, ["date", "step_count"], [["2026-01-01", "8000"]])
+    rows, present_columns = _read_csv(csv_path)
+    assert present_columns == ["steps"]
+    assert rows[0]["steps"] == "8000"
+
+
+def test_read_csv_recognizes_alias_case_insensitively(tmp_path):
+    csv_path = _write_csv(tmp_path, ["Date", "STEP_COUNT"], [["2026-01-01", "8000"]])
+    rows, present_columns = _read_csv(csv_path)
+    assert present_columns == ["steps"]
+    assert rows[0]["steps"] == "8000"
+
+
+@pytest.mark.parametrize(
+    ("canonical", "alias_header"),
+    [
+        ("steps", "daily_steps"),
+        ("sleep_hours", "sleep"),
+        ("sleep_hours", "sleep_duration"),
+        ("resting_heart_rate", "rhr"),
+        ("heart_rate", "bpm"),
+        ("hrv_ms", "hrv"),
+        ("weight_kg", "weight"),
+        ("weight_kg", "body_weight"),
+        ("workout_minutes", "exercise_minutes"),
+        ("water_ml", "water"),
+        ("mood", "mood_score"),
+    ],
+)
+def test_read_csv_recognizes_each_documented_alias(tmp_path, canonical, alias_header):
+    csv_path = _write_csv(tmp_path, ["date", alias_header], [["2026-01-01", "5"]])
+    rows, present_columns = _read_csv(csv_path)
+    assert present_columns == [canonical]
+    assert rows[0][canonical] == "5"
+
+
+def test_read_csv_canonical_name_wins_over_alias_when_both_present(tmp_path):
+    """If a CSV happens to have both the canonical column and an alias
+    column, the canonical one is used — aliases only fill in when the
+    canonical name isn't present at all."""
+    csv_path = _write_csv(
+        tmp_path, ["date", "steps", "step_count"], [["2026-01-01", "8000", "9999"]]
+    )
+    rows, present_columns = _read_csv(csv_path)
+    assert present_columns == ["steps"]
+    assert rows[0]["steps"] == "8000"
+
+
+def test_read_csv_column_map_overrides_alias(tmp_path):
+    """An explicit --map for a column still wins even if the CSV also
+    has a header that would otherwise match that column's alias list."""
+    csv_path = _write_csv(
+        tmp_path, ["date", "step_count", "Really Daily Steps"], [["2026-01-01", "1111", "8000"]]
+    )
+    rows, present_columns = _read_csv(csv_path, column_map={"steps": "Really Daily Steps"})
+    assert present_columns == ["steps"]
+    assert rows[0]["steps"] == "8000"
+
+
+# ---------------------------------------------------------------------------
 # init_health_db
 # ---------------------------------------------------------------------------
 

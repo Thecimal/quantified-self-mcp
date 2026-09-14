@@ -34,8 +34,11 @@ hrv_ms) are all read only if present in a given CSV's header — this is
 what makes the incremental update described below work for any of them,
 not just the newer ones.
 
-If your CSV uses different header names (e.g. "Daily Steps" instead of
-"steps"), pass --map COLUMN=HEADER instead of renaming columns yourself:
+Besides the exact column names above, a handful of common alternate
+spellings (e.g. "step_count" or "hr") are also recognized automatically —
+see COLUMN_ALIASES below for the full list. If your CSV uses a header
+that isn't one of those either (e.g. "Daily Steps" instead of "steps"),
+pass --map COLUMN=HEADER instead of renaming columns yourself:
     python init_db.py health.csv --map date=Date --map steps="Daily Steps"
 
 Dates should be YYYY-MM-DD; MM/DD/YYYY is also accepted. Numbers may
@@ -92,6 +95,26 @@ OPTIONAL_COLUMNS = ["weight_kg", "workout_minutes", "mood", "water_ml", "heart_r
 
 DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y"]
 
+# Alternate header spellings accepted for each metric column, checked
+# (case-insensitively, like the canonical name itself) after the exact
+# column name and before giving up on that column — an explicit --map
+# still overrides both. This is what lets a CSV exported from some other
+# tool with e.g. a "step_count" or "bpm" column import without the user
+# renaming anything or knowing this project's internal column names.
+# Add to a list here to recognize another spelling; nothing else needs
+# to change.
+COLUMN_ALIASES: dict[str, list[str]] = {
+    "steps": ["step_count", "daily_steps"],
+    "sleep_hours": ["sleep", "sleep_duration"],
+    "resting_heart_rate": ["resting_hr", "rhr"],
+    "heart_rate": ["hr", "bpm"],
+    "hrv_ms": ["hrv"],
+    "weight_kg": ["weight", "body_weight"],
+    "workout_minutes": ["exercise_minutes", "workout_mins"],
+    "water_ml": ["water", "water_intake_ml"],
+    "mood": ["mood_score"],
+}
+
 
 def _normalize_date(raw: str) -> str:
     raw = raw.strip()
@@ -145,6 +168,12 @@ def _read_csv(
     so the caller knows which ones to parse, validate, and upsert versus
     leave untouched. "date" is the only column required to be in the
     header at all; a CSV with just date + one metric column is valid.
+
+    A metric column can also be matched by one of COLUMN_ALIASES's
+    alternate spellings for it (e.g. "step_count" for "steps") when the
+    exact canonical name isn't in the header — checked in the same
+    case-insensitive way as the canonical name, and still overridden by
+    an explicit column_map entry for that column.
     """
     column_map = column_map or {}
     with csv_path.open(newline="", encoding="utf-8-sig") as f:
@@ -162,7 +191,14 @@ def _read_csv(
                         f"column. Found columns: {', '.join(reader.fieldnames)}"
                     )
                 return mapped
-            return header_map.get(canonical)
+            direct = header_map.get(canonical)
+            if direct is not None:
+                return direct
+            for alias in COLUMN_ALIASES.get(canonical, []):
+                found = header_map.get(alias)
+                if found is not None:
+                    return found
+            return None
 
         date_col = resolve("date")
         if date_col is None:

@@ -320,6 +320,13 @@ mood
 water_ml
 ```
 
+A handful of common alternate header spellings are also recognized
+automatically, so you don't need to rename columns or know this
+project's exact names first — e.g. `step_count`, `hr`, `bpm`, `weight`,
+`sleep`, `hrv`. Anything else can still be mapped with `--map
+COLUMN=HEADER` (see `init_db.py`'s `COLUMN_ALIASES` for the full alias
+list, and its module docstring for `--map`).
+
 You can also import an **Apple Health export**:
 
 ```bash
