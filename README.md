@@ -1,4 +1,5 @@
 # Quantified Self MCP
+<img width="1771" height="608" alt="Gemini_Generated_Image_uohcyiuohcyiuohc" src="https://github.com/user-attachments/assets/79e7d666-bf04-41bd-9399-4c3bf3254983" />
 
 > **Your health data. Your AI. Your machine.**
 
@@ -20,31 +21,7 @@ Built with **Python, FastMCP, and SQLite**, it works with both **local LLMs and 
 
 Quantified Self MCP connects an AI agent to your personal health data through the **Model Context Protocol (MCP)**.
 
-```text
-                 ┌─────────────────────┐
-                 │      AI Agent       │
-                 │                     │
-                 │ Local LLM / Cloud   │
-                 └──────────▲──────────┘
-                            │
-                     MCP tool result
-                            │
-                     MCP tool call
-                            │
-                 ┌──────────┴──────────┐
-                 │ Quantified Self MCP │
-                 │      FastMCP        │
-                 │       LOCAL         │
-                 └──────────▲──────────┘
-                            │
-                       SQL / data
-                            │
-                 ┌──────────┴──────────┐
-                 │    Local SQLite     │
-                 │     Health Data     │
-                 │       LOCAL         │
-                 └─────────────────────┘
-```
+<img width="1920" height="1280" alt="808898351_1561942225736497_4648314065501850899_n" src="https://github.com/user-attachments/assets/315dac66-0af1-45ca-b6f4-709cdeabdb62" />
 
 The MCP server does **not** require a specific AI provider.
 
