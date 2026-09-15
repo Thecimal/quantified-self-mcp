@@ -66,6 +66,7 @@ from analytics import (
     find_correlations,
 )
 from analytics import baseline as compute_baseline
+from evidence import build_evidence
 from logic import (
     MAX_ROWS_RETURNED,
     METRIC_BOUNDS,
@@ -165,6 +166,32 @@ class DailyMetricsRow(BaseModel):
 class DateRange(BaseModel):
     start_date: str
     end_date: str
+
+
+class Gap(BaseModel):
+    start: str
+    end: str
+    days: int
+
+
+class Evidence(BaseModel):
+    """Coverage/quality of the data a single-metric analytical result is
+    based on. See evidence.build_evidence for how each field is computed.
+"""
+
+    requested_start: str
+    requested_end: str
+    observed_start: str | None = None
+    observed_end: str | None = None
+    expected_days: int
+    observed_days: int
+    coverage_ratio: float
+    missing_days: int
+    measurement_count: int
+    gaps: list[Gap]
+    freshness_days: int | None = None
+    recent_gap_days: int
+    confidence: str
 
 
 class MetricStats(BaseModel):
@@ -267,6 +294,7 @@ class GetMetricHistoryResult(BaseModel):
     metric: str
     range: DateRange
     points: list[MetricSeriesPoint]
+    evidence: Evidence
 
 
 class BaselineStats(BaseModel):
@@ -280,6 +308,7 @@ class GetBaselineResult(BaseModel):
     metric: str
     range: DateRange
     baseline: BaselineStats
+    evidence: Evidence
 
 
 class AnomalyPoint(BaseModel):
@@ -294,6 +323,7 @@ class DetectAnomaliesResult(BaseModel):
     range: DateRange
     threshold: float
     anomalies: list[AnomalyPoint]
+    evidence: Evidence
 
 
 class TrendStats(BaseModel):
@@ -307,6 +337,7 @@ class CalculateTrendResult(BaseModel):
     metric: str
     range: DateRange
     trend: TrendStats
+    evidence: Evidence
 
 
 class ComparePeriodsResult(BaseModel):
@@ -317,6 +348,8 @@ class ComparePeriodsResult(BaseModel):
     period_b_stats: BaselineStats
     delta: float | None = None
     pct_change: float | None = None
+    period_a_evidence: Evidence
+    period_b_evidence: Evidence
 
 
 class CorrelationResult(BaseModel):
@@ -326,6 +359,8 @@ class CorrelationResult(BaseModel):
     r: float | None = None
     n: int
     note: str | None = None
+    evidence_a: Evidence | None = None
+    evidence_b: Evidence | None = None
 
 
 class ChangeNote(BaseModel):
@@ -375,6 +410,8 @@ class ExplainMetricChangeResult(BaseModel):
     correlated_metrics: list[CorrelationResult]
     sessions: list[WorkoutSessionRow] = []
     narrative_facts: list[str]
+    baseline_evidence: Evidence
+    trend_evidence: Evidence
 
 
 # ---------------------------------------------------------------------------
@@ -1486,6 +1523,7 @@ def get_metric_history(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         points=[MetricSeriesPoint(date=p.day.isoformat(), value=p.value) for p in series],
+        evidence=Evidence(**build_evidence(series, start, end)),
     )
 
 
@@ -1531,6 +1569,7 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         baseline=_baseline_stats(series),
+        evidence=Evidence(**build_evidence(series, start, end)),
     )
 
 
@@ -1583,6 +1622,7 @@ def detect_metric_anomalies(
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         threshold=threshold,
         anomalies=[AnomalyPoint(**a) for a in anomalies],
+        evidence=Evidence(**build_evidence(series, start, end)),
     )
 
 
@@ -1629,6 +1669,7 @@ def calculate_metric_trend(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         trend=_trend_stats(series),
+        evidence=Evidence(**build_evidence(series, start, end)),
     )
 
 
@@ -1686,6 +1727,8 @@ def compare_metric_periods(
         period_b_stats=BaselineStats(**result["period_b"]),
         delta=result["delta"],
         pct_change=result["pct_change"],
+        period_a_evidence=Evidence(**build_evidence(series_a, start_a, end_a)),
+        period_b_evidence=Evidence(**build_evidence(series_b, start_b, end_b)),
     )
 
 
@@ -1737,7 +1780,13 @@ def find_metric_correlation(
     series_a = _fetch_metric_series(metric_a, start, end)
     series_b = _fetch_metric_series(metric_b, start, end)
     result = find_correlations(series_a, series_b, lag_days=lag_days)
-    return CorrelationResult(metric_a=metric_a, metric_b=metric_b, **result)
+    return CorrelationResult(
+        metric_a=metric_a,
+        metric_b=metric_b,
+        **result,
+        evidence_a=Evidence(**build_evidence(series_a, start, end)),
+        evidence_b=Evidence(**build_evidence(series_b, start, end)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1918,7 +1967,15 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         other_series = _fetch_metric_series(other, baseline_start, target_day)
         result = find_correlations(series, other_series, lag_days=0)
         if result["r"] is not None and abs(result["r"]) >= 0.5:
-            correlated.append(CorrelationResult(metric_a=metric, metric_b=other, **result))
+            correlated.append(
+                CorrelationResult(
+                    metric_a=metric,
+                    metric_b=other,
+                    **result,
+                    evidence_a=Evidence(**build_evidence(series, baseline_start, target_day)),
+                    evidence_b=Evidence(**build_evidence(other_series, baseline_start, target_day)),
+                )
+            )
     correlated.sort(key=lambda c: abs(c.r or 0), reverse=True)
     correlated = correlated[:5]
 
@@ -1979,6 +2036,8 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         correlated_metrics=correlated,
         sessions=sessions,
         narrative_facts=facts,
+        baseline_evidence=Evidence(**build_evidence(series, baseline_start, target_day)),
+        trend_evidence=Evidence(**build_evidence(trend_series, trend_start, target_day)),
     )
 
 
