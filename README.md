@@ -1,3 +1,4 @@
+
 # Quantified Self MCP
 <img width="1771" height="608" alt="Gemini_Generated_Image_uohcyiuohcyiuohc" src="https://github.com/user-attachments/assets/79e7d666-bf04-41bd-9399-4c3bf3254983" />
 
@@ -56,9 +57,7 @@ Local LLM![Uploading vertical_architecture_flow_diagram.jpg…]()
 With a local MCP-compatible agent and local LLM, your health data and AI inference can remain on your machine.
 
 ### Cloud LLM
-
-```text
-Your Health Data
+<img width="1120" height="2240" alt="Your Health Data
        ↓
 Local SQLite
        ↓
@@ -66,8 +65,7 @@ Quantified Self MCP
        ↓
 AI Agent
        ↓
-Cloud LLM
-```
+Cloud LLM" src="https://github.com/user-attachments/assets/8b2c834e-80a8-4006-987d-297971ca6c4f" />
 
 You can also connect the same MCP server to a hosted model.
 
