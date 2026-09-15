@@ -15,8 +15,9 @@ database access of its own.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, timedelta
-from typing import NamedTuple, Sequence
+from typing import NamedTuple
 
 from analytics import Point
 
