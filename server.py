@@ -445,7 +445,22 @@ def _redact_private_fields(row: dict) -> dict:
 # a too-wide range, a locked database) are raised as ToolError below, and
 # ToolError messages are always delivered to the client in full regardless
 # of this setting.
-mcp = FastMCP("Quantified Self", mask_error_details=True)
+TOOL_ROUTING_INSTRUCTIONS = (
+    "TOOL ROUTING:\n"
+    "\n"
+    "For recording data:\n"
+    "- simple daily metric (one value/day, e.g. steps, weight, mood) -> log_daily_metric\n"
+    "- individual timestamped observation (has its own time/source, or a day may have several) -> log_measurement\n"
+    "- workout/exercise session -> log_workout_session\n"
+    "\n"
+    "For retrieving data:\n"
+    "- broad/general health data across multiple metrics -> read_health_data\n"
+    "- individual raw measurement rows -> read_measurements\n"
+    "- workout sessions -> read_workout_sessions\n"
+    "- history/trend of one specific metric -> get_metric_history\n"
+)
+
+mcp = FastMCP("Quantified Self", instructions=TOOL_ROUTING_INSTRUCTIONS, mask_error_details=True)
 
 # ---------------------------------------------------------------------------
 # Database bootstrap
@@ -602,6 +617,18 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
     Read daily health metrics from the local database: steps, sleep hours,
     resting heart rate, weight (kg), workout minutes, mood, and water
     intake (ml).
+
+    Use this tool when:
+    - the request is broad/general, across multiple metrics at once (e.g.
+      "what health data do I have?", "overview of this week").
+
+    Do not use this tool when:
+    - the user wants one specific metric's history/trend over time -> use
+      `get_metric_history` instead.
+    - the user wants raw/individual measurement rows (timestamp, source) ->
+      use `read_measurements` instead.
+    - the user wants workout sessions specifically -> use
+      `read_workout_sessions` instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -794,6 +821,17 @@ def log_daily_metric(
     they were set earlier. To undo a value logged by mistake, use
     clear_metric rather than trying to overwrite it with a placeholder.
 
+    Use this tool when:
+    - the user is recording a simple day-level value for one of the nine
+      fixed metrics below (e.g. "log my weight as 82 kg", "I walked 8,000
+      steps today").
+
+    Do not use this tool when:
+    - the observation needs its own timestamp/source, or the day may have
+      more than one reading of the same metric -> use `log_measurement` instead.
+    - it's a workout/exercise session -> use `log_workout_session` instead
+      (workout_minutes here is just the daily total, not the session itself).
+
     Args:
         date: The day to log, formatted YYYY-MM-DD.
         steps: Step count for the day. 0-200,000.
@@ -971,6 +1009,16 @@ def log_measurement(
     were *multiple* readings that day matters (e.g. three separate
     workouts, or a wearable's periodic heart-rate samples).
 
+    Use this tool when:
+    - recording one timestamped observation where the exact time, source,
+      or possibility of multiple same-day readings matters (e.g. "record
+      my blood pressure reading from my cuff at 7am").
+
+    Do not use this tool when:
+    - it's just a single end-of-day value for a fixed metric -> use
+      `log_daily_metric` instead.
+    - it's a workout/exercise session -> use `log_workout_session` instead.
+
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
     to whatever model the calling client is configured with. If that
@@ -1038,6 +1086,17 @@ def read_measurements(
     most recent first. Use this to see exactly when and where each
     reading came from, rather than just a day's summarized value.
 
+    Use this tool when:
+    - the user wants raw/individual observations (e.g. "what measurements
+      have I recorded?"), including their timestamp or source.
+
+    Do not use this tool when:
+    - the user wants a broad, multi-metric overview -> use
+      `read_health_data` instead.
+    - the user wants one metric's day-by-day history -> use
+      `get_metric_history` instead.
+    - the user wants workout sessions -> use `read_workout_sessions` instead.
+
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
     to whatever model the calling client is configured with. If that
@@ -1096,6 +1155,15 @@ def log_workout_session(
     log_daily_metric/log_measurement for workout_minutes: this is what lets
     explain_metric_change say *what* the workout was, not just how long it
     ran. A day can have more than one session; each call adds a new row.
+
+    Use this tool when:
+    - the user describes an actual workout/exercise session (e.g. "I went
+      running for 40 minutes", "log today's strength workout").
+
+    Do not use this tool when:
+    - the user only wants to record the day's total exercise minutes as a
+      single number, with no activity type/timing/intensity -> use
+      `log_daily_metric` (workout_minutes) or `log_measurement` instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1184,6 +1252,14 @@ def read_workout_sessions(
     workout_minutes total), most recent day first. Use this to see what
     each workout actually was — activity, timing, intensity, heart rate —
     rather than just a day's summed minutes.
+
+    Use this tool when:
+    - the user asks about workouts/exercise sessions specifically (e.g.
+      "what workouts did I do this week?", "show my recent gym sessions").
+
+    Do not use this tool when:
+    - the user just wants the daily workout_minutes total, not individual
+      sessions -> use `read_health_data` or `get_metric_history` instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1373,6 +1449,15 @@ def get_metric_history(
     read_health_data always includes. Use this when you only care about a
     single metric (e.g. before calling get_baseline or calculate_metric_trend
     yourself) and don't need the full multi-metric payload.
+
+    Use this tool when:
+    - the user wants one specific metric's history/trend over time (e.g.
+      "show my weight over the last 30 days", "how has resting heart rate
+      changed this month").
+
+    Do not use this tool when:
+    - the request is broad/general, across multiple metrics at once -> use
+      `read_health_data` instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent

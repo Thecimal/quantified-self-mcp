@@ -199,19 +199,28 @@ The server exposes **eighteen MCP tools**, organized in three layers:
 
 Use `log_measurement`/`log_workout_session` when the source, exact time, or multiple same-day readings matter (e.g. two wearables both logging heart rate); `aggregate_measurements` then folds those into `daily_metrics` so every Layer 2/3 tool below can use them.
 
+### Tool routing
 
-**Layer 1b — Raw measurements & workout sessions**
+Which tool to call for a given request:
 
-| Tool                     | Purpose                                                                             |
-| ------------------------ | ------------------------------------------------------------------------------------ |
-| `log_measurement`        | Record one raw observation (metric, value, timestamp, source) instead of a day total |
-| `read_measurements`      | Read individual measurement rows, most recent first, filterable by metric/source     |
-| `log_workout_session`    | Record one workout as a structured event (activity, duration, intensity, heart rate) |
-| `read_workout_sessions`  | Read individual workout sessions, most recent day first                              |
-| `aggregate_measurements` | Roll up a day's raw measurements into that day's `daily_metrics` row for analytics    |
+**Record data**
 
-Use `log_measurement`/`log_workout_session` when the source, exact time, or multiple same-day readings matter (e.g. two wearables both logging heart rate); `aggregate_measurements` then folds those into `daily_metrics` so every Layer 2/3 tool below can use them.
+| User intent                                    | Tool                 |
+| ----------------------------------------------- | --------------------- |
+| Simple daily metric (steps, weight, mood, ...)  | `log_daily_metric`    |
+| Individual timestamped/sourced measurement       | `log_measurement`     |
+| Workout / exercise session                       | `log_workout_session` |
 
+**Read data**
+
+| User intent                          | Tool                   |
+| ------------------------------------- | ----------------------- |
+| Broad health data across metrics      | `read_health_data`      |
+| Raw individual measurement rows       | `read_measurements`     |
+| Workout / exercise sessions           | `read_workout_sessions` |
+| One metric's history/trend over time  | `get_metric_history`    |
+
+Each of these tools' own MCP description also states this explicitly ("Use this tool when" / "Do not use this tool when", with the alternative named), and the server's top-level MCP `instructions` repeat the same routing model — so the boundary is visible whether an agent reads one tool's schema or the whole tool list.
 
 **Layer 2 — Analytics** (statistics computed over one or two metrics; see `analytics.py`)
 

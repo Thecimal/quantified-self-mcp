@@ -370,3 +370,89 @@ def test_tool_annotations_reflect_read_write_behavior(health_db):
     assert clear_tool.annotations.read_only_hint is False
     assert clear_tool.annotations.destructive_hint is True  # blanks out a value
     assert clear_tool.annotations.idempotent_hint is True
+
+
+EXPECTED_TOOL_NAMES = {
+    "read_health_data",
+    "export_health_data_csv",
+    "log_daily_metric",
+    "clear_metric",
+    "log_measurement",
+    "read_measurements",
+    "log_workout_session",
+    "read_workout_sessions",
+    "aggregate_measurements",
+    "get_metric_provenance",
+    "get_metric_history",
+    "get_baseline",
+    "detect_metric_anomalies",
+    "calculate_metric_trend",
+    "compare_metric_periods",
+    "find_metric_correlation",
+    "get_recent_changes",
+    "explain_metric_change",
+}
+
+# Tools with real overlap risk (record vs. record, read vs. read), where the
+# description must tell an agent which of several similar tools to call.
+# See TOOL_ROUTING_INSTRUCTIONS and README's "Tool routing" section for the
+# same routing model expressed at the server/docs level.
+ROUTED_TOOL_ALTERNATIVES = {
+    "log_daily_metric": {"log_measurement", "log_workout_session"},
+    "log_measurement": {"log_daily_metric", "log_workout_session"},
+    "log_workout_session": {"log_daily_metric", "log_measurement"},
+    "read_health_data": {"get_metric_history", "read_measurements", "read_workout_sessions"},
+    "read_measurements": {"read_health_data", "get_metric_history", "read_workout_sessions"},
+    "read_workout_sessions": {"read_health_data", "get_metric_history"},
+    "get_metric_history": {"read_health_data"},
+}
+
+
+def test_all_eighteen_tools_still_exist_with_unchanged_names(health_db):
+    """Guards P0 tool-routing work: names/count must not drift.
+
+    Tool descriptions and MCP-level instructions should get easier for an
+    agent to route between, but the set of callable tools itself is
+    exactly what it was before that work.
+    """
+    tools = asyncio.run(health_db.mcp.list_tools())
+    names = {tool.name for tool in tools}
+    assert names == EXPECTED_TOOL_NAMES
+    assert len(tools) == 18
+
+
+def test_every_tool_has_a_non_empty_description(health_db):
+    tools = asyncio.run(health_db.mcp.list_tools())
+    empty = [tool.name for tool in tools if not (tool.description or "").strip()]
+    assert not empty, f"tools missing a description: {empty}"
+
+
+def test_routed_tools_cross_reference_their_alternatives_by_name(health_db):
+    """Every tool with real selection ambiguity must name the specific
+    alternative tool(s) an agent should use instead, in its own
+    protocol-level description — not just in the README — since tool
+    selection often happens straight from a tool's own schema.
+    """
+
+    async def _descriptions() -> dict[str, str]:
+        tools = await health_db.mcp.list_tools()
+        return {tool.name: (tool.description or "") for tool in tools}
+
+    descriptions = asyncio.run(_descriptions())
+    for tool_name, alternatives in ROUTED_TOOL_ALTERNATIVES.items():
+        description = descriptions[tool_name]
+        assert "Do not use this tool when" in description, tool_name
+        for alt in alternatives:
+            assert f"`{alt}`" in description, f"{tool_name} description does not reference `{alt}`"
+
+
+def test_server_instructions_cover_every_routed_tool_by_name(health_db):
+    """The MCP-level `instructions` string (separate from any one tool's
+    own description) should also mention every routed tool, so the
+    routing model is visible before an agent even inspects individual
+    tool schemas.
+    """
+    instructions = health_db.mcp.instructions or ""
+    assert instructions, "expected non-empty server-level instructions"
+    for tool_name in ROUTED_TOOL_ALTERNATIVES:
+        assert tool_name in instructions, f"server instructions do not mention {tool_name}"
