@@ -29,10 +29,11 @@ import logging
 import os
 import sqlite3
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any
 
 from fastmcp import FastMCP
 
@@ -169,7 +170,7 @@ def _parse_date(value: str, field_name: str) -> date:
 
 
 def _resolve_range(
-    start_date: Optional[str], end_date: Optional[str], default_days: int
+    start_date: str | None, end_date: str | None, default_days: int
 ) -> tuple[date, date]:
     end = _parse_date(end_date, "end_date") if end_date else date.today()
     start = _parse_date(start_date, "start_date") if start_date else end - timedelta(days=default_days)
@@ -178,7 +179,7 @@ def _resolve_range(
     return start, end
 
 
-def _numeric_stats(rows: list[dict[str, Any]], key: str) -> dict[str, Optional[float]]:
+def _numeric_stats(rows: list[dict[str, Any]], key: str) -> dict[str, float | None]:
     values = [r[key] for r in rows if r.get(key) is not None]
     if not values:
         return {"avg": None, "min": None, "max": None}
@@ -190,7 +191,7 @@ def _numeric_stats(rows: list[dict[str, Any]], key: str) -> dict[str, Optional[f
 # ---------------------------------------------------------------------------
 
 @mcp.tool
-def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
+def read_health_data(start_date: str | None = None, end_date: str | None = None) -> str:
     """Read daily steps, sleep hours, and resting heart rate."""
     start, end = _resolve_range(start_date, end_date, default_days=30)
     with _readonly_connection(HEALTH_DB_PATH) as conn:
@@ -215,9 +216,9 @@ def read_health_data(start_date: Optional[str] = None, end_date: Optional[str] =
 
 @mcp.tool
 def read_finance_data(
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    category: Optional[str] = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    category: str | None = None,
 ) -> str:
     """Read categorized expenses from the local finance ledger database."""
     start, end = _resolve_range(start_date, end_date, default_days=90)
@@ -257,9 +258,9 @@ def read_finance_data(
 @mcp.tool
 def log_daily_metric(
     date: str,
-    steps: Optional[int] = None,
-    sleep_hours: Optional[float] = None,
-    resting_heart_rate: Optional[int] = None,
+    steps: int | None = None,
+    sleep_hours: float | None = None,
+    resting_heart_rate: int | None = None,
 ) -> str:
     """
     Create or upsert a day's steps/sleep/resting heart rate. Omitted fields
@@ -288,9 +289,9 @@ def log_daily_metric(
 @mcp.tool
 def update_daily_metric(
     date: str,
-    steps: Optional[int] = None,
-    sleep_hours: Optional[float] = None,
-    resting_heart_rate: Optional[int] = None,
+    steps: int | None = None,
+    sleep_hours: float | None = None,
+    resting_heart_rate: int | None = None,
     clear_steps: bool = False,
     clear_sleep_hours: bool = False,
     clear_resting_heart_rate: bool = False,
@@ -363,8 +364,8 @@ def log_measurement(
     date: str,
     metric_name: str,
     value: float,
-    unit: Optional[str] = None,
-    notes: Optional[str] = None,
+    unit: str | None = None,
+    notes: str | None = None,
 ) -> str:
     """Record a body measurement (e.g. weight, body_fat_pct, waist_cm)."""
     d = _parse_date(date, "date")
@@ -383,11 +384,11 @@ def log_measurement(
 @mcp.tool
 def update_measurement(
     measurement_id: int,
-    date: Optional[str] = None,
-    metric_name: Optional[str] = None,
-    value: Optional[float] = None,
-    unit: Optional[str] = None,
-    notes: Optional[str] = None,
+    date: str | None = None,
+    metric_name: str | None = None,
+    value: float | None = None,
+    unit: str | None = None,
+    notes: str | None = None,
 ) -> str:
     """Update fields on an existing measurement row by id. Fails if id doesn't exist."""
     with _readwrite_connection(HEALTH_DB_PATH) as conn:
@@ -397,15 +398,20 @@ def update_measurement(
 
         sets, params = [], []
         if date is not None:
-            sets.append("date = ?"); params.append(_parse_date(date, "date").isoformat())
+            sets.append("date = ?")
+            params.append(_parse_date(date, "date").isoformat())
         if metric_name is not None:
-            sets.append("metric_name = ?"); params.append(metric_name)
+            sets.append("metric_name = ?")
+            params.append(metric_name)
         if value is not None:
-            sets.append("value = ?"); params.append(value)
+            sets.append("value = ?")
+            params.append(value)
         if unit is not None:
-            sets.append("unit = ?"); params.append(unit)
+            sets.append("unit = ?")
+            params.append(unit)
         if notes is not None:
-            sets.append("notes = ?"); params.append(notes)
+            sets.append("notes = ?")
+            params.append(notes)
 
         if sets:
             params.append(measurement_id)
@@ -435,9 +441,9 @@ def delete_measurement(measurement_id: int) -> str:
 def log_workout(
     date: str,
     type: str,
-    duration_minutes: Optional[float] = None,
-    calories: Optional[float] = None,
-    notes: Optional[str] = None,
+    duration_minutes: float | None = None,
+    calories: float | None = None,
+    notes: str | None = None,
 ) -> str:
     """Record a workout session."""
     d = _parse_date(date, "date")
@@ -456,11 +462,11 @@ def log_workout(
 @mcp.tool
 def update_workout(
     workout_id: int,
-    date: Optional[str] = None,
-    type: Optional[str] = None,
-    duration_minutes: Optional[float] = None,
-    calories: Optional[float] = None,
-    notes: Optional[str] = None,
+    date: str | None = None,
+    type: str | None = None,
+    duration_minutes: float | None = None,
+    calories: float | None = None,
+    notes: str | None = None,
 ) -> str:
     """Update fields on an existing workout row by id. Fails if id doesn't exist."""
     with _readwrite_connection(HEALTH_DB_PATH) as conn:
@@ -470,15 +476,20 @@ def update_workout(
 
         sets, params = [], []
         if date is not None:
-            sets.append("date = ?"); params.append(_parse_date(date, "date").isoformat())
+            sets.append("date = ?")
+            params.append(_parse_date(date, "date").isoformat())
         if type is not None:
-            sets.append("type = ?"); params.append(type)
+            sets.append("type = ?")
+            params.append(type)
         if duration_minutes is not None:
-            sets.append("duration_minutes = ?"); params.append(duration_minutes)
+            sets.append("duration_minutes = ?")
+            params.append(duration_minutes)
         if calories is not None:
-            sets.append("calories = ?"); params.append(calories)
+            sets.append("calories = ?")
+            params.append(calories)
         if notes is not None:
-            sets.append("notes = ?"); params.append(notes)
+            sets.append("notes = ?")
+            params.append(notes)
 
         if sets:
             params.append(workout_id)
