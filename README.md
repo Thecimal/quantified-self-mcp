@@ -21,7 +21,14 @@ Built with **Python, FastMCP, and SQLite**, it works with both **local LLMs and 
 
 Quantified Self MCP connects an AI agent to your personal health data through the **Model Context Protocol (MCP)**.
 
-<img width="1920" height="1280" alt="808898351_1561942225736497_4648314065501850899_n" src="https://github.com/user-attachments/assets/315dac66-0af1-45ca-b6f4-709cdeabdb62" />
+<img width="1920" height="1280" alt="Your machine
+├── SQLite health database
+├── Quantified Self MCP
+└── AI client
+       │
+       ├── Local model → data stays local
+       │
+       └── Cloud model → queried health data may leave device" src="https://github.com/user-attachments/assets/315dac66-0af1-45ca-b6f4-709cdeabdb62" />
 
 The MCP server does **not** require a specific AI provider.
 
@@ -34,9 +41,7 @@ You can run the entire AI stack locally, or connect the server to an online mode
 The important distinction is between the **MCP server** and the **AI model**.
 
 ### Fully Local
-
-```text
-Your Health Data
+<img width="1344" height="1792" alt="Your Health Data
        ↓
 Local SQLite
        ↓
@@ -44,8 +49,9 @@ Quantified Self MCP
        ↓
 Local AI Agent
        ↓
-Local LLM
-```
+Local LLM![Uploading vertical_architecture_flow_diagram.jpg…]()
+" src="https://github.com/user-attachments/assets/82a626c8-91bd-4d3f-8706-30c37a8b5be4" />
+
 
 With a local MCP-compatible agent and local LLM, your health data and AI inference can remain on your machine.
 
