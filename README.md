@@ -7,7 +7,7 @@
 [![PyPI](https://img.shields.io/pypi/v/quantified-self-mcp)](https://pypi.org/project/quantified-self-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/quantified-self-mcp)](https://pypi.org/project/quantified-self-mcp/)
 [![License](https://img.shields.io/github/license/Thecimal/quantified-self-mcp)](LICENSE)
-[![Glama](https://img.shields.io/badge/Glama-A%20%2F%20A%20%2F%20A-blue)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
+[![Quantified Self MCP Server MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/score.svg)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
 
 **Quantified Self MCP** is a privacy-first **Model Context Protocol (MCP) server** that gives AI agents controlled access to your personal **health data** stored locally.
 
