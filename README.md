@@ -42,7 +42,8 @@ You can run the entire AI stack locally, or connect the server to an online mode
 The important distinction is between the **MCP server** and the **AI model**.
 
 ### Fully Local
-<img width="1344" height="1792" alt="Your Health Data
+
+<img width="1280" height="1920" alt="Your Health Data
        ↓
 Local SQLite
        ↓
@@ -50,9 +51,7 @@ Quantified Self MCP
        ↓
 Local AI Agent
        ↓
-Local LLM![Uploading vertical_architecture_flow_diagram.jpg…]()
-" src="https://github.com/user-attachments/assets/82a626c8-91bd-4d3f-8706-30c37a8b5be4" />
-
+Local LLM" src="https://github.com/user-attachments/assets/1635fbb8-6d01-4d18-8546-989130df5598" />
 
 With a local MCP-compatible agent and local LLM, your health data and AI inference can remain on your machine.
 
@@ -65,7 +64,7 @@ Quantified Self MCP
        ↓
 AI Agent
        ↓
-Cloud LLM" src="https://github.com/user-attachments/assets/8b2c834e-80a8-4006-987d-297971ca6c4f" />
+Cloud LLM" src="https://github.com/user-attachments/assets/b7372669-1832-43ff-8b24-686fabac2828" />
 
 You can also connect the same MCP server to a hosted model.
 
