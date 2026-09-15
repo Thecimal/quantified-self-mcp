@@ -495,6 +495,11 @@ TOOL_ROUTING_INSTRUCTIONS = (
     "- individual raw measurement rows -> read_measurements\n"
     "- workout sessions -> read_workout_sessions\n"
     "- history/trend of one specific metric -> get_metric_history\n"
+    "\n"
+    "For analysis (why/trend/change/comparison/correlation):\n"
+    "- why did one specific metric look like that on a given day -> explain_metric_change\n"
+    "- broad scan of what changed lately across all metrics -> get_recent_changes\n"
+    "- where a value came from, or whether sources agree -> get_metric_provenance\n"
 )
 
 mcp = FastMCP("Quantified Self", instructions=TOOL_ROUTING_INSTRUCTIONS, mask_error_details=True)
@@ -666,6 +671,10 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
       use `read_measurements` instead.
     - the user wants workout sessions specifically -> use
       `read_workout_sessions` instead.
+    - the user is asking *why* something changed, or wants a trend,
+      anomaly, comparison, or correlation -> use `explain_metric_change`
+      (one metric, one date) or `get_recent_changes` (scan across all
+      metrics) instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1424,6 +1433,11 @@ def get_metric_provenance(metric: str, date: str) -> GetMetricProvenanceResult:
     Apple Watch and a Garmin disagree on resting heart rate, instead of
     silently averaging two different devices into one number.
 
+    Do not use this tool when:
+    - the user just wants a plain day-by-day history for the metric, with
+      no need to see the per-source breakdown -> use `get_metric_history`
+      instead.
+
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
     to whatever model the calling client is configured with. If that
@@ -1824,6 +1838,11 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
     take one get_baseline/detect_metric_anomalies/calculate_metric_trend
     call per metric.
 
+    Do not use this tool when:
+    - the user already named a specific metric and wants the full
+      why-bundle for it (value, baseline, anomaly flag, trend, correlated
+      metrics) -> use `explain_metric_change` instead.
+
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
     to whatever model the calling client is configured with. If that
@@ -1921,6 +1940,15 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     baseline and resting heart rate correlates at r=0.71" into an actual
     answer for the person is what the calling model should do with these
     facts, not something this tool guesses at itself.
+
+    Do not use this tool when:
+    - scanning across many metrics for what changed lately, without a
+      specific metric/date in mind -> use `get_recent_changes` instead.
+    - you only need one piece of this bundle (just the baseline, just the
+      trend, just anomalies, or just a correlation) rather than the full
+      why-explanation -> use `get_baseline`, `calculate_metric_trend`,
+      `detect_metric_anomalies`, or `find_metric_correlation` directly
+      instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent

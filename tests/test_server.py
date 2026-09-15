@@ -401,10 +401,25 @@ ROUTED_TOOL_ALTERNATIVES = {
     "log_daily_metric": {"log_measurement", "log_workout_session"},
     "log_measurement": {"log_daily_metric", "log_workout_session"},
     "log_workout_session": {"log_daily_metric", "log_measurement"},
-    "read_health_data": {"get_metric_history", "read_measurements", "read_workout_sessions"},
+    "read_health_data": {
+        "get_metric_history",
+        "read_measurements",
+        "read_workout_sessions",
+        "explain_metric_change",
+        "get_recent_changes",
+    },
     "read_measurements": {"read_health_data", "get_metric_history", "read_workout_sessions"},
     "read_workout_sessions": {"read_health_data", "get_metric_history"},
     "get_metric_history": {"read_health_data"},
+    "get_recent_changes": {"explain_metric_change"},
+    "explain_metric_change": {
+        "get_recent_changes",
+        "get_baseline",
+        "calculate_metric_trend",
+        "detect_metric_anomalies",
+        "find_metric_correlation",
+    },
+    "get_metric_provenance": {"get_metric_history"},
 }
 
 
