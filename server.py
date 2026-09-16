@@ -66,7 +66,7 @@ from analytics import (
     find_correlations,
 )
 from analytics import baseline as compute_baseline
-from evidence import build_evidence
+from evidence import build_coverage_summary, build_evidence
 from logic import (
     MAX_ROWS_RETURNED,
     METRIC_BOUNDS,
@@ -213,11 +213,28 @@ class HealthDataSummary(BaseModel):
     hrv_ms: MetricStats
 
 
+class CoverageSummary(BaseModel):
+    """Multi-metric coverage for a Layer-1 result spanning several metrics
+    at once. See evidence.build_coverage_summary for how each field is
+    computed; unlike Evidence (one metric, gaps/freshness/recent_gap),
+    this reports a coverage_percent per metric side by side.
+    """
+
+    period: str
+    days_expected: int
+    days_with_data: int
+    coverage_percent: float
+    missing_days: int
+    metrics: dict[str, float]
+    confidence: str
+
+
 class ReadHealthDataResult(BaseModel):
     range: DateRange
     rows: list[DailyMetricsRow]
     truncated: bool
     summary: HealthDataSummary
+    coverage: CoverageSummary
 
 
 class ExportCsvResult(BaseModel):
@@ -367,6 +384,7 @@ class ChangeNote(BaseModel):
     metric: str
     kind: str  # "shift" (period-over-period) | "anomaly" | "trend"
     detail: str
+    evidence: Evidence
 
 
 class GetRecentChangesResult(BaseModel):
@@ -700,10 +718,21 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
         - "truncated": true if more matching days existed than were returned in "rows"
         - "summary": days_with_data plus avg/min/max for each metric, computed
           over *all* matching days even when "rows" is truncated
+        - "coverage": how complete this range's data actually is — the
+          requested period, days_expected vs. days_with_data, an overall
+          coverage_percent, and a per-metric coverage_percent in "metrics"
+          (e.g. sleep_hours might be 90% logged while hrv_ms is only 40%).
+          Use this before characterizing the data as a full picture: a
+          "confidence" of "moderate" or "low" (or any one metric's percent
+          being much lower than the others) means say so — e.g. "hrv_ms is
+          only logged on 40% of these days, so treat any pattern there
+          cautiously" — rather than treating every metric in "summary" as
+          equally well-observed.
 
     Any metric listed in the HEALTH_PRIVATE_FIELDS environment variable is
-    always reported as null here (in both "rows" and "summary"), regardless
-    of what's actually stored for it.
+    always reported as null here (in both "rows" and "summary") and is left
+    out of "coverage.metrics" entirely, regardless of what's actually
+    stored for it.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -733,6 +762,7 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
     truncated = len(rows) > MAX_ROWS_RETURNED
     returned_rows = rows[-MAX_ROWS_RETURNED:] if truncated else rows
 
+    public_metrics = [m for m in METRIC_COLUMNS if m not in PRIVATE_FIELDS]
     return ReadHealthDataResult(
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         rows=[DailyMetricsRow(**_redact_private_fields(row)) for row in returned_rows],
@@ -744,6 +774,7 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
                 for metric in METRIC_COLUMNS
             },
         ),
+        coverage=CoverageSummary(**build_coverage_summary(rows, start, end, public_metrics)),
     )
 
 
@@ -1570,9 +1601,14 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
 
     Returns:
-        A GetBaselineResult with "baseline" (mean/median/stdev/n). All
-        fields are null and n is 0 if the metric has no data in range —
-        not an error, since "nothing logged yet" is an expected state.
+        A GetBaselineResult with "baseline" (mean/median/stdev/n) plus
+        "evidence" — how much of the window this baseline is actually
+        based on. When evidence.confidence is "moderate" or "low", say so
+        when reporting the baseline (e.g. "based on only 60% of days")
+        rather than stating mean/median as if they were computed from a
+        complete series. All baseline fields are null and n is 0 if the
+        metric has no data in range — not an error, since "nothing logged
+        yet" is an expected state.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -1623,7 +1659,11 @@ def detect_metric_anomalies(
 
     Returns:
         A DetectAnomaliesResult with "anomalies" (empty if fewer than 5
-        days have data, or if the metric has no meaningful spread).
+        days have data, or if the metric has no meaningful spread) plus
+        "evidence" for the window they were computed over. An empty
+        "anomalies" list with evidence.confidence "moderate" or "low"
+        means "not enough data to tell," not "nothing unusual happened" —
+        say that explicitly rather than reporting a clean bill of health.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -1671,8 +1711,13 @@ def calculate_metric_trend(
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
 
     Returns:
-        A CalculateTrendResult with "trend". direction is
-        "insufficient_data" below 3 data points in range.
+        A CalculateTrendResult with "trend" plus "evidence" for the window
+        it was fit over. direction is "insufficient_data" below 3 data
+        points in range. Even with a direction and slope, a low
+        evidence.coverage_ratio or "moderate"/"low" confidence means the
+        line is fit through a sparse series — flag that when reporting the
+        trend (e.g. "a decline, though the data only covers 60% of days")
+        rather than stating the slope as a clean, complete measurement.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -1722,8 +1767,15 @@ def compare_metric_periods(
 
     Returns:
         A ComparePeriodsResult with each period's own baseline stats, plus
-        "delta" (period_a mean minus period_b mean) and "pct_change". Both
-        are null if either period has no data.
+        "delta" (period_a mean minus period_b mean), "pct_change", and
+        "period_a_evidence"/"period_b_evidence" for each period
+        separately — the two periods can have very different coverage
+        (e.g. this month is 90% logged, last month only 40%), and that
+        asymmetry matters more than either evidence object alone. If
+        either period's confidence is "moderate" or "low", say the
+        comparison rests on incomplete data for that period rather than
+        stating the delta/pct_change as a clean before/after. Both delta
+        and pct_change are null if either period has no data at all.
     """
     try:
         start_a, end_a = resolve_range(period_a_start, period_a_end, default_days=0)
@@ -1784,8 +1836,14 @@ def find_metric_correlation(
             0 (default) compares same-day values.
 
     Returns:
-        A CorrelationResult with "r" (-1 to 1) and "n" (overlapping days
-        used). "r" is null with fewer than 4 overlapping days.
+        A CorrelationResult with "r" (-1 to 1), "n" (overlapping days
+        used), and "evidence_a"/"evidence_b" for each metric's own
+        coverage over the window (independent of "n" — a metric can have
+        low overall coverage yet still have enough overlapping days to
+        produce an "r"). "r" is null with fewer than 4 overlapping days.
+        If either evidence's confidence is "moderate" or "low", say the
+        correlation is based on a thin/gappy series rather than reporting
+        "r" as a settled relationship.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -1861,6 +1919,12 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
         the recent window, or a clear non-flat trend with r_squared >=
         0.3). Metrics with nothing notable, or no data, are simply absent
         — this tool reports signal, not a status page for every metric.
+        Each change carries its own "evidence" (coverage over the baseline
+        + recent window it was computed from) — do not repeat a change's
+        detail to the user as a plain fact when its evidence.confidence is
+        "moderate" or "low"; say the finding is based on partial data
+        (e.g. name the coverage_ratio or recent_gap_days) instead of
+        stating it outright.
     """
     if days < 2:
         raise _tool_error(ERR_INVALID_RANGE, "days must be at least 2.")
@@ -1875,6 +1939,13 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
             continue
         recent_series = _fetch_metric_series(metric, recent_start, end)
         baseline_series = _fetch_metric_series(metric, baseline_start, baseline_end)
+        # One evidence object per metric, over the full window this metric's
+        # notes below are drawn from (baseline period + recent period), so a
+        # "shift"/"anomaly"/"trend" note is never reported without the
+        # coverage it's based on — a >=15% shift built on a mostly-empty
+        # baseline period is exactly the kind of false-confidence claim this
+        # tool exists to avoid.
+        metric_evidence = Evidence(**build_evidence(baseline_series + recent_series, baseline_start, end))
 
         comparison = compare_periods(recent_series, baseline_series)
         if comparison["pct_change"] is not None and abs(comparison["pct_change"]) >= 15:
@@ -1888,6 +1959,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"(avg {comparison['period_a']['mean']}) vs. the {days * 4} days before that "
                         f"(avg {comparison['period_b']['mean']})."
                     ),
+                    evidence=metric_evidence,
                 )
             )
 
@@ -1901,6 +1973,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"({anomaly['direction']} the recent median, "
                         f"modified z-score {anomaly['modified_z_score']})."
                     ),
+                    evidence=metric_evidence,
                 )
             )
 
@@ -1912,6 +1985,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                     kind="trend",
                     detail=f"{metric} has been {trend['direction']} over the last {days} days "
                     f"({trend['slope_per_day']:+g}/day, r²={trend['r_squared']}).",
+                    evidence=metric_evidence,
                 )
             )
 
@@ -1967,8 +2041,14 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         30-day trend ending on that date, and up to 5 other metrics with
         |r| >= 0.5 over the same 90-day window (each still just a
         correlation — see find_metric_correlation's note on causation).
-        "narrative_facts" restates the above as short plain-English
-        sentences, for convenience when composing a reply.
+        "baseline_evidence" and "trend_evidence" report coverage for the
+        90-day and 30-day windows respectively; each correlated metric
+        carries its own pair too. "narrative_facts" restates the above as
+        short plain-English sentences but does NOT itself hedge on
+        coverage — if baseline_evidence or trend_evidence has "moderate"
+        or "low" confidence, add that caveat yourself when turning these
+        facts into an answer, rather than presenting them as equally
+        solid regardless of how much data backs each one.
     """
     try:
         target_day = parse_date(date, "date")

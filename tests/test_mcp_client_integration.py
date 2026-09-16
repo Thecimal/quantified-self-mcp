@@ -256,8 +256,14 @@ async def test_get_recent_changes_and_explain_metric_change(client):
     await client.call_tool("log_daily_metric", {"date": today.isoformat(), "steps": 2000})
 
     recent = await client.call_tool("get_recent_changes", {"days": 3})
-    metrics_flagged = {c["metric"] for c in recent.structured_content["changes"]}
+    changes = recent.structured_content["changes"]
+    metrics_flagged = {c["metric"] for c in changes}
     assert "steps" in metrics_flagged
+    # Every change carries its own coverage — 15 baseline days + 3 recent
+    # days all logged means "steps" should read as fully covered here.
+    steps_change = next(c for c in changes if c["metric"] == "steps")
+    assert steps_change["evidence"]["confidence"] == "high"
+    assert steps_change["evidence"]["coverage_ratio"] == 1.0
 
     explanation = await client.call_tool("explain_metric_change", {"metric": "steps", "date": today.isoformat()})
     result = explanation.structured_content

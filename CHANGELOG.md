@@ -8,6 +8,22 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 ## [Unreleased]
 
 ### Added
+- **Multi-metric `coverage` on `read_health_data`** — per-metric
+  coverage percentages plus an overall `coverage_percent`/`confidence`
+  for the whole date range, computed by the new
+  `evidence.build_coverage_summary`, so a broad "what's my health
+  data look like" read carries the same evidence signal the
+  single-metric analytics tools already did.
+- **`evidence` on every `get_recent_changes` change note** — each
+  shift/anomaly/trend entry now carries its own coverage over the
+  window it was computed from, closing the one analytics tool that
+  previously reported findings with no coverage signal at all.
+- Tool docstrings for `get_baseline`, `detect_metric_anomalies`,
+  `calculate_metric_trend`, `compare_metric_periods`,
+  `find_metric_correlation`, `get_recent_changes`, and
+  `explain_metric_change` now explicitly instruct the calling model to
+  fold `confidence`/`coverage_ratio` into how it phrases a result,
+  rather than just returning the numbers alongside it.
 - **`workout_sessions` table (schema v6)** — one row per workout instead
   of a single daily `workout_minutes` total: `activity_type`,
   `start_time`, `duration_minutes`, `intensity` (low/moderate/high),

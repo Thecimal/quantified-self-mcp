@@ -56,6 +56,63 @@ def _confidence_label(coverage_ratio: float, recent_gap_days: int) -> str:
     return "low"
 
 
+def _coverage_confidence(coverage_percent: float) -> str:
+    """Simpler 3-bucket classifier for a multi-metric summary, where there's
+    no single "recency" to anchor on the way there is for one metric's
+    series (see _confidence_label). Same thresholds, coverage only.
+    """
+    if coverage_percent >= 85:
+        return "high"
+    if coverage_percent >= 60:
+        return "moderate"
+    return "low"
+
+
+def build_coverage_summary(
+    rows: Sequence[dict],
+    start: date,
+    end: date,
+    metrics: Sequence[str],
+) -> dict:
+    """Build a multi-metric DataCoverage summary for a Layer-1 result (e.g.
+    read_health_data) that reports several metrics side by side rather than
+    one series — so it needs one coverage-percent per metric plus an
+    overall figure, instead of build_evidence's single-metric gaps/
+    freshness/recent_gap detail.
+
+    ``rows`` is the already-fetched list of per-day dicts (one key per
+    metric in ``metrics``, value ``None`` for days with nothing recorded
+    for it, as returned by the daily_metrics query in server.py). ``metrics``
+    should already have any private/redacted fields filtered out by the
+    caller — this function has no notion of HEALTH_PRIVATE_FIELDS itself,
+    and a metric with no data at all still gets an honest 0.0%, not None,
+    since "never logged" is exactly the case this exists to surface.
+    """
+    expected_days = (end - start).days + 1
+    days_with_data = len(rows)
+
+    per_metric_pct: dict[str, float] = {}
+    for metric in metrics:
+        observed = sum(1 for r in rows if r.get(metric) is not None)
+        per_metric_pct[metric] = round(100 * observed / expected_days, 1) if expected_days else 0.0
+
+    overall_pct = round(100 * days_with_data / expected_days, 1) if expected_days else 0.0
+    # Confidence reflects the metrics actually present, not "any metric
+    # logged" (overall_pct) — a day with just one of nine metrics counts
+    # toward overall_pct but shouldn't make the summary look complete.
+    basis_pct = round(sum(per_metric_pct.values()) / len(per_metric_pct), 1) if per_metric_pct else overall_pct
+
+    return {
+        "period": f"{start.isoformat()}/{end.isoformat()}",
+        "days_expected": expected_days,
+        "days_with_data": days_with_data,
+        "coverage_percent": overall_pct,
+        "missing_days": expected_days - days_with_data,
+        "metrics": per_metric_pct,
+        "confidence": _coverage_confidence(basis_pct),
+    }
+
+
 def build_evidence(series: list[Point], start: date, end: date) -> dict:
     """Build an Evidence/Coverage dict for a metric series already fetched
     over [start, end] (inclusive).

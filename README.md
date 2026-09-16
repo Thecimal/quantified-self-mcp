@@ -88,6 +88,16 @@ What period was analyzed?
 How strong is the evidence?
 ```
 
+Concretely, every trend, baseline, anomaly, comparison, and correlation carries a coverage/confidence object alongside its numbers, so the AI can talk about the *result* and the *evidence behind it* in the same breath:
+
+**Without evidence:**
+> Your HRV decreased 24% over the last 30 days.
+
+**With evidence:**
+> Your HRV decreased 24% over the last 30 days — but HRV was only logged on 71% of those days, so treat this trend cautiously rather than as a settled pattern.
+
+The second answer is what `calculate_metric_trend` (and every other analytics tool) is designed to make possible: the tool returns the 24% figure *and* a `confidence: "moderate"` / `coverage_ratio: 0.71` alongside it, and each tool's own description tells the calling model to fold that into its answer instead of reporting the number as if it came from a complete series.
+
 ### 📊 Longitudinal
 
 Analyze health history across days, weeks, months, and years:
