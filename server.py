@@ -348,6 +348,7 @@ class TrendStats(BaseModel):
     slope_per_day: float | None = None
     r_squared: float | None = None
     n: int
+    span_days: int | None = None
 
 
 class CalculateTrendResult(BaseModel):

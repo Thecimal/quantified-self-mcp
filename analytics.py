@@ -85,21 +85,42 @@ def detect_anomalies(series: list[Point], threshold: float = 3.5) -> list[dict]:
 
 
 def calculate_trend(series: list[Point]) -> dict:
-    """Direction and slope of an ordinary-least-squares fit against day
-    index (0, 1, 2, ...) — i.e. treats the series as evenly spaced by
-    position, not by calendar gap, so missing days don't need imputing.
+    """Direction and slope of an ordinary-least-squares fit against actual
+    calendar time (days elapsed since the first observation), not position
+    in the list.
+
+    A missing day is a gap, not a step of equal size to a logged one — a
+    reading on Jan 1 followed by the next on Jan 20 is 19 days apart, not
+    "the next point." Fitting against position instead of calendar time
+    would silently compress that 19-day gap to a single step, distorting
+    slope_per_day without the caller ever finding out. Points do not need
+    to be evenly spaced or gap-free for this to be correct: OLS against
+    x = elapsed_days handles irregular spacing natively. Coverage/gap
+    reporting (evidence.py) is a separate, complementary signal about how
+    much of the window is backed by data — it should never be doing the
+    job of fixing a distorted time axis here.
     """
     n = len(series)
     if n < 3:
-        return {"direction": "insufficient_data", "slope_per_day": None, "r_squared": None, "n": n}
-    xs = list(range(n))
+        return {
+            "direction": "insufficient_data",
+            "slope_per_day": None,
+            "r_squared": None,
+            "n": n,
+            "span_days": None,
+        }
+    origin = series[0].day
+    xs = [(p.day - origin).days for p in series]
     ys = _values(series)
+    span_days = xs[-1] - xs[0]
     x_mean = sum(xs) / n
     y_mean = sum(ys) / n
     ss_xy = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys, strict=True))
     ss_xx = sum((x - x_mean) ** 2 for x in xs)
     if ss_xx == 0:
-        return {"direction": "flat", "slope_per_day": 0.0, "r_squared": 0.0, "n": n}
+        # Every point falls on the same calendar day (e.g. duplicate-day
+        # rows) — there's no time axis to regress against.
+        return {"direction": "flat", "slope_per_day": 0.0, "r_squared": 0.0, "n": n, "span_days": span_days}
     slope = ss_xy / ss_xx
     intercept = y_mean - slope * x_mean
     ss_tot = sum((y - y_mean) ** 2 for y in ys)
@@ -111,6 +132,7 @@ def calculate_trend(series: list[Point]) -> dict:
         "slope_per_day": round(slope, 4),
         "r_squared": round(r_squared, 3),
         "n": n,
+        "span_days": span_days,
     }
 
 
