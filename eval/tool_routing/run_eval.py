@@ -121,7 +121,7 @@ def to_anthropic_tools(mcp_tools: list[Any]) -> list[dict]:
 
 
 def load_prompts(path: str) -> list[PromptCase]:
-    with open(path, "r") as f:
+    with open(path) as f:
         raw = yaml.safe_load(f)
     cases = []
     for entry in raw:
@@ -173,7 +173,7 @@ def score(case: PromptCase, called_tools: list[str]) -> str:
 
 
 def run_case(
-    client: "anthropic.Anthropic",
+    client: anthropic.Anthropic,
     model: str,
     tools: list[dict],
     case: PromptCase,
