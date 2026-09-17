@@ -18,7 +18,7 @@ def aggregation_case_sql(metric_sql: str, date_sql: str, value_col: str = "value
     Build the canonical aggregation expression for a given (metric, date) key.
 
     metric_sql / date_sql are SQL fragments identifying the key to aggregate
-    (e.g. "NEW.metric" / "date(NEW.recorded_at)" in a trigger, or a column
+    (e.g. "NEW.metric" / "date(NEW.timestamp)" in a trigger, or a column
     reference in a CTE). No ELSE branch: an unrecognized method evaluates to
     NULL here on purpose. Trigger callers must guard with a RAISE(ABORT, ...)
     check before using this (RAISE is trigger-only); verify() must flag it
@@ -31,12 +31,12 @@ def aggregation_case_sql(metric_sql: str, date_sql: str, value_col: str = "value
     return f"""(
         CASE (SELECT method FROM aggregation_rules WHERE metric = {metric_sql})
             WHEN 'sum'  THEN (SELECT SUM({value_col}) FROM measurements
-                               WHERE metric = {metric_sql} AND date(recorded_at) = {date_sql})
+                               WHERE metric = {metric_sql} AND date(timestamp) = {date_sql})
             WHEN 'mean' THEN (SELECT AVG({value_col}) FROM measurements
-                               WHERE metric = {metric_sql} AND date(recorded_at) = {date_sql})
+                               WHERE metric = {metric_sql} AND date(timestamp) = {date_sql})
             WHEN 'last' THEN (SELECT {value_col} FROM measurements
-                               WHERE metric = {metric_sql} AND date(recorded_at) = {date_sql}
-                               ORDER BY recorded_at DESC LIMIT 1)
+                               WHERE metric = {metric_sql} AND date(timestamp) = {date_sql}
+                               ORDER BY timestamp DESC LIMIT 1)
         END
     )"""
 
@@ -47,11 +47,11 @@ def _upsert_key_sql(metric_sql: str, date_sql: str) -> str:
     upsert) when no measurements remain for the key -- that case is handled
     by _cleanup_key_sql() instead, which deletes the row."""
     agg = aggregation_case_sql(metric_sql, date_sql)
-    exists_guard = f"EXISTS (SELECT 1 FROM measurements WHERE metric = {metric_sql} AND date(recorded_at) = {date_sql})"
+    exists_guard = f"EXISTS (SELECT 1 FROM measurements WHERE metric = {metric_sql} AND date(timestamp) = {date_sql})"
     return f"""
     INSERT INTO daily_metrics (date, metric, value, raw_measurement_count, aggregation_method, aggregated_at)
     SELECT {date_sql}, {metric_sql}, {agg},
-           (SELECT COUNT(*) FROM measurements WHERE metric = {metric_sql} AND date(recorded_at) = {date_sql}),
+           (SELECT COUNT(*) FROM measurements WHERE metric = {metric_sql} AND date(timestamp) = {date_sql}),
            (SELECT method FROM aggregation_rules WHERE metric = {metric_sql}),
            CURRENT_TIMESTAMP
     WHERE {exists_guard}
@@ -70,7 +70,7 @@ def _cleanup_key_sql(metric_sql: str, date_sql: str) -> str:
     WHERE date = {date_sql} AND metric = {metric_sql}
       AND NOT EXISTS (
           SELECT 1 FROM measurements
-          WHERE metric = {metric_sql} AND date(recorded_at) = {date_sql}
+          WHERE metric = {metric_sql} AND date(timestamp) = {date_sql}
       );
     """
 
@@ -90,8 +90,8 @@ def _missing_rule_guard_sql(metric_sql: str) -> str:
 def generate_trigger_sql() -> str:
     """AFTER INSERT/UPDATE/DELETE triggers. Fire inside the caller's transaction,
     so measurements and daily_metrics always commit together."""
-    new_metric, new_date = "NEW.metric", "date(NEW.recorded_at)"
-    old_metric, old_date = "OLD.metric", "date(OLD.recorded_at)"
+    new_metric, new_date = "NEW.metric", "date(NEW.timestamp)"
+    old_metric, old_date = "OLD.metric", "date(OLD.timestamp)"
 
     insert_trigger = f"""
     DROP TRIGGER IF EXISTS trg_measurements_ai;
@@ -138,7 +138,7 @@ def _expected_projection_sql() -> str:
     agg = aggregation_case_sql("days.metric", "days.day")
     return f"""
     WITH days AS (
-        SELECT DISTINCT m.metric, date(m.recorded_at) AS day
+        SELECT DISTINCT m.metric, date(m.timestamp) AS day
         FROM measurements m
         WHERE EXISTS (SELECT 1 FROM aggregation_rules r WHERE r.metric = m.metric)
     ),
@@ -148,7 +148,7 @@ def _expected_projection_sql() -> str:
             metric,
             {agg} AS value,
             (SELECT COUNT(*) FROM measurements mm
-              WHERE mm.metric = days.metric AND date(mm.recorded_at) = days.day) AS raw_measurement_count,
+              WHERE mm.metric = days.metric AND date(mm.timestamp) = days.day) AS raw_measurement_count,
             (SELECT method FROM aggregation_rules WHERE metric = days.metric) AS aggregation_method
         FROM days
     )
