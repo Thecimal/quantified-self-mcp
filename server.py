@@ -1588,6 +1588,19 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
     below measures against, so a wider window (60-90+ days) gives a more
     stable baseline than the 30-day default read_health_data uses.
 
+    Use this tool when:
+    - the user asks what's normal/typical/usual for one metric (e.g.
+      "what's normal for my resting heart rate?"), with no particular
+      day or direction of change in mind.
+
+    Do not use this tool when:
+    - the user asks whether a metric is going up/down over time -> use
+      `calculate_metric_trend` instead.
+    - the user asks whether specific days looked unusual -> use
+      `detect_metric_anomalies` instead.
+    - the user wants two ranges compared against each other -> use
+      `compare_metric_periods` instead.
+
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
     to whatever model the calling client is configured with. If that
@@ -1641,6 +1654,20 @@ def detect_metric_anomalies(
     mean/stdev z-score — more robust for short, noisy personal-health
     series, where the mean/stdev version is easily dragged around by the
     very outliers it's supposed to catch.
+
+    Use this tool when:
+    - the user asks whether anything looked unusual/off/weird on
+      particular days for one metric (e.g. "was there anything unusual
+      about my sleep last month?").
+
+    Do not use this tool when:
+    - the user wants a general sense of what's typical, with no interest
+      in flagging specific days -> use `get_baseline` instead.
+    - the user asks about a steady increase/decrease over time rather
+      than isolated spikes/dips -> use `calculate_metric_trend` instead.
+    - the user already has one specific date in mind and wants the full
+      "why" behind it (baseline, anomaly, trend, and correlations
+      together) -> use `explain_metric_change` instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1698,6 +1725,20 @@ def calculate_metric_trend(
     a straight line actually fits — low r_squared means "noisy," not
     "flat").
 
+    Use this tool when:
+    - the user asks whether one metric is trending up/down/flat over a
+      continuous window (e.g. "is my weight trending down?", "how has my
+      HRV changed?").
+
+    Do not use this tool when:
+    - the user wants two specific, separately-defined ranges compared
+      (e.g. "this month vs last month") rather than a single continuous
+      slope -> use `compare_metric_periods` instead.
+    - the user asks what's typical/normal rather than which direction
+      it's moving -> use `get_baseline` instead.
+    - the user asks about isolated unusual days rather than an overall
+      direction -> use `detect_metric_anomalies` instead.
+
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
     to whatever model the calling client is configured with. If that
@@ -1753,6 +1794,18 @@ def compare_metric_periods(
     month vs. last month" or "since starting a new medication vs. before."
     The two ranges may be any length and need not be adjacent or equal in
     size; each is summarized with its own baseline first.
+
+    Use this tool when:
+    - the user names or implies two distinct date ranges to weigh against
+      each other (e.g. "compare my average steps this month to last
+      month", "since starting a new medication vs. before").
+
+    Do not use this tool when:
+    - there's only one continuous window and the question is about
+      direction over time, not two discrete ranges -> use
+      `calculate_metric_trend` instead.
+    - the user wants "what's normal" for a single window, not a
+      before/after comparison -> use `get_baseline` instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1818,6 +1871,16 @@ def find_metric_correlation(
     Compute the Pearson correlation between two metrics over the same
     window, joined by date. Correlation, not causation: a strong r just
     means the two moved together, not that one caused the other.
+
+    Use this tool when:
+    - the user names or implies two *different* metrics and asks whether
+      they move together (e.g. "does my sleep affect my mood?", "did my
+      HRV change after I increased my workouts?").
+
+    Do not use this tool when:
+    - only one metric is in question -> use `get_baseline`,
+      `calculate_metric_trend`, or `detect_metric_anomalies` instead,
+      depending on what's being asked about that one metric.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
