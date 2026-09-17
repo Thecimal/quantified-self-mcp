@@ -150,6 +150,24 @@ def compare_periods(series_a: list[Point], series_b: list[Point]) -> dict:
     return {"period_a": base_a, "period_b": base_b, "delta": delta, "pct_change": pct_change}
 
 
+def _sample_confidence(n: int) -> str:
+    """Bucket an overlap/sample count into a coarse adequacy label for
+    correlation results — product-level guardrails, not a universal
+    statistical threshold. Deliberately silent about the correlation's
+    magnitude or significance; this only says how much paired data backed
+    it. See find_correlations.
+    """
+    if n < 4:
+        return "insufficient"
+    if n < 10:
+        return "very_limited"
+    if n < 20:
+        return "limited"
+    if n < 30:
+        return "moderate"
+    return "strong_sample"
+
+
 def find_correlations(series_a: list[Point], series_b: list[Point], lag_days: int = 0) -> dict:
     """Pearson correlation between two metrics' series, joined by date.
 
@@ -157,6 +175,11 @@ def find_correlations(series_a: list[Point], series_b: list[Point], lag_days: in
     whether series_a on day N predicts series_b on day N+1 (e.g. "does poor
     sleep tonight predict lower steps tomorrow?"). Only dates present in
     both series after the shift are used.
+
+    Every return path includes "sample_confidence" (see _sample_confidence)
+    — a bucketed read on the overlap count "n" alone, not on the strength
+    of "r" — so a caller can't mistake a high r from a thin sample for a
+    settled relationship.
     """
     shifted_b = {p.day.toordinal() - lag_days: p.value for p in series_b}
     pairs = [(p.value, shifted_b[p.day.toordinal()]) for p in series_a if p.day.toordinal() in shifted_b]
@@ -167,10 +190,17 @@ def find_correlations(series_a: list[Point], series_b: list[Point], lag_days: in
             "n": n,
             "lag_days": lag_days,
             "note": "Not enough overlapping days to compute a correlation.",
+            "sample_confidence": _sample_confidence(n),
         }
     xs, ys = zip(*pairs, strict=True)
     try:
         r = statistics.correlation(xs, ys)
     except statistics.StatisticsError:
-        return {"r": None, "n": n, "lag_days": lag_days, "note": "No variance in one of the two series."}
-    return {"r": round(r, 3), "n": n, "lag_days": lag_days}
+        return {
+            "r": None,
+            "n": n,
+            "lag_days": lag_days,
+            "note": "No variance in one of the two series.",
+            "sample_confidence": _sample_confidence(n),
+        }
+    return {"r": round(r, 3), "n": n, "lag_days": lag_days, "sample_confidence": _sample_confidence(n)}

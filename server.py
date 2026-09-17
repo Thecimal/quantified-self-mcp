@@ -377,6 +377,7 @@ class CorrelationResult(BaseModel):
     lag_days: int
     r: float | None = None
     n: int
+    sample_confidence: str
     note: str | None = None
     evidence_a: Evidence | None = None
     evidence_b: Evidence | None = None
@@ -1903,13 +1904,16 @@ def find_metric_correlation(
 
     Returns:
         A CorrelationResult with "r" (-1 to 1), "n" (overlapping days
-        used), and "evidence_a"/"evidence_b" for each metric's own
+        used), "sample_confidence" (a bucketed read on "n" alone — see
+        analytics._sample_confidence — that makes no claim about "r"
+        itself), and "evidence_a"/"evidence_b" for each metric's own
         coverage over the window (independent of "n" — a metric can have
         low overall coverage yet still have enough overlapping days to
         produce an "r"). "r" is null with fewer than 4 overlapping days.
-        If either evidence's confidence is "moderate" or "low", say the
-        correlation is based on a thin/gappy series rather than reporting
-        "r" as a settled relationship.
+        If either evidence's confidence is "moderate" or "low", or if
+        sample_confidence is anything short of "strong_sample", say the
+        correlation is based on a thin sample or gappy series rather than
+        reporting "r" as a settled relationship.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
