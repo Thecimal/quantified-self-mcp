@@ -23,10 +23,7 @@ def verify(conn: sqlite3.Connection) -> dict:
     """Read-only. Returns {"status": "ok"} or
     {"status": "mismatch", "issues": [...]}. Never mutates."""
     rows = conn.execute(aggregation.generate_verify_sql()).fetchall()
-    issues = [
-        {"date": r[0], "metric": r[1], "issue": r[2], "expected": r[3], "stored": r[4]}
-        for r in rows
-    ]
+    issues = [{"date": r[0], "metric": r[1], "issue": r[2], "expected": r[3], "stored": r[4]} for r in rows]
     return {"status": "ok", "issues": []} if not issues else {"status": "mismatch", "issues": issues}
 
 

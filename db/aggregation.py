@@ -47,10 +47,7 @@ def _upsert_key_sql(metric_sql: str, date_sql: str) -> str:
     upsert) when no measurements remain for the key -- that case is handled
     by _cleanup_key_sql() instead, which deletes the row."""
     agg = aggregation_case_sql(metric_sql, date_sql)
-    exists_guard = (
-        f"EXISTS (SELECT 1 FROM measurements WHERE metric = {metric_sql} "
-        f"AND date(recorded_at) = {date_sql})"
-    )
+    exists_guard = f"EXISTS (SELECT 1 FROM measurements WHERE metric = {metric_sql} AND date(recorded_at) = {date_sql})"
     return f"""
     INSERT INTO daily_metrics (date, metric, value, raw_measurement_count, aggregation_method, aggregated_at)
     SELECT {date_sql}, {metric_sql}, {agg},

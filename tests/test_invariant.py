@@ -1,4 +1,5 @@
 import sqlite3
+
 import pytest
 
 from db import invariant
@@ -148,7 +149,5 @@ def test_bulk_import_then_repair_then_verify(conn):
 
 def test_analytics_sees_insert_immediately(conn):
     insert(conn, "mood", 7, "2026-09-17T08:00:00")
-    value = conn.execute(
-        "SELECT value FROM daily_metrics WHERE date = '2026-09-17' AND metric = 'mood'"
-    ).fetchone()[0]
+    value = conn.execute("SELECT value FROM daily_metrics WHERE date = '2026-09-17' AND metric = 'mood'").fetchone()[0]
     assert value == 7
