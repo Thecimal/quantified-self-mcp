@@ -13,10 +13,10 @@ def conn():
     return c
 
 
-def insert(conn, metric, value, recorded_at):
+def insert(conn, metric, value, timestamp):
     conn.execute(
-        "INSERT INTO measurements (metric, value, recorded_at) VALUES (?, ?, ?)",
-        (metric, value, recorded_at),
+        "INSERT INTO measurements (metric, value, timestamp) VALUES (?, ?, ?)",
+        (metric, value, timestamp),
     )
     conn.commit()
 
@@ -68,7 +68,7 @@ def test_update_value(conn):
 
 def test_update_moves_date(conn):
     insert(conn, "steps", 1000, "2026-09-17T08:00:00")
-    conn.execute("UPDATE measurements SET recorded_at = '2026-09-18T08:00:00' WHERE metric = 'steps'")
+    conn.execute("UPDATE measurements SET timestamp = '2026-09-18T08:00:00' WHERE metric = 'steps'")
     conn.commit()
     assert daily(conn, "2026-09-17", "steps") is None  # old row cleaned up
     assert daily(conn, "2026-09-18", "steps") == (1000, 1)
@@ -151,3 +151,54 @@ def test_analytics_sees_insert_immediately(conn):
     insert(conn, "mood", 7, "2026-09-17T08:00:00")
     value = conn.execute("SELECT value FROM daily_metrics WHERE date = '2026-09-17' AND metric = 'mood'").fetchone()[0]
     assert value == 7
+
+
+def test_verify_reports_unsupported_metric_status_distinct_from_mismatch(conn):
+    # A rule deleted after measurements were written for it (see #8) is the
+    # one way this state can be reached outside of a restored/foreign
+    # database — the INSERT trigger itself blocks this at write time
+    # (test_missing_rule_rolls_back), so verify() is the only backstop.
+    insert(conn, "steps", 1000, "2026-09-17T08:00:00")
+    conn.execute("DELETE FROM aggregation_rules WHERE metric = 'steps'")
+    conn.commit()
+    result = invariant.verify(conn)
+    assert result["status"] == "unsupported_metric"
+    assert any(i["issue"] == "unsupported_metric" and i["metric"] == "steps" for i in result["issues"])
+
+
+def test_repair_leaves_unsupported_metric_rows_untouched(conn):
+    insert(conn, "steps", 1000, "2026-09-17T08:00:00")
+    conn.execute("DELETE FROM aggregation_rules WHERE metric = 'steps'")
+    conn.commit()
+    result = invariant.repair(conn)
+    # repair() can't invent a canonical value for a metric with no rule —
+    # verify() after repair should still flag it, not silently drop it.
+    assert result["status"] == "unsupported_metric"
+
+
+def test_bulk_insert_measurements_rebuilds_projection(conn):
+    rows = [{"metric": "steps", "value": 10, "timestamp": f"2026-01-{i + 1:02d}T08:00:00"} for i in range(20)]
+    result = invariant.bulk_insert_measurements(conn, rows)
+    assert result["status"] == "ok"
+    assert conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == 20
+    for i in range(20):
+        assert daily(conn, f"2026-01-{i + 1:02d}", "steps") == (10, 1)
+
+
+def test_bulk_insert_measurements_rejects_unsupported_metric_atomically(conn):
+    rows = [
+        {"metric": "steps", "value": 10, "timestamp": "2026-01-01T08:00:00"},
+        {"metric": "not_a_real_metric", "value": 1, "timestamp": "2026-01-01T08:00:00"},
+    ]
+    with pytest.raises(ValueError, match="not_a_real_metric"):
+        invariant.bulk_insert_measurements(conn, rows)
+    # Nothing from the batch should have landed -- not even the supported row.
+    assert conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == 0
+
+
+def test_bulk_insert_then_normal_write_still_maintains_invariant(conn):
+    rows = [{"metric": "steps", "value": 10, "timestamp": "2026-01-01T08:00:00"}]
+    invariant.bulk_insert_measurements(conn, rows)
+    # Triggers must be back in place after the bulk path finishes.
+    insert(conn, "steps", 5, "2026-01-01T09:00:00")
+    assert daily(conn, "2026-01-01", "steps") == (15, 2)
