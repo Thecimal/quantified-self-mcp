@@ -820,6 +820,34 @@ def aggregate_measurements_to_daily(
     return result
 
 
+def count_source_conflicts(conn: sqlite3.Connection, metric: str, start: date, end: date) -> int:
+    """Count how many distinct days in [start, end] had a genuine
+    multi-source conflict for `metric` -- i.e. days where
+    resolve_source_conflicts had to pick a winner between 2+ distinct
+    sources, not just multiple readings from the same source.
+
+    Used by server.py's explain_metric_change to flag that a trend or
+    baseline computed over this window is partly built on days where
+    sources disagreed, without re-deriving that signal from raw
+    measurements itself. Does not decide which reading is "right" -- this
+    is purely a count of disagreement, for the caller to decide how to
+    caveat downstream analytics.
+    """
+    rows = query_measurements(
+        conn, metric=metric, start=start.isoformat(), end=end.isoformat() + "T23:59:59", limit=MAX_ROWS_RETURNED
+    )
+    by_day: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_day.setdefault(row["timestamp"][:10], []).append(row)
+
+    conflicting_days = 0
+    for day_rows in by_day.values():
+        _kept, conflict = resolve_source_conflicts(day_rows)
+        if conflict:
+            conflicting_days += 1
+    return conflicting_days
+
+
 # Sanity bounds for each metric: (min, max, human label used in error messages).
 # Deliberately generous — meant to catch obvious mistakes (unit confusion,
 # a slipped decimal point, a fat-fingered extra digit) rather than to police

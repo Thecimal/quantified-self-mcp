@@ -73,6 +73,7 @@ from logic import (
     WORKOUT_INTENSITIES,
     aggregate_measurements_to_daily,
     connect_writable,
+    count_source_conflicts,
     db_error_types,
     default_data_dir,
     ensure_schema,
@@ -431,6 +432,7 @@ class ExplainMetricChangeResult(BaseModel):
     narrative_facts: list[str]
     baseline_evidence: Evidence
     trend_evidence: Evidence
+    conflicting_days: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -2132,6 +2134,13 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     trend_series = _fetch_metric_series(metric, trend_start, target_day)
     trend = calculate_trend(trend_series)
 
+    conflicting_days = 0
+    try:
+        with _readonly_connection(HEALTH_DB_PATH) as conn:
+            conflicting_days = count_source_conflicts(conn, metric, trend_start, target_day)
+    except db_error_types() as exc:
+        logger.error("Database error counting source conflicts for %s: %s", metric, exc)
+
     correlated: list[CorrelationResult] = []
     for other in METRIC_COLUMNS:
         if other == metric or other in PRIVATE_FIELDS:
@@ -2174,6 +2183,13 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     for c in correlated:
         facts.append(f"{c.metric_b} correlates with {metric} over this window (r={c.r}, n={c.n}).")
 
+    if conflicting_days:
+        window_days = (target_day - trend_start).days + 1
+        facts.append(
+            f"{metric} had conflicting values from different sources on {conflicting_days} of the "
+            f"{window_days} days in the trend window above, so that trend is less certain than it looks."
+        )
+
     sessions: list[WorkoutSessionRow] = []
     if metric == "workout_minutes":
         try:
@@ -2210,6 +2226,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         narrative_facts=facts,
         baseline_evidence=Evidence(**build_evidence(series, baseline_start, target_day)),
         trend_evidence=Evidence(**build_evidence(trend_series, trend_start, target_day)),
+        conflicting_days=conflicting_days,
     )
 
 
