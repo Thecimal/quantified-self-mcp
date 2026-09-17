@@ -28,9 +28,13 @@ not by reading your source. Confirm them against the live server before
 trusting any score:
 
 ```
-python eval/tool_routing/run_eval.py --dump-tools \
-  --server-cmd "python -m quantified_self_mcp.server"
+python eval/tool_routing/run_eval.py --dump-tools --server-cmd "quantified-self-mcp"
 ```
+
+(`quantified-self-mcp` is the console-script entry point installed by
+`pip install -e .` — `python -m quantified_self_mcp.server` will not work
+here since the package's importable module is just `server`, not
+`quantified_self_mcp.server`.)
 
 Fix any mismatch in `eval/tool_routing/prompts.yaml` (the `canonical` /
 `acceptable` fields). The harness also prints a warning at eval time for
@@ -41,7 +45,7 @@ won't fail silently.
 
 ```
 python eval/tool_routing/run_eval.py \
-  --server-cmd "python -m quantified_self_mcp.server" \
+  --server-cmd "quantified-self-mcp" \
   --prompts eval/tool_routing/prompts.yaml \
   --out eval/tool_routing/results.json
 ```

@@ -1,41 +1,48 @@
 # Tool-routing eval prompts for quantified-self-mcp.
 #
-# Each entry is one simulated user turn. `canonical` is the tool a careful
-# human reviewer would pick as the best answer; `acceptable` lists other
-# tools that would also produce a reasonable answer (not wrong, just not
-# the tightest fit). Anything outside canonical+acceptable is scored wrong.
+# Tool names below were fixed against a live --dump-tools run (18 tools,
+# see git history for the earlier best-guess version that got several of
+# these wrong: get_daily_summary doesn't exist, and calculate_trend /
+# compare_periods / detect_anomalies / find_correlations are actually
+# calculate_metric_trend / compare_metric_periods / detect_metric_anomalies
+# / find_metric_correlation).
 #
-# `category` groups prompts by *why* they're hard, so failures point at a
-# fix instead of just a percentage:
-#   unambiguous          - sanity baseline, should be ~100% canonical
-#   layer_boundary        - raw data vs. analytics tool for the same metric
+# `canonical` is the tool a careful human reviewer would pick as the best
+# answer; `acceptable` lists other tools that would also produce a
+# reasonable answer (not wrong, just not the tightest fit). Anything
+# outside canonical+acceptable is scored wrong.
+#
+# category groups:
+#   unambiguous            - sanity baseline, should be ~100% canonical
+#   layer_boundary          - daily-aggregate vs. history/trend tool for the same metric
 #   granularity_adversarial - point-in-time vs. trend vs. history wording
-#   causal_adversarial    - "why" / "explain" vs. "what changed"
-#   comparison            - explicit period-vs-period vs. plain trend
-#   write_intent          - make sure read tools aren't picked for writes
+#   causal_adversarial      - "why" / "explain" vs. "what changed"
+#   comparison              - explicit period-vs-period vs. plain trend
+#   write_intent            - daily aggregate vs. raw single-observation writes
+#   raw_vs_aggregate         - read_health_data/read_measurements/get_metric_provenance
+#   workout_logging          - log_workout_session vs. log_daily_metric's workout_minutes
+#   export_intent            - export_health_data_csv
 #
-# Tool names below are best-guesses based on the project's stated design.
-# Run `run_eval.py --dump-tools` against your live server first and fix
-# any name here that doesn't match — the harness will also warn you at
-# eval time if a referenced tool isn't found on the server.
+# If you add or rename a tool, re-run `run_eval.py --dump-tools` and
+# check this file against the output before trusting scores again.
 
 - id: u1
   category: unambiguous
   prompt: "What was my resting heart rate today?"
   canonical: read_health_data
-  acceptable: [get_daily_summary]
+  acceptable: [read_measurements]
 
 - id: u2
   category: unambiguous
   prompt: "Give me today's summary — steps, sleep, weight, everything."
-  canonical: get_daily_summary
+  canonical: read_health_data
   acceptable: []
 
 - id: u3
   category: unambiguous
   prompt: "Log 8200 steps for today."
   canonical: log_daily_metric
-  acceptable: []
+  acceptable: [log_measurement]
 
 - id: u4
   category: unambiguous
@@ -58,13 +65,13 @@
 - id: u7
   category: unambiguous
   prompt: "Does anything in my data look correlated with my mood?"
-  canonical: find_correlations
+  canonical: find_metric_correlation
   acceptable: []
 
 - id: u8
   category: unambiguous
   prompt: "Flag anything unusual in my metrics over the past week."
-  canonical: detect_anomalies
+  canonical: detect_metric_anomalies
   acceptable: []
 
 - id: u9
@@ -77,13 +84,13 @@
   category: unambiguous
   prompt: "What water intake did I log on the 3rd of this month?"
   canonical: read_health_data
-  acceptable: [get_daily_summary]
+  acceptable: [read_measurements, get_metric_provenance]
 
 - id: lb1
   category: layer_boundary
   prompt: "Show me my sleep."
   canonical: read_health_data
-  acceptable: [get_metric_history, get_daily_summary]
+  acceptable: [get_metric_history, read_measurements]
 
 - id: lb2
   category: layer_boundary
@@ -95,13 +102,13 @@
   category: layer_boundary
   prompt: "Show me my sleep hours over time."
   canonical: get_metric_history
-  acceptable: [calculate_trend]
+  acceptable: [calculate_metric_trend]
 
 - id: lb4
   category: layer_boundary
   prompt: "What have my workout minutes looked like lately?"
   canonical: get_metric_history
-  acceptable: [read_health_data, calculate_trend]
+  acceptable: [read_health_data, calculate_metric_trend]
 
 - id: lb5
   category: layer_boundary
@@ -119,60 +126,60 @@
   category: layer_boundary
   prompt: "What's typical for my step count on weekdays?"
   canonical: get_baseline
-  acceptable: [calculate_trend]
+  acceptable: [calculate_metric_trend]
 
 - id: lb8
   category: layer_boundary
   prompt: "Is 5 hours of sleep low for me specifically, or just low in general?"
   canonical: get_baseline
-  acceptable: [detect_anomalies]
+  acceptable: [detect_metric_anomalies]
 
 - id: ga1
   category: granularity_adversarial
   prompt: "How has my resting heart rate changed?"
-  canonical: calculate_trend
+  canonical: calculate_metric_trend
   acceptable: [get_metric_history]
 
 - id: ga2
   category: granularity_adversarial
   prompt: "How has my resting heart rate changed recently?"
   canonical: get_recent_changes
-  acceptable: [calculate_trend]
+  acceptable: [calculate_metric_trend]
 
 - id: ga3
   category: granularity_adversarial
   prompt: "Is my resting heart rate unusual today?"
-  canonical: detect_anomalies
+  canonical: detect_metric_anomalies
   acceptable: []
 
 - id: ga4
   category: granularity_adversarial
   prompt: "Has my resting heart rate been unusual lately, or is this a one-off?"
-  canonical: detect_anomalies
-  acceptable: [get_recent_changes, calculate_trend]
+  canonical: detect_metric_anomalies
+  acceptable: [get_recent_changes, calculate_metric_trend]
 
 - id: ga5
   category: granularity_adversarial
   prompt: "Is my sleep trending down?"
-  canonical: calculate_trend
+  canonical: calculate_metric_trend
   acceptable: [get_recent_changes]
 
 - id: ga6
   category: granularity_adversarial
   prompt: "Has anything about my sleep shifted in the past couple weeks?"
   canonical: get_recent_changes
-  acceptable: [calculate_trend, detect_anomalies]
+  acceptable: [calculate_metric_trend, detect_metric_anomalies]
 
 - id: ga7
   category: granularity_adversarial
   prompt: "Was last night's sleep an outlier?"
-  canonical: detect_anomalies
+  canonical: detect_metric_anomalies
   acceptable: []
 
 - id: ga8
   category: granularity_adversarial
   prompt: "What's the overall direction of my weight over the last 3 months?"
-  canonical: calculate_trend
+  canonical: calculate_metric_trend
   acceptable: [get_metric_history]
 
 - id: ca1
@@ -185,7 +192,7 @@
   category: causal_adversarial
   prompt: "What changed recently that might explain my low mood?"
   canonical: get_recent_changes
-  acceptable: [explain_metric_change, find_correlations]
+  acceptable: [explain_metric_change, find_metric_correlation]
 
 - id: ca3
   category: causal_adversarial
@@ -197,61 +204,61 @@
   category: causal_adversarial
   prompt: "What's going on with my step count lately?"
   canonical: get_recent_changes
-  acceptable: [get_metric_history, calculate_trend]
+  acceptable: [get_metric_history, calculate_metric_trend]
 
 - id: ca5
   category: causal_adversarial
   prompt: "Is there a reason my weight jumped this week, or is it just noise?"
   canonical: explain_metric_change
-  acceptable: [detect_anomalies, get_recent_changes]
+  acceptable: [detect_metric_anomalies, get_recent_changes]
 
 - id: cp1
   category: comparison
   prompt: "Compare my sleep this month to last month."
-  canonical: compare_periods
+  canonical: compare_metric_periods
   acceptable: []
 
 - id: cp2
   category: comparison
   prompt: "Was I more active in August or September?"
-  canonical: compare_periods
+  canonical: compare_metric_periods
   acceptable: []
 
 - id: cp3
   category: comparison
   prompt: "How does this week's resting heart rate stack up against last week's?"
-  canonical: compare_periods
-  acceptable: [calculate_trend]
+  canonical: compare_metric_periods
+  acceptable: [calculate_metric_trend]
 
 - id: cp4
   category: comparison
   prompt: "Am I sleeping better now than I was at the start of the year?"
-  canonical: compare_periods
-  acceptable: [calculate_trend]
+  canonical: compare_metric_periods
+  acceptable: [calculate_metric_trend]
 
 - id: cp5
   category: comparison
   prompt: "Did my workout minutes improve after I started tracking mood?"
-  canonical: compare_periods
-  acceptable: [find_correlations, calculate_trend]
+  canonical: compare_metric_periods
+  acceptable: [find_metric_correlation, calculate_metric_trend]
 
 - id: wi1
   category: write_intent
   prompt: "I drank 2 liters of water today, note that down."
   canonical: log_daily_metric
-  acceptable: []
+  acceptable: [log_measurement]
 
 - id: wi2
   category: write_intent
   prompt: "Record my weight as 74.2kg for this morning."
   canonical: log_daily_metric
-  acceptable: []
+  acceptable: [log_measurement]
 
 - id: wi3
   category: write_intent
   prompt: "I accidentally logged 20000 steps instead of 2000 today, fix it."
   canonical: clear_metric
-  acceptable: [log_daily_metric]
+  acceptable: [log_daily_metric, log_measurement]
 
 - id: wi4
   category: write_intent
@@ -263,4 +270,76 @@
   category: write_intent
   prompt: "What's my current streak of logging sleep every day?"
   canonical: get_metric_history
-  acceptable: [read_health_data, get_daily_summary]
+  acceptable: [read_health_data]
+
+- id: rv1
+  category: raw_vs_aggregate
+  prompt: "How many separate step-count readings did my watch log today?"
+  canonical: read_measurements
+  acceptable: [get_metric_provenance]
+
+- id: rv2
+  category: raw_vs_aggregate
+  prompt: "Where did today's resting heart rate number come from — which device?"
+  canonical: get_metric_provenance
+  acceptable: [read_measurements]
+
+- id: rv3
+  category: raw_vs_aggregate
+  prompt: "I want the individual water-intake entries I logged throughout the day, not just the daily total."
+  canonical: read_measurements
+  acceptable: [get_metric_provenance]
+
+- id: rv4
+  category: raw_vs_aggregate
+  prompt: "Log that I just drank 250ml of water."
+  canonical: log_measurement
+  acceptable: [log_daily_metric]
+
+- id: rv5
+  category: raw_vs_aggregate
+  prompt: "Set my total water intake for today to 2000ml."
+  canonical: log_daily_metric
+  acceptable: [log_measurement]
+
+- id: rv6
+  category: raw_vs_aggregate
+  prompt: "Recalculate today's daily summary from the raw sensor data, I think it's stale."
+  canonical: aggregate_measurements
+  acceptable: []
+
+- id: wo1
+  category: workout_logging
+  prompt: "I ran for 40 minutes at a hard pace this morning, log it."
+  canonical: log_workout_session
+  acceptable: [log_daily_metric]
+
+- id: wo2
+  category: workout_logging
+  prompt: "Just log 40 minutes of workout time for today."
+  canonical: log_daily_metric
+  acceptable: [log_workout_session]
+
+- id: wo3
+  category: workout_logging
+  prompt: "What workouts did I do this week — types and durations?"
+  canonical: read_workout_sessions
+  acceptable: [get_metric_history]
+
+- id: wo4
+  category: workout_logging
+  prompt: "How many total workout minutes did I log this week?"
+  canonical: get_metric_history
+  acceptable: [read_workout_sessions]
+
+- id: ex1
+  category: export_intent
+  prompt: "Export my last 90 days of health data as a CSV I can open in Excel."
+  canonical: export_health_data_csv
+  acceptable: []
+
+- id: ex2
+  category: export_intent
+  prompt: "Can you save my sleep data to a file?"
+  canonical: export_health_data_csv
+  acceptable: []

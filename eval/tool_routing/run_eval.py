@@ -14,13 +14,16 @@ docstring or tool-surface change.
 
 Usage:
     export ANTHROPIC_API_KEY=...
-    python run_eval.py --dump-tools \
-        --server-cmd "python -m quantified_self_mcp.server"
+    python run_eval.py --dump-tools --server-cmd "quantified-self-mcp"
 
     python run_eval.py \
-        --server-cmd "python -m quantified_self_mcp.server" \
+        --server-cmd "quantified-self-mcp" \
         --prompts prompts.yaml \
         --out results.json
+
+`--server-cmd` is whatever command starts the MCP server over stdio --
+for this project that's the `quantified-self-mcp` console-script entry
+point installed by `pip install -e .`, not a `python -m` module path.
 """
 
 from __future__ import annotations
@@ -250,8 +253,8 @@ def main() -> None:
     ap.add_argument(
         "--server-cmd",
         required=True,
-        help='Command to launch the MCP server over stdio, '
-        'e.g. "python -m quantified_self_mcp.server"',
+        help="Command to launch the MCP server over stdio, "
+        'e.g. "quantified-self-mcp" (the console-script entry point)',
     )
     ap.add_argument(
         "--prompts",
