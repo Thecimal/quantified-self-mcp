@@ -12,8 +12,13 @@ tests parse raw string values from CSV specifically — this module is for
 *additional* adapters, registered in ADAPTERS below. Add support for a new
 export format by writing one function here with the
 `Callable[[Path], AdaptedImport]` signature and adding it to ADAPTERS;
-init_db.py's CLI and its validate_metrics/upsert_metrics pipeline don't
-need to change.
+init_db.py's CLI reads this project's own csv format directly (see
+_load_csv_rows there); for both that and an adapter's output, init_db.py
+flattens the per-day `rows` into individual measurements rows (see
+logic.measurement_rows_from_daily) and writes them through
+logic.bulk_import_measurements, which also validates each metric against
+aggregation_rules — init_db.py's CLI doesn't need to change to add a new
+adapter.
 
 Currently supported:
 
@@ -62,13 +67,14 @@ class AdaptedImport(NamedTuple):
     # provenance for — each: {"timestamp", "metric", "value", "unit",
     # "source"}. Provenance-aware sources (currently just Apple Health,
     # via each Record's `sourceName` attribute — e.g. "Ben's Apple
-    # Watch") populate this; init_db.py writes it straight to the
-    # measurements table (see logic.insert_measurement) alongside the
-    # aggregated `rows` upsert into daily_metrics, so "which device said
-    # this" survives the import instead of being lost in the day-level
-    # average. Empty for adapters that can't identify a per-record
-    # source (or, for the same reason, the CSV path, which init_db.py
-    # handles separately from this NamedTuple entirely).
+    # Watch") populate this; init_db.py loads it into the measurements
+    # table alongside `rows` (see logic.measurement_rows_from_daily's
+    # skip_metrics param, which excludes any metric already covered here
+    # so the two don't double-count one metric's daily total), so "which
+    # device said this" survives the import instead of being lost in the
+    # day-level aggregate. Empty for adapters that can't identify a
+    # per-record source (or, for the same reason, the CSV path, which
+    # init_db.py handles separately from this NamedTuple entirely).
     raw_measurements: list[dict[str, Any]] = []
     # Record/recordType strings this adapter saw but doesn't map to any
     # column (e.g. Apple Health's BloodPressure, ECG, MindfulSession —

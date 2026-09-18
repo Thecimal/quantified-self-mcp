@@ -48,8 +48,15 @@ the shared parsing helpers).
 Re-running upserts by date, so it's safe to re-run as you add more days —
 or to add a column later: a CSV with only date and weight_kg, say, updates
 just that column and leaves steps/sleep_hours/etc. for that date
-untouched, rather than blanking them out. Pass --replace to clear the
-table first instead. Rows with a problem (bad date, non-numeric value,
+untouched, rather than blanking them out. Under the hood this now means
+each date/metric this import touches has its prior measurements rows (if
+any, tagged with this run's importer) replaced rather than added to, so
+re-running an unchanged source file never double-counts a "sum" metric
+like steps. Pass --replace to clear out *all* of this importer's
+previously loaded data first instead, rather than just the dates/metrics
+present in this run (useful if the source file has since dropped some
+dates) — never touches data from log_daily_metric/log_measurement or a
+different importer. Rows with a problem (bad date, non-numeric value,
 etc.) are skipped with a warning rather than aborting the whole import —
 the final line printed always tells you how many rows loaded vs. were
 skipped. All of this applies equally to non-CSV sources (see
@@ -67,11 +74,11 @@ from pathlib import Path
 
 from import_adapters import ADAPTERS, RowError, detect_adapter
 from logic import (
+    bulk_import_measurements,
     connect_writable,
     default_data_dir,
     ensure_schema,
-    insert_measurement,
-    upsert_metrics,
+    measurement_rows_from_daily,
     validate_metrics,
 )
 
@@ -367,23 +374,22 @@ def init_health_db(
     conn = connect_writable(db_path)
     try:
         ensure_schema(conn)
-        if replace:
-            conn.execute("DELETE FROM daily_metrics")
-        upsert_metrics(conn, parsed_rows)
-        if raw_measurements:
-            imported_at = datetime.now().isoformat(timespec="seconds")
-            for m in raw_measurements:
-                insert_measurement(
-                    conn,
-                    m["timestamp"],
-                    m["metric"],
-                    m["value"],
-                    unit=m.get("unit"),
-                    source=m.get("source"),
-                    source_type="wearable",
-                    importer=adapter_name,
-                    imported_at=imported_at,
-                )
+        raw_metric_names = frozenset(m["metric"] for m in raw_measurements)
+        daily_rows = measurement_rows_from_daily(parsed_rows, skip_metrics=raw_metric_names)
+        # source_type wasn't part of AdaptedImport.raw_measurements' own
+        # shape (see import_adapters.py) -- every provenance-aware source
+        # so far is a wearable, so this stamps that in, same as the old
+        # per-row insert_measurement call used to.
+        raw_measurements = [{**m, "source_type": m.get("source_type", "wearable")} for m in raw_measurements]
+        # Merged into a single bulk_import_measurements call (rather than
+        # one for daily_rows and one for raw_measurements) so --replace's
+        # "wipe every row this importer has ever written first" only
+        # happens once, against the full set -- two separate calls would
+        # have the second wipe out what the first had just inserted. See
+        # logic.measurement_rows_from_daily's skip_metrics param for why
+        # daily_rows never duplicates a metric raw_measurements already
+        # covers.
+        bulk_import_measurements(conn, adapter_name, daily_rows + raw_measurements, replace=replace)
     finally:
         conn.close()
 

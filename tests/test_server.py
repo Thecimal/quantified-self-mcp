@@ -90,6 +90,40 @@ def test_clear_metric_on_a_date_with_no_row_reports_nothing_to_clear(health_db):
     assert result.note is not None
 
 
+def test_clear_metric_clears_granular_measurements_too_and_reports_empty(health_db):
+    health_db.log_measurement(timestamp="2026-01-08T07:00:00", metric="steps", value=3000)
+    health_db.log_measurement(timestamp="2026-01-08T19:00:00", metric="steps", value=4000)
+    result = health_db.clear_metric(date="2026-01-08", field="steps")
+    assert result.row is None
+    assert "no metrics recorded" in result.note
+
+
+def test_log_measurement_rejects_a_metric_with_no_aggregation_rule(health_db):
+    with pytest.raises(ToolError, match=r"\[invalid_metric\].*no aggregation_rules entry"):
+        health_db.log_measurement(timestamp="2026-01-09T08:00:00", metric="not_a_real_metric", value=1)
+
+
+def test_aggregate_measurements_previews_without_writing_daily_metrics(health_db):
+    health_db.log_measurement(
+        timestamp="2026-01-10T08:00:00", metric="resting_heart_rate", value=62, source="Apple Watch"
+    )
+    health_db.log_measurement(timestamp="2026-01-10T08:05:00", metric="resting_heart_rate", value=67, source="Garmin")
+
+    before = health_db.read_health_data(start_date="2026-01-10", end_date="2026-01-10")
+    preview = health_db.aggregate_measurements(date="2026-01-10", source_priority=["Apple Watch"])
+    after = health_db.read_health_data(start_date="2026-01-10", end_date="2026-01-10")
+
+    # The preview reflects source_priority ...
+    assert preview.aggregated["resting_heart_rate"] == 62.0
+    # ... but daily_metrics itself (blending both sources via "mean") is
+    # untouched by the call, before and after. (Rounded to the nearest
+    # int -- see INT_METRIC_COLUMNS -- since the true mean, 64.5, isn't
+    # representable in DailyMetricsRow.resting_heart_rate: int.)
+    assert before.rows[0].resting_heart_rate == 64
+    assert after.rows[0].resting_heart_rate == 64
+    assert preview.row.resting_heart_rate == 64
+
+
 def test_read_health_data_rejects_inverted_range(health_db):
     with pytest.raises(ToolError, match=r"\[invalid_range\]"):
         health_db.read_health_data(start_date="2026-02-01", end_date="2026-01-01")
@@ -331,7 +365,11 @@ def test_server_tools_work_end_to_end_against_an_encrypted_database(tmp_path, mo
     assert read_back.rows[0].steps == 6000
 
     cleared = server.clear_metric(date="2026-01-20", field="steps")
-    assert cleared.row.steps is None
+    # steps was the only metric ever logged for this date, so clearing it
+    # leaves the date with no daily_metrics row at all to pivot into —
+    # see clear_metric's docstring.
+    assert cleared.row is None
+    assert "no metrics recorded" in cleared.note
 
     # And, as in test_logic.py's version of this check: genuinely
     # encrypted, not just opened through a different driver.
@@ -370,6 +408,14 @@ def test_tool_annotations_reflect_read_write_behavior(health_db):
     assert clear_tool.annotations.read_only_hint is False
     assert clear_tool.annotations.destructive_hint is True  # blanks out a value
     assert clear_tool.annotations.idempotent_hint is True
+
+    # aggregate_measurements never writes daily_metrics anymore — it's a
+    # pure preview (see its docstring for why: daily_metrics is
+    # trigger-maintained from *all* sources, so a source_priority
+    # resolution can't be persisted into it).
+    aggregate_tool = get_tool("aggregate_measurements")
+    assert aggregate_tool.annotations.read_only_hint is True
+    assert aggregate_tool.annotations.destructive_hint is False
 
 
 EXPECTED_TOOL_NAMES = {

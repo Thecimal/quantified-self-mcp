@@ -28,6 +28,7 @@ from init_db import (
     _to_int,
     init_health_db,
 )  # noqa: E402
+from logic import daily_metrics_wide  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_CSV = REPO_ROOT / "sample_data" / "health_sample.csv"
@@ -271,9 +272,9 @@ def test_init_health_db_loads_valid_rows(tmp_path):
     init_health_db(csv_path, db_path, replace=False)
 
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT steps, sleep_hours, resting_heart_rate FROM daily_metrics").fetchone()
+    rows = daily_metrics_wide(conn, ["steps", "sleep_hours", "resting_heart_rate"])
     conn.close()
-    assert row == (8000, 7.5, 60)
+    assert rows == [{"date": "2026-01-01", "steps": 8000, "sleep_hours": 7.5, "resting_heart_rate": 60}]
 
 
 def test_init_health_db_skips_bad_rows_but_loads_the_rest(tmp_path):
@@ -290,9 +291,9 @@ def test_init_health_db_skips_bad_rows_but_loads_the_rest(tmp_path):
     init_health_db(csv_path, db_path, replace=False)
 
     conn = sqlite3.connect(db_path)
-    count = conn.execute("SELECT COUNT(*) FROM daily_metrics").fetchone()[0]
+    rows = daily_metrics_wide(conn, ["steps", "sleep_hours", "resting_heart_rate"])
     conn.close()
-    assert count == 1
+    assert len(rows) == 1
 
 
 def test_init_health_db_replace_clears_existing_rows_first(tmp_path):
@@ -313,9 +314,9 @@ def test_init_health_db_replace_clears_existing_rows_first(tmp_path):
     init_health_db(second_csv, db_path, replace=True)
 
     conn = sqlite3.connect(db_path)
-    rows = conn.execute("SELECT date FROM daily_metrics").fetchall()
+    rows = daily_metrics_wide(conn, ["steps", "sleep_hours", "resting_heart_rate"])
     conn.close()
-    assert rows == [("2026-02-01",)]
+    assert [r["date"] for r in rows] == ["2026-02-01"]
 
 
 def test_init_health_db_upserts_optional_columns_without_clobbering_others(tmp_path):
@@ -332,9 +333,9 @@ def test_init_health_db_upserts_optional_columns_without_clobbering_others(tmp_p
     init_health_db(second, db_path, replace=False)
 
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT steps, mood, weight_kg FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
+    rows = daily_metrics_wide(conn, ["steps", "mood", "weight_kg"], "2026-01-01", "2026-01-01")
     conn.close()
-    assert row == (8000, 4, 70.5)
+    assert rows == [{"date": "2026-01-01", "steps": 8000, "mood": 4, "weight_kg": 70.5}]
 
 
 # ---------------------------------------------------------------------------
@@ -356,9 +357,9 @@ def test_init_health_db_auto_detects_apple_health_from_xml_extension(tmp_path):
     init_health_db(export, db_path, replace=False)  # source="auto" by default
 
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT steps FROM daily_metrics WHERE date = '2026-01-15'").fetchone()
+    rows = daily_metrics_wide(conn, ["steps"], "2026-01-15", "2026-01-15")
     conn.close()
-    assert row == (4000,)
+    assert rows == [{"date": "2026-01-15", "steps": 4000}]
 
 
 def test_init_health_db_writes_raw_measurements_with_provenance_from_apple_health(tmp_path):
@@ -384,7 +385,14 @@ def test_init_health_db_writes_raw_measurements_with_provenance_from_apple_healt
     assert row["imported_at"] is not None
 
 
-def test_init_health_db_from_csv_writes_no_measurements(tmp_path):
+def test_init_health_db_from_csv_writes_measurements_tagged_with_the_csv_importer(tmp_path):
+    # Before the measurements/daily_metrics invariant work, a CSV row
+    # went straight into the (then directly-writable) wide daily_metrics
+    # table and never touched measurements at all. Now daily_metrics is
+    # entirely derived from measurements (see db/schema.sql,
+    # db/invariant.py), so a CSV import has to write there too — tagged
+    # importer="csv" so it's identifiable and so a later --replace only
+    # touches CSV-sourced rows, not manually logged or other-importer data.
     csv_path = tmp_path / "health.csv"
     csv_path.write_text("date,steps\n2026-01-15,4000\n", encoding="utf-8")
     db_path = tmp_path / "health.db"
@@ -392,9 +400,11 @@ def test_init_health_db_from_csv_writes_no_measurements(tmp_path):
     init_health_db(csv_path, db_path, replace=False)
 
     conn = sqlite3.connect(db_path)
-    count = conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0]
+    conn.row_factory = sqlite3.Row
+    row = dict(conn.execute("SELECT * FROM measurements WHERE metric = 'steps'").fetchone())
     conn.close()
-    assert count == 0
+    assert row["value"] == 4000
+    assert row["importer"] == "csv"
 
 
 def test_init_health_db_explicit_source_overrides_extension_guess(tmp_path):
@@ -424,9 +434,9 @@ def test_cli_source_flag_imports_an_apple_health_export(tmp_path):
     assert result.returncode == 0
     assert "source: apple-health" in result.stdout
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT steps FROM daily_metrics WHERE date = '2026-01-15'").fetchone()
+    rows = daily_metrics_wide(conn, ["steps"], "2026-01-15", "2026-01-15")
     conn.close()
-    assert row == (4000,)
+    assert rows == [{"date": "2026-01-15", "steps": 4000}]
 
 
 # ---------------------------------------------------------------------------
@@ -475,9 +485,9 @@ def test_cli_map_flag_imports_csv_with_custom_headers(tmp_path):
     )
     assert result.returncode == 0
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT steps, sleep_hours FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
+    rows = daily_metrics_wide(conn, ["steps", "sleep_hours"], "2026-01-01", "2026-01-01")
     conn.close()
-    assert row == (8000, 7.5)
+    assert rows == [{"date": "2026-01-01", "steps": 8000, "sleep_hours": 7.5}]
 
 
 def test_cli_map_flag_rejects_unrecognized_column(tmp_path):

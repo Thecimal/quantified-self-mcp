@@ -27,6 +27,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from db import invariant as db_invariant
+
 logger = logging.getLogger("quantified-self-mcp")
 
 HEALTH_SCHEMA = """
@@ -175,6 +177,78 @@ def _migrate_v6_create_workout_sessions_table(conn: sqlite3.Connection) -> None:
     conn.executescript(WORKOUT_SESSIONS_SCHEMA)
 
 
+# Every column daily_metrics has ever gained (v1's original three plus
+# ADDED_COLUMNS/V5_ADDED_COLUMNS) -- exactly the metric set db/schema.sql's
+# aggregation_rules seeds, so a value in any of these columns is guaranteed
+# to have a home in the new projection. Kept as its own tuple (rather than
+# reused from METRIC_COLUMNS, which lives in server.py) since this module
+# has no server.py dependency and migrations must stay self-contained.
+_V6_DAILY_METRICS_COLUMNS = ("steps", "sleep_hours", "resting_heart_rate", *ADDED_COLUMNS, *V5_ADDED_COLUMNS)
+
+
+def _migrate_v7_project_daily_metrics_from_measurements(conn: sqlite3.Connection) -> None:
+    """Retires the old daily_metrics table -- one row per date, one column
+    per metric, upserted into directly by the old upsert_metrics -- in
+    favor of the narrow, trigger-maintained projection defined in
+    db/schema.sql and db/invariant.py: one row per (date, metric), derived
+    from measurements and never written to directly. See those modules for
+    that design.
+
+    Every value already sitting in the wide table has no measurements row
+    backing it (it was written straight into daily_metrics by
+    upsert_metrics/log_daily_metric/init_db's CSV import, never through
+    insert_measurement), so before the old table is renamed out of the
+    way, each non-null cell is turned into one synthetic measurements row
+    (importer="legacy-daily-metrics-migration") -- this both preserves the
+    value and gives the new projection something to derive it from. A
+    synthetic row's timestamp is noon on its date, since the old table
+    only ever tracked a day, not a time of day.
+
+    By the time this runs, migrations 1/2/5 guarantee the wide table
+    exists with its full historical column set (empty for a brand-new
+    database, populated for one that predates this migration) -- so unlike
+    v2/v4/v5's defensive existence checks (needed because *those* run
+    against a database that might already have some of their columns from
+    before schema versioning existed), this one can assume the wide shape
+    unconditionally; PRAGMA user_version guarantees it only ever runs
+    once, and only after 1/2/5 already have.
+
+    Renames rather than drops the old table (to daily_metrics_legacy_v6)
+    so nothing is destroyed if this needs auditing later. db_invariant
+    .bootstrap() then creates the new narrow daily_metrics table fresh
+    (the rename freed the name), and repair() populates it from
+    measurements, migrated rows included.
+    """
+    columns = ", ".join(_V6_DAILY_METRICS_COLUMNS)
+    rows = conn.execute(f"SELECT date, {columns} FROM daily_metrics").fetchall()
+    imported_at = datetime.now().isoformat(timespec="seconds")
+    synthetic = [
+        {
+            "timestamp": f"{row[0]}T12:00:00",
+            "metric": metric,
+            "value": value,
+            "unit": None,
+            "source": None,
+            "source_type": None,
+            "importer": "legacy-daily-metrics-migration",
+            "imported_at": imported_at,
+        }
+        for row in rows
+        for metric, value in zip(_V6_DAILY_METRICS_COLUMNS, row[1:], strict=True)
+        if value is not None
+    ]
+    if synthetic:
+        conn.executemany(
+            "INSERT INTO measurements (timestamp, metric, value, unit, source, source_type, importer, imported_at) "
+            "VALUES (:timestamp, :metric, :value, :unit, :source, :source_type, :importer, :imported_at)",
+            synthetic,
+        )
+    conn.execute("ALTER TABLE daily_metrics RENAME TO daily_metrics_legacy_v6")
+    conn.commit()
+    db_invariant.bootstrap(conn)
+    db_invariant.repair(conn)
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "create daily_metrics table", _migrate_v1_create_table),
     (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
@@ -182,6 +256,11 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (4, "add importer, imported_at provenance columns to measurements", _migrate_v4_add_measurement_provenance_columns),
     (5, "add heart_rate, hrv_ms columns", _migrate_v5_add_heart_rate_hrv_columns),
     (6, "create workout_sessions table", _migrate_v6_create_workout_sessions_table),
+    (
+        7,
+        "project daily_metrics from measurements (retires the wide per-metric-column table)",
+        _migrate_v7_project_daily_metrics_from_measurements,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -454,6 +533,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     versa — the two only conflict if two writes land at the exact same
     instant, which busy_timeout above then covers.
 
+    Also (re)installs the measurements -> daily_metrics trigger set on
+    every call, via db_invariant.bootstrap() — cheap and idempotent for
+    the same reason the rest of this function is (see db/invariant.py),
+    and needed on every startup, not just the one-time v7 migration that
+    first creates the narrow daily_metrics table: bootstrap() is what
+    keeps the triggers installed, migrations only touch table DDL.
+
     Safe and cheap to call on every startup/import — every migration is a
     no-op once already applied, and user_version already at SCHEMA_VERSION
     is the common case. Requires a writable connection; commits before
@@ -478,37 +564,183 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         # user input.
         conn.execute(f"PRAGMA user_version = {version}")
     conn.commit()
+    db_invariant.bootstrap(conn)
 
 
-def upsert_metrics(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
-    """Upsert one or more daily_metrics rows by date.
+# Sentinel `measurements.source` value for a row written by
+# upsert_daily_metric_measurements — i.e. a direct "this is the day's
+# total" declaration (log_daily_metric), as opposed to a granular
+# log_measurement reading or an importer-tagged row (measurements.importer
+# is set instead, for those). Lets get_metric_provenance/clear_daily_metric
+# tell a manually-declared daily total apart from everything else backing
+# a given day's aggregated value.
+DAILY_LOG_SOURCE = "daily-log"
 
-    Each row dict must include "date" plus any subset of the metric
-    columns. A column a row doesn't include is left untouched for that
-    date rather than cleared — e.g. upserting only {"date": ..., "mood":
-    4} never blanks out that day's steps. Rows are grouped by their exact
-    set of columns before executemany-ing each group, since a single
-    INSERT needs a fixed column list. Requires a writable connection;
-    commits before returning. Shared by init_db.py (batch import from a
-    CSV) and server.py's log_daily_metric tool (a single row at a time).
+
+def upsert_daily_metric_measurements(conn: sqlite3.Connection, day: str, metrics: dict[str, Any]) -> None:
+    """Write one or more metrics as `day`'s manually-declared total,
+    replacing any prior daily-log value for the same (metric, day) —
+    the measurements-layer equivalent of the old upsert_metrics' upsert-
+    by-date behavior, now that daily_metrics is a trigger-maintained
+    projection over measurements rather than a table written to
+    directly (see db/schema.sql, db/invariant.py).
+
+    Each metric is tagged source=DAILY_LOG_SOURCE, distinguishing it from
+    an ad hoc log_measurement reading (which should accumulate, not
+    overwrite) or an importer's rows (which carry `importer` instead) —
+    see clear_daily_metric, which removes it (and anything else backing
+    that day's value for that metric). Metrics not present in `metrics`
+    are left untouched, matching the old "leaves unmentioned columns
+    untouched" contract. Requires a writable connection; commits before
+    returning. Used by server.py's log_daily_metric tool.
     """
-    if not rows:
+    if not metrics:
         return
-    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
-    for row in rows:
-        if "date" not in row:
-            raise ValueError("Each row passed to upsert_metrics must include 'date'.")
-        groups.setdefault(tuple(sorted(row)), []).append(row)
-
-    for columns_key, group_rows in groups.items():
-        columns = list(columns_key)
-        insert_cols = ", ".join(columns)
-        placeholders = ", ".join(f":{c}" for c in columns)
-        update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "date")
-        sql = f"INSERT INTO daily_metrics ({insert_cols}) VALUES ({placeholders})"
-        sql += f" ON CONFLICT(date) DO UPDATE SET {update_clause}" if update_clause else " ON CONFLICT(date) DO NOTHING"
-        conn.executemany(sql, group_rows)
+    timestamp = f"{day}T12:00:00"
+    for metric, value in metrics.items():
+        conn.execute(
+            "DELETE FROM measurements WHERE metric = :metric AND date(timestamp) = :day AND source = :source",
+            {"metric": metric, "day": day, "source": DAILY_LOG_SOURCE},
+        )
+        conn.execute(
+            "INSERT INTO measurements (timestamp, metric, value, source) VALUES (:timestamp, :metric, :value, :source)",
+            {"timestamp": timestamp, "metric": metric, "value": value, "source": DAILY_LOG_SOURCE},
+        )
     conn.commit()
+
+
+def clear_daily_metric(conn: sqlite3.Connection, day: str, metric: str) -> int:
+    """Delete every measurements row for (metric, day) — i.e. every
+    observation behind that day's current daily_metrics value for that
+    metric, not just one written by upsert_daily_metric_measurements.
+    The AFTER DELETE trigger then removes the daily_metrics projection
+    row for that key once no measurements remain (see db/schema.sql) —
+    nothing here touches daily_metrics directly.
+
+    This is intentionally broader than the old `UPDATE daily_metrics SET
+    <field> = NULL`: if granular log_measurement readings or imported
+    rows also exist for that day/metric, they're cleared too, so the
+    metric genuinely goes back to "nothing recorded" rather than falling
+    back to a blended value from whatever's left. Requires a writable
+    connection; commits before returning. Returns the number of
+    measurement rows deleted (0 if there was nothing to clear). Used by
+    server.py's clear_metric tool.
+    """
+    cursor = conn.execute(
+        "DELETE FROM measurements WHERE metric = :metric AND date(timestamp) = :day",
+        {"metric": metric, "day": day},
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
+def daily_metrics_wide(
+    conn: sqlite3.Connection, metrics: list[str], start: str | None = None, end: str | None = None
+) -> list[dict[str, Any]]:
+    """Pivot the narrow (date, metric, value) daily_metrics projection
+    (see db/schema.sql) into the one-row-per-date, one-column-per-metric
+    shape the table itself had before the measurements/daily_metrics
+    invariant work — what server.py's tools return.
+
+    `metrics` fixes both which columns come back and their order; a date
+    with no value for a given requested metric gets NULL for that
+    column, same as before. A date with no row for *any* requested
+    metric is simply absent from the result (matching the old "only
+    dates with at least one recorded metric appear" contract) — pass
+    start == end for a single date's row (absent from the result if that
+    date has none of the requested metrics). start/end (inclusive,
+    YYYY-MM-DD) optionally bound the date range; omit both for every
+    date that has at least one of the requested metrics, unbounded.
+    Read-only.
+    """
+    if not metrics:
+        raise ValueError("daily_metrics_wide requires at least one metric")
+    params: dict[str, Any] = {f"m{i}": metric for i, metric in enumerate(metrics)}
+    pivot_cols = ",\n        ".join(
+        f"MAX(CASE WHEN metric = :m{i} THEN value END) AS {metric}" for i, metric in enumerate(metrics)
+    )
+    clauses = ["metric IN (" + ", ".join(f":m{i}" for i in range(len(metrics))) + ")"]
+    if start is not None:
+        clauses.append("date >= :start")
+        params["start"] = start
+    if end is not None:
+        clauses.append("date <= :end")
+        params["end"] = end
+    where = " AND ".join(clauses)
+    cursor = conn.cursor()
+    cursor.row_factory = row_class()
+    rows = cursor.execute(
+        f"SELECT date,\n        {pivot_cols}\n        FROM daily_metrics WHERE {where} GROUP BY date ORDER BY date",
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def measurement_rows_from_daily(
+    rows: list[dict[str, Any]], skip_metrics: frozenset[str] = frozenset()
+) -> list[dict[str, Any]]:
+    """Flatten init_db.py's per-day wide rows (one dict per date, one key
+    per metric column — e.g. {"date": "2026-01-01", "steps": 8000}) into
+    one measurements-table row per (date, metric): {"timestamp":
+    "2026-01-01T12:00:00", "metric": "steps", "value": 8000}, the shape
+    bulk_import_measurements/db_invariant.bulk_insert_measurements expect.
+
+    A day with no value for a metric contributes no row for it, matching
+    the old upsert_metrics behavior of leaving that column untouched
+    rather than writing a spurious zero/NULL. `skip_metrics` excludes
+    columns that already have granular per-event data elsewhere in the
+    same import (e.g. an adapter's raw_measurements) — including both
+    would double-count a "sum" metric under the new trigger-derived
+    aggregation, since the wide row would otherwise contribute its own
+    pre-aggregated total *on top of* the real per-event readings. Each
+    row's timestamp is noon on its date, matching the "only a day is
+    known, not a time" placeholder used elsewhere (see
+    _migrate_v7_project_daily_metrics_from_measurements).
+    """
+    return [
+        {"timestamp": f"{row['date']}T12:00:00", "metric": metric, "value": value}
+        for row in rows
+        for metric, value in row.items()
+        if metric != "date" and value is not None and metric not in skip_metrics
+    ]
+
+
+def bulk_import_measurements(
+    conn: sqlite3.Connection, importer: str, rows: list[dict[str, Any]], replace: bool = False
+) -> dict:
+    """Load `rows` (each needing metric/value/timestamp; unit/source/
+    source_type optional) into measurements tagged importer=`importer`,
+    then rebuild the daily_metrics projection over them, via
+    db_invariant.bulk_insert_measurements — the shared write path for
+    init_db.py's CSV/adapter imports (both the day-total rows
+    measurement_rows_from_daily produces and an adapter's own
+    raw_measurements).
+
+    Re-running the same import stays idempotent by default, matching
+    init_db.py's documented "safe to re-run" contract: any existing row
+    for a (metric, date) this batch also touches is deleted first, so
+    reloading an unchanged source file doesn't double-count into a "sum"
+    metric. replace=True goes further — wiping *every* row this importer
+    has ever written (not just dates present in this run) before
+    loading, for a source file that has since dropped some dates. Either
+    way, only rows tagged with this importer are ever touched — manually
+    logged measurements (log_measurement, upsert_daily_metric_measurements)
+    and other importers' rows are untouched. Requires a writable
+    connection. Returns the db_invariant.verify() result after rebuilding.
+    """
+    imported_at = datetime.now().isoformat(timespec="seconds")
+    tagged = [{**row, "importer": importer, "imported_at": row.get("imported_at", imported_at)} for row in rows]
+
+    if replace:
+        conn.execute("DELETE FROM measurements WHERE importer = :importer", {"importer": importer})
+    elif tagged:
+        touched = {(row["metric"], row["timestamp"][:10]) for row in tagged}
+        conn.executemany(
+            "DELETE FROM measurements WHERE importer = :importer AND metric = :metric AND date(timestamp) = :day",
+            [{"importer": importer, "metric": metric, "day": day} for metric, day in touched],
+        )
+    conn.commit()
+    return db_invariant.bulk_insert_measurements(conn, tagged)
 
 
 def insert_measurement(
@@ -524,10 +756,12 @@ def insert_measurement(
 ) -> int:
     """Insert one raw measurement row and return its id.
 
-    Unlike upsert_metrics, this always inserts a new row rather than
-    upserting by date — a day can have many measurements of the same
-    metric (multiple workouts, repeated heart-rate readings, etc.).
-    importer/imported_at record provenance for rows written by an
+    Always inserts a new row rather than upserting by date — a day can
+    have many measurements of the same metric (multiple workouts,
+    repeated heart-rate readings, etc.). Contrast
+    upsert_daily_metric_measurements, which *does* upsert (by design —
+    it represents a single declared daily total, not an accumulating
+    series of readings). importer/imported_at record provenance for rows written by an
     automated import (see import_adapters.py) — leave both None for a
     measurement logged directly (e.g. via the log_measurement tool).
     Requires a writable connection; commits before returning.
@@ -669,27 +903,6 @@ def query_workout_sessions(
     return [dict(row) for row in rows]
 
 
-# Which daily_metrics column each measurements.metric name rolls up into,
-# and how same-day values combine — "sum" for cumulative-through-the-day
-# metrics (steps, water), "avg" for point-in-time readings (heart rate,
-# weight), "last" for whichever was recorded latest. Deliberately a small,
-# explicit map rather than assuming metric name == column name, since a
-# measurement's metric label (e.g. "resting_heart_rate" from one source,
-# "restingHeartRate" from another) isn't guaranteed to match daily_metrics'
-# column naming without normalization happening somewhere.
-MEASUREMENT_AGGREGATION = {
-    "steps": "sum",
-    "sleep_hours": "sum",
-    "resting_heart_rate": "avg",
-    "weight_kg": "last",
-    "workout_minutes": "sum",
-    "mood": "avg",
-    "water_ml": "sum",
-    "heart_rate": "avg",
-    "hrv_ms": "avg",
-}
-
-
 def get_metric_provenance(conn: sqlite3.Connection, metric: str, day: str) -> dict[str, Any]:
     """Break one metric's measurements for one day down by source, so a
     caller can see e.g. "Apple Watch says 62, Garmin says 67" instead of
@@ -776,20 +989,35 @@ def resolve_source_conflicts(
 def aggregate_measurements_to_daily(
     conn: sqlite3.Connection, day: str, source_priority: list[str] | None = None
 ) -> dict[str, Any]:
-    """Roll up one day's measurements into a daily_metrics-shaped dict
-    (date + whichever metrics have measurements that day), using
-    MEASUREMENT_AGGREGATION to decide how same-day values combine. Does
-    not write anything itself — pass the result to upsert_metrics to
-    actually update daily_metrics. Metrics with no rows for `day`, or no
-    entry in MEASUREMENT_AGGREGATION, are omitted rather than written as
-    null, matching upsert_metrics' "only touch what's provided" contract.
+    """Roll up one day's measurements into a daily_metrics-shaped preview
+    dict (date + whichever metrics have measurements that day), reading
+    each metric's aggregation method from the aggregation_rules table —
+    the same canonical table db/aggregation.py's trigger-generated SQL
+    reads, rather than a separately hand-copied Python dict, so there is
+    exactly one place a metric's method is declared. Metrics with no rows
+    for `day`, or no aggregation_rules entry, are omitted rather than
+    written as null.
+
+    Purely a read-only computation: it does NOT write daily_metrics
+    itself (unlike before the measurements/daily_metrics invariant work —
+    see db/schema.sql, db/invariant.py). daily_metrics is now a
+    trigger-maintained projection over *every* measurement for a given
+    (date, metric), computed the moment a row is inserted/updated/
+    deleted; there is no way to make it reflect only a source_priority-
+    resolved subset without deleting the other source's raw rows, which
+    this function deliberately does not do. This is therefore a preview
+    of what a given source_priority *would* produce, for comparison
+    against daily_metrics' actual (all-sources) value — see server.py's
+    aggregate_measurements tool, which surfaces both side by side.
 
     When a metric has measurements from more than one source that day,
-    resolve_source_conflicts picks which to keep (using source_priority
-    if given) before aggregating, rather than blending readings from
+    resolve_source_conflicts picks which to keep for this preview (using
+    source_priority if given) rather than blending readings from
     different devices into one number. See get_metric_provenance to
     inspect a disagreement before deciding on a priority.
     """
+    methods = dict(conn.execute("SELECT metric, method FROM aggregation_rules").fetchall())
+
     cursor = conn.cursor()
     cursor.row_factory = row_class()
     rows = [
@@ -806,14 +1034,14 @@ def aggregate_measurements_to_daily(
 
     result: dict[str, Any] = {"date": day}
     for metric, metric_rows in by_metric.items():
-        how = MEASUREMENT_AGGREGATION.get(metric)
+        how = methods.get(metric)
         if how is None:
             continue
         kept_rows, _conflict = resolve_source_conflicts(metric_rows, source_priority)
         values = [(r["value"], r["timestamp"]) for r in kept_rows]
         if how == "sum":
             result[metric] = sum(v for v, _ts in values)
-        elif how == "avg":
+        elif how == "mean":
             result[metric] = round(sum(v for v, _ts in values) / len(values), 1)
         elif how == "last":
             result[metric] = max(values, key=lambda pair: pair[1])[0]

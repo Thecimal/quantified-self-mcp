@@ -22,13 +22,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from logic import (
     ADDED_COLUMNS,
     BUSY_TIMEOUT_MS,
+    DAILY_LOG_SOURCE,
     DB_PASSPHRASE_ENV,
     MIGRATIONS,
     SCHEMA_VERSION,
     V5_ADDED_COLUMNS,
     WORKOUT_INTENSITIES,
     aggregate_measurements_to_daily,
+    bulk_import_measurements,
+    clear_daily_metric,
     connect_writable,
+    daily_metrics_wide,
     db_error_types,
     default_data_dir,
     encryption_available,
@@ -36,6 +40,7 @@ from logic import (
     get_metric_provenance,
     insert_measurement,
     insert_workout_session,
+    measurement_rows_from_daily,
     numeric_stats,
     parse_date,
     query_measurements,
@@ -44,7 +49,7 @@ from logic import (
     resolve_range,
     resolve_source_conflicts,
     row_class,
-    upsert_metrics,
+    upsert_daily_metric_measurements,
     validate_metrics,
 )  # noqa: E402
 
@@ -89,46 +94,74 @@ def test_numeric_stats_ignores_none_but_keeps_zero():
     assert numeric_stats(rows, "steps") == {"avg": 5000.0, "min": 0, "max": 10000}
 
 
-def test_ensure_schema_creates_table_with_all_columns():
+def test_ensure_schema_creates_narrow_daily_metrics_projection():
     conn = sqlite3.connect(":memory:")
     ensure_schema(conn)
     columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
-    assert columns == {
-        "date",
-        "steps",
-        "sleep_hours",
-        "resting_heart_rate",
-        *ADDED_COLUMNS,
-        *V5_ADDED_COLUMNS,
+    assert columns == {"date", "metric", "value", "raw_measurement_count", "aggregation_method", "aggregated_at"}
+
+
+def test_ensure_schema_seeds_aggregation_rules_for_every_known_metric():
+    conn = sqlite3.connect(":memory:")
+    ensure_schema(conn)
+    rules = dict(conn.execute("SELECT metric, method FROM aggregation_rules"))
+    assert rules == {
+        "steps": "sum",
+        "sleep_hours": "sum",
+        "resting_heart_rate": "mean",
+        "water_ml": "sum",
+        "workout_minutes": "sum",
+        "hrv_ms": "mean",
+        "heart_rate": "mean",
+        "mood": "mean",
+        "weight_kg": "last",
     }
 
 
-def test_ensure_schema_migrates_older_table_missing_new_columns():
+def test_ensure_schema_migrates_a_populated_wide_table_into_measurements():
+    """A database from before the v7 migration has real data sitting
+    directly in the old wide daily_metrics table (one column per metric,
+    written by the old upsert_metrics) — ensure_schema should carry that
+    data forward into the new projection rather than silently dropping
+    it, by synthesizing a measurements row for each populated cell (see
+    _migrate_v7_project_daily_metrics_from_measurements).
+    """
     conn = sqlite3.connect(":memory:")
-    # Simulate a database created before weight/workout/mood/water existed.
     conn.executescript(
-        """
+        f"""
         CREATE TABLE daily_metrics (
             date TEXT PRIMARY KEY,
             steps INTEGER,
             sleep_hours REAL,
-            resting_heart_rate INTEGER
+            resting_heart_rate INTEGER,
+            {", ".join(f"{name} {sqltype}" for name, sqltype in ADDED_COLUMNS.items())},
+            {", ".join(f"{name} {sqltype}" for name, sqltype in V5_ADDED_COLUMNS.items())}
         );
         """
     )
     conn.execute(
-        "INSERT INTO daily_metrics (date, steps, sleep_hours, resting_heart_rate) VALUES (?, ?, ?, ?)",
-        ("2026-01-01", 5000, 7.0, 60),
+        "INSERT INTO daily_metrics (date, steps, mood) VALUES (?, ?, ?)",
+        ("2026-01-01", 8000, 4),
     )
     conn.commit()
 
     ensure_schema(conn)
 
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
-    assert set(ADDED_COLUMNS).issubset(columns)
-    # Pre-existing row survives the migration, with new columns defaulting to NULL.
-    row = conn.execute("SELECT steps, weight_kg FROM daily_metrics WHERE date = '2026-01-01'").fetchone()
-    assert row == (5000, None)
+    rows = daily_metrics_wide(conn, ["steps", "mood", "sleep_hours"], "2026-01-01", "2026-01-01")
+    assert rows == [{"date": "2026-01-01", "steps": 8000, "mood": 4, "sleep_hours": None}]
+    # And the old table is preserved, not dropped, in case it needs auditing.
+    legacy = conn.execute("SELECT date, steps, mood FROM daily_metrics_legacy_v6").fetchall()
+    assert legacy == [("2026-01-01", 8000, 4)]
+
+
+def test_ensure_schema_migrates_an_empty_wide_table_cleanly():
+    # The common path: a brand-new database walks the full migration
+    # history (v1 creates the empty wide table, v7 converts it) with
+    # nothing to carry forward.
+    conn = sqlite3.connect(":memory:")
+    ensure_schema(conn)
+    assert conn.execute("SELECT COUNT(*) FROM daily_metrics").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM daily_metrics_legacy_v6").fetchone()[0] == 0
 
 
 def test_ensure_schema_sets_user_version_to_latest():
@@ -139,9 +172,9 @@ def test_ensure_schema_sets_user_version_to_latest():
 
 def test_ensure_schema_only_runs_each_migration_once():
     """A second call shouldn't re-run any migration — mainly a guard
-    against a future migration that (unlike the current two) *isn't*
-    naturally idempotent, since user_version having already advanced is
-    the only thing that would stop it running again.
+    against a future migration that (unlike most of the current ones)
+    *isn't* naturally idempotent, since user_version having already
+    advanced is the only thing that would stop it running again.
     """
     calls = []
     conn = sqlite3.connect(":memory:")
@@ -165,7 +198,9 @@ def test_ensure_schema_heals_version_for_a_pre_versioning_database():
     versioning existed has every column already, but user_version is
     still SQLite's default of 0 (nothing ever set it). ensure_schema
     should recognize the schema is actually current and "heal" the
-    version stamp, without erroring or duplicating any column.
+    version stamp, without erroring or duplicating any column — and
+    still carry any data in the wide table forward via v7, same as any
+    other pre-v7 database.
     """
     conn = sqlite3.connect(":memory:")
     conn.executescript(
@@ -175,7 +210,8 @@ def test_ensure_schema_heals_version_for_a_pre_versioning_database():
             steps INTEGER,
             sleep_hours REAL,
             resting_heart_rate INTEGER,
-            {", ".join(f"{name} {sqltype}" for name, sqltype in ADDED_COLUMNS.items())}
+            {", ".join(f"{name} {sqltype}" for name, sqltype in ADDED_COLUMNS.items())},
+            {", ".join(f"{name} {sqltype}" for name, sqltype in V5_ADDED_COLUMNS.items())}
         );
         """
     )
@@ -186,7 +222,7 @@ def test_ensure_schema_heals_version_for_a_pre_versioning_database():
 
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
-    assert set(ADDED_COLUMNS).issubset(columns)
+    assert columns == {"date", "metric", "value", "raw_measurement_count", "aggregation_method", "aggregated_at"}
 
 
 def test_ensure_schema_does_not_touch_a_database_from_a_newer_version(caplog):
@@ -208,46 +244,179 @@ def _conn_with_schema():
     return conn
 
 
-def test_upsert_metrics_inserts_new_row():
+def test_upsert_daily_metric_measurements_inserts_new_row():
     conn = _conn_with_schema()
-    upsert_metrics(conn, [{"date": "2026-08-01", "steps": 8000, "mood": 4}])
-    row = conn.execute("SELECT steps, mood, weight_kg FROM daily_metrics WHERE date = '2026-08-01'").fetchone()
-    assert row == (8000, 4, None)
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 8000, "mood": 4})
+    rows = daily_metrics_wide(conn, ["steps", "mood", "weight_kg"], "2026-08-01", "2026-08-01")
+    assert rows == [{"date": "2026-08-01", "steps": 8000, "mood": 4, "weight_kg": None}]
 
 
-def test_upsert_metrics_leaves_unmentioned_columns_untouched():
+def test_upsert_daily_metric_measurements_leaves_unmentioned_metrics_untouched():
     conn = _conn_with_schema()
-    upsert_metrics(conn, [{"date": "2026-08-01", "steps": 8000, "mood": 4}])
-    # A second upsert for the same date, only setting a different column.
-    upsert_metrics(conn, [{"date": "2026-08-01", "weight_kg": 70.5}])
-    row = conn.execute("SELECT steps, mood, weight_kg FROM daily_metrics WHERE date = '2026-08-01'").fetchone()
-    assert row == (8000, 4, 70.5)
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 8000, "mood": 4})
+    # A second call for the same date, only setting a different metric.
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"weight_kg": 70.5})
+    rows = daily_metrics_wide(conn, ["steps", "mood", "weight_kg"], "2026-08-01", "2026-08-01")
+    assert rows == [{"date": "2026-08-01", "steps": 8000, "mood": 4, "weight_kg": 70.5}]
 
 
-def test_upsert_metrics_handles_rows_with_different_column_sets_in_one_call():
+def test_upsert_daily_metric_measurements_overwrites_rather_than_accumulates():
+    # Unlike log_measurement, this represents a single declared total —
+    # calling it twice for the same (date, metric) replaces, not sums.
     conn = _conn_with_schema()
-    upsert_metrics(
-        conn,
-        [
-            {"date": "2026-08-01", "steps": 8000},
-            {"date": "2026-08-02", "mood": 3, "water_ml": 2000},
-        ],
-    )
-    rows = {
-        r[0]: r[1:]
-        for r in conn.execute("SELECT date, steps, mood, water_ml FROM daily_metrics ORDER BY date")
-    }
-    assert rows["2026-08-01"] == (8000, None, None)
-    assert rows["2026-08-02"] == (None, 3, 2000)
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 8000})
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 9000})
+    rows = daily_metrics_wide(conn, ["steps"], "2026-08-01", "2026-08-01")
+    assert rows == [{"date": "2026-08-01", "steps": 9000}]
 
 
-def test_upsert_metrics_rejects_row_without_date():
+def test_upsert_daily_metric_measurements_handles_multiple_dates_independently():
+    conn = _conn_with_schema()
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 8000})
+    upsert_daily_metric_measurements(conn, "2026-08-02", {"mood": 3, "water_ml": 2000})
+    rows = {r["date"]: r for r in daily_metrics_wide(conn, ["steps", "mood", "water_ml"])}
+    assert rows["2026-08-01"] == {"date": "2026-08-01", "steps": 8000, "mood": None, "water_ml": None}
+    assert rows["2026-08-02"] == {"date": "2026-08-02", "steps": None, "mood": 3, "water_ml": 2000}
+
+
+def test_upsert_daily_metric_measurements_is_a_noop_for_an_empty_dict():
+    conn = _conn_with_schema()
+    upsert_daily_metric_measurements(conn, "2026-08-01", {})  # should not raise
+    assert daily_metrics_wide(conn, ["steps"], "2026-08-01", "2026-08-01") == []
+
+
+def test_clear_daily_metric_removes_only_the_targeted_metric():
+    conn = _conn_with_schema()
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 8000, "mood": 4})
+    deleted = clear_daily_metric(conn, "2026-08-01", "steps")
+    assert deleted == 1
+    rows = daily_metrics_wide(conn, ["steps", "mood"], "2026-08-01", "2026-08-01")
+    assert rows == [{"date": "2026-08-01", "steps": None, "mood": 4}]
+
+
+def test_clear_daily_metric_removes_the_row_entirely_when_it_was_the_last_metric():
+    conn = _conn_with_schema()
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 8000})
+    clear_daily_metric(conn, "2026-08-01", "steps")
+    assert daily_metrics_wide(conn, ["steps"], "2026-08-01", "2026-08-01") == []
+
+
+def test_clear_daily_metric_clears_granular_log_measurement_readings_too():
+    # Broader than the old "UPDATE ... SET field = NULL": everything
+    # behind that day's value for that metric is cleared, not just a
+    # value upsert_daily_metric_measurements wrote directly.
+    conn = _conn_with_schema()
+    insert_measurement(conn, "2026-08-01T07:00:00", "steps", 3000)
+    insert_measurement(conn, "2026-08-01T19:00:00", "steps", 4000)
+    deleted = clear_daily_metric(conn, "2026-08-01", "steps")
+    assert deleted == 2
+    assert daily_metrics_wide(conn, ["steps"], "2026-08-01", "2026-08-01") == []
+
+
+def test_clear_daily_metric_returns_zero_when_nothing_to_clear():
+    conn = _conn_with_schema()
+    assert clear_daily_metric(conn, "2026-08-01", "steps") == 0
+
+
+def test_daily_metrics_wide_omits_dates_with_none_of_the_requested_metrics():
+    conn = _conn_with_schema()
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"water_ml": 2000})
+    assert daily_metrics_wide(conn, ["steps", "mood"], "2026-08-01", "2026-08-01") == []
+
+
+def test_daily_metrics_wide_respects_start_and_end_bounds():
+    conn = _conn_with_schema()
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 1})
+    upsert_daily_metric_measurements(conn, "2026-08-05", {"steps": 2})
+    upsert_daily_metric_measurements(conn, "2026-08-10", {"steps": 3})
+    rows = daily_metrics_wide(conn, ["steps"], "2026-08-02", "2026-08-09")
+    assert [r["date"] for r in rows] == ["2026-08-05"]
+
+
+def test_daily_metrics_wide_requires_at_least_one_metric():
     conn = _conn_with_schema()
     with pytest.raises(ValueError):
-        upsert_metrics(conn, [{"steps": 1000}])
+        daily_metrics_wide(conn, [])
 
 
-def test_validate_metrics_accepts_in_range_values():
+def test_measurement_rows_from_daily_flattens_wide_rows():
+    rows = measurement_rows_from_daily([{"date": "2026-08-01", "steps": 8000, "mood": None, "water_ml": 2000}])
+    assert {(r["metric"], r["value"]) for r in rows} == {("steps", 8000), ("water_ml", 2000)}
+    assert all(r["timestamp"] == "2026-08-01T12:00:00" for r in rows)
+
+
+def test_measurement_rows_from_daily_honors_skip_metrics():
+    rows = measurement_rows_from_daily(
+        [{"date": "2026-08-01", "steps": 8000, "sleep_hours": 7.5}], skip_metrics=frozenset({"steps"})
+    )
+    assert [r["metric"] for r in rows] == ["sleep_hours"]
+
+
+def test_bulk_import_measurements_populates_the_projection():
+    conn = _conn_with_schema()
+    result = bulk_import_measurements(
+        conn,
+        "csv",
+        [
+            {"timestamp": "2026-08-01T12:00:00", "metric": "steps", "value": 8000},
+            {"timestamp": "2026-08-01T12:00:00", "metric": "mood", "value": 4},
+        ],
+    )
+    assert result["status"] == "ok"
+    rows = daily_metrics_wide(conn, ["steps", "mood"], "2026-08-01", "2026-08-01")
+    assert rows == [{"date": "2026-08-01", "steps": 8000, "mood": 4}]
+
+
+def test_bulk_import_measurements_default_rerun_is_idempotent_not_additive():
+    # Re-running an unchanged import shouldn't double a "sum" metric.
+    conn = _conn_with_schema()
+    rows = [{"timestamp": "2026-08-01T12:00:00", "metric": "steps", "value": 8000}]
+    bulk_import_measurements(conn, "csv", rows)
+    bulk_import_measurements(conn, "csv", rows)
+    assert daily_metrics_wide(conn, ["steps"], "2026-08-01", "2026-08-01") == [{"date": "2026-08-01", "steps": 8000}]
+
+
+def test_bulk_import_measurements_replace_drops_dates_missing_from_the_new_run():
+    conn = _conn_with_schema()
+    bulk_import_measurements(
+        conn,
+        "csv",
+        [
+            {"timestamp": "2026-08-01T12:00:00", "metric": "steps", "value": 8000},
+            {"timestamp": "2026-08-02T12:00:00", "metric": "steps", "value": 9000},
+        ],
+    )
+    # Second run's source file no longer has 2026-08-02.
+    bulk_import_measurements(
+        conn, "csv", [{"timestamp": "2026-08-01T12:00:00", "metric": "steps", "value": 8500}], replace=True
+    )
+    rows = {r["date"]: r["steps"] for r in daily_metrics_wide(conn, ["steps"])}
+    assert rows == {"2026-08-01": 8500}
+
+
+def test_bulk_import_measurements_only_touches_rows_from_the_same_importer():
+    conn = _conn_with_schema()
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"mood": 4})  # source=DAILY_LOG_SOURCE, no importer
+    bulk_import_measurements(
+        conn, "csv", [{"timestamp": "2026-08-01T12:00:00", "metric": "steps", "value": 8000}], replace=True
+    )
+    rows = daily_metrics_wide(conn, ["steps", "mood"], "2026-08-01", "2026-08-01")
+    assert rows == [{"date": "2026-08-01", "steps": 8000, "mood": 4}]
+
+
+def test_bulk_import_measurements_rejects_a_metric_with_no_aggregation_rule():
+    conn = _conn_with_schema()
+    with pytest.raises(ValueError, match="no aggregation_rules entry"):
+        bulk_import_measurements(
+            conn, "csv", [{"timestamp": "2026-08-01T12:00:00", "metric": "not_a_real_metric", "value": 1}]
+        )
+
+
+def test_daily_log_source_is_distinguishable_in_provenance():
+    conn = _conn_with_schema()
+    upsert_daily_metric_measurements(conn, "2026-08-01", {"steps": 8000})
+    provenance = get_metric_provenance(conn, "steps", "2026-08-01")
+    assert provenance["sources"][0]["source"] == DAILY_LOG_SOURCE
     validate_metrics({"steps": 10000, "mood": 5, "weight_kg": 70.0})  # should not raise
 
 
@@ -519,14 +688,13 @@ def test_readonly_connection_reads_data_written_by_connect_writable(tmp_path):
     conn = connect_writable(db_path)
     try:
         ensure_schema(conn)
-        upsert_metrics(conn, [{"date": "2026-01-01", "steps": 5000}])
+        upsert_daily_metric_measurements(conn, "2026-01-01", {"steps": 5000})
     finally:
         conn.close()
 
     with readonly_connection(db_path) as conn:
-        conn.row_factory = row_class()
-        row = conn.execute("SELECT steps FROM daily_metrics WHERE date = ?", ("2026-01-01",)).fetchone()
-        assert dict(row)["steps"] == 5000
+        rows = daily_metrics_wide(conn, ["steps"], "2026-01-01", "2026-01-01")
+        assert rows == [{"date": "2026-01-01", "steps": 5000}]
 
 
 def test_readonly_connection_actually_blocks_writes(tmp_path):
@@ -538,7 +706,7 @@ def test_readonly_connection_actually_blocks_writes(tmp_path):
         conn.close()
 
     with readonly_connection(db_path) as conn, pytest.raises(sqlite3.Error):
-        conn.execute("INSERT INTO daily_metrics (date, steps) VALUES ('2026-01-01', 1)")
+        conn.execute("INSERT INTO measurements (timestamp, metric, value) VALUES ('2026-01-01T00:00:00', 'steps', 1)")
 
 
 # ---------------------------------------------------------------------------
@@ -588,7 +756,7 @@ def test_connect_writable_encrypts_when_a_passphrase_is_set(tmp_path, monkeypatc
     try:
         assert not isinstance(conn, sqlite3.Connection)  # a sqlcipher3 connection instead
         ensure_schema(conn)
-        upsert_metrics(conn, [{"date": "2026-01-01", "steps": 4200}])
+        upsert_daily_metric_measurements(conn, "2026-01-01", {"steps": 4200})
     finally:
         conn.close()
 
@@ -609,14 +777,13 @@ def test_connect_writable_round_trips_through_readonly_connection_when_encrypted
     conn = connect_writable(db_path)
     try:
         ensure_schema(conn)
-        upsert_metrics(conn, [{"date": "2026-01-01", "steps": 4200}])
+        upsert_daily_metric_measurements(conn, "2026-01-01", {"steps": 4200})
     finally:
         conn.close()
 
     with readonly_connection(db_path) as conn:
-        conn.row_factory = row_class()
-        row = conn.execute("SELECT steps FROM daily_metrics WHERE date = ?", ("2026-01-01",)).fetchone()
-        assert dict(row)["steps"] == 4200
+        rows = daily_metrics_wide(conn, ["steps"], "2026-01-01", "2026-01-01")
+        assert rows == [{"date": "2026-01-01", "steps": 4200}]
 
 
 @require_sqlcipher
@@ -630,7 +797,7 @@ def test_wrong_passphrase_fails_loudly_rather_than_returning_garbage(tmp_path, m
         # — there has to be real content on disk for a wrong key to
         # actually fail to decrypt it.
         ensure_schema(conn)
-        upsert_metrics(conn, [{"date": "2026-01-01", "steps": 1}])
+        upsert_daily_metric_measurements(conn, "2026-01-01", {"steps": 1})
     finally:
         conn.close()
 
@@ -705,7 +872,10 @@ def test_busy_timeout_lets_a_blocked_writer_wait_for_a_concurrent_write(tmp_path
         conn = connect_writable(db_path)
         try:
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute("INSERT INTO daily_metrics (date, steps) VALUES (?, ?)", ("2026-01-01", 1))
+            conn.execute(
+                "INSERT INTO measurements (timestamp, metric, value) VALUES (?, ?, ?)",
+                ("2026-01-01T00:00:00", "steps", 1),
+            )
             lock_acquired.set()
             time.sleep(hold_seconds)
             conn.commit()
@@ -721,7 +891,7 @@ def test_busy_timeout_lets_a_blocked_writer_wait_for_a_concurrent_write(tmp_path
     start = time.monotonic()
     second_conn = connect_writable(db_path)
     try:
-        upsert_metrics(second_conn, [{"date": "2026-01-02", "steps": 2}])
+        upsert_daily_metric_measurements(second_conn, "2026-01-02", {"steps": 2})
     finally:
         second_conn.close()
     elapsed = time.monotonic() - start
@@ -738,7 +908,7 @@ def test_busy_timeout_lets_a_blocked_writer_wait_for_a_concurrent_write(tmp_path
     assert elapsed < BUSY_TIMEOUT_MS / 1000, "second write took suspiciously close to the busy_timeout ceiling"
 
     check_conn = sqlite3.connect(str(db_path))
-    rows = {r[0]: r[1] for r in check_conn.execute("SELECT date, steps FROM daily_metrics")}
+    rows = {r["date"]: r["steps"] for r in daily_metrics_wide(check_conn, ["steps"])}
     check_conn.close()
     assert rows == {"2026-01-01": 1, "2026-01-02": 2}
 
@@ -761,7 +931,7 @@ def test_concurrent_upserts_from_multiple_threads_all_succeed(tmp_path):
     def write_one(i):
         conn = connect_writable(db_path)
         try:
-            upsert_metrics(conn, [{"date": f"2026-02-{i + 1:02d}", "steps": i * 100}])
+            upsert_daily_metric_measurements(conn, f"2026-02-{i + 1:02d}", {"steps": i * 100})
         except Exception as exc:  # pragma: no cover - surfaced via errors
             errors.append((i, exc))
         finally:

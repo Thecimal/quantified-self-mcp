@@ -15,8 +15,9 @@ Tools exposed:
   source/unit) instead of a whole day's summary
 - read_measurements: read back raw measurement rows, filterable by
   metric/date range/source
-- aggregate_measurements: roll a day's raw measurements into its
-  daily_metrics row, so existing analytics tools pick them up
+- aggregate_measurements: preview what a source-priority resolution of a
+  day's raw measurements would look like, alongside daily_metrics' actual
+  (all-sources) current value for that day
 - get_metric_provenance: break a metric's readings for a day down by
   source, to spot when two sources disagree
 
@@ -29,9 +30,13 @@ Reads from a local SQLite file under ./data/ (created by init_db.py — see
 README.md). This file makes no network calls, so nothing you log or read
 ever leaves your machine. read_health_data's connection is opened
 read-only whenever possible, so that tool specifically cannot modify your
-data; log_daily_metric and clear_metric are the deliberate exceptions, and
-both only ever touch the daily_metrics table via a plain per-date
-upsert/update — there is no way for any of these tools to run arbitrary SQL.
+data; log_daily_metric and clear_metric are the deliberate exceptions.
+Neither writes daily_metrics directly — it's a database-maintained
+projection over the measurements table (see db/schema.sql,
+db/invariant.py), kept in sync by SQLite triggers the moment a
+measurement is written; log_daily_metric/clear_metric/log_measurement
+only ever insert/delete plain measurements rows — there is no way for
+any of these tools to run arbitrary SQL.
 
 Test it on its own with the MCP Inspector:
     fastmcp dev inspector server.py
@@ -72,8 +77,10 @@ from logic import (
     METRIC_BOUNDS,
     WORKOUT_INTENSITIES,
     aggregate_measurements_to_daily,
+    clear_daily_metric,
     connect_writable,
     count_source_conflicts,
+    daily_metrics_wide,
     db_error_types,
     default_data_dir,
     ensure_schema,
@@ -85,7 +92,7 @@ from logic import (
     query_workout_sessions,
     resolve_range,
     row_class,
-    upsert_metrics,
+    upsert_daily_metric_measurements,
     validate_metrics,
 )
 from logic import (
@@ -488,13 +495,29 @@ def _parse_private_fields(raw: str) -> frozenset[str]:
 PRIVATE_FIELDS = _parse_private_fields(os.environ.get("HEALTH_PRIVATE_FIELDS", ""))
 
 
+# daily_metrics.value is stored as REAL regardless of a metric's logical
+# type (see db/schema.sql), so a "mean"-method metric can come back with a
+# genuine fractional part -- e.g. two resting_heart_rate readings of 62
+# and 67 average to 64.5 -- that DailyMetricsRow's `int` fields would
+# otherwise reject outright rather than silently truncate. Listed
+# explicitly (matching METRIC_COLUMNS/METRIC_BOUNDS' style elsewhere in
+# this file) rather than introspected from the pydantic model, since only
+# these are declared `int` there; sleep_hours/weight_kg/hrv_ms are `float`
+# and never need this.
+INT_METRIC_COLUMNS = frozenset({"steps", "resting_heart_rate", "workout_minutes", "mood", "water_ml", "heart_rate"})
+
+
 def _redact_private_fields(row: dict) -> dict:
     """Return a copy of a daily_metrics row dict with any private field
-    forced to None, regardless of what's actually stored for it.
+    forced to None, and any INT_METRIC_COLUMNS value rounded to the
+    nearest int (see INT_METRIC_COLUMNS) -- both regardless of what's
+    actually stored for it. Every call site that builds a DailyMetricsRow
+    from a daily_metrics_wide row goes through this first.
     """
-    if not PRIVATE_FIELDS:
-        return row
-    return {k: (None if k in PRIVATE_FIELDS else v) for k, v in row.items()}
+    return {
+        k: (None if k in PRIVATE_FIELDS else round(v) if k in INT_METRIC_COLUMNS and v is not None else v)
+        for k, v in row.items()
+    }
 
 
 # mask_error_details=True: an unexpected internal error (corrupt DB, disk
@@ -591,12 +614,7 @@ def _fetch_metric_series(metric: str, start: date_type, end: date_type) -> list[
         )
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
-            cursor = conn.execute(
-                f"SELECT date, {metric} FROM daily_metrics "
-                f"WHERE date BETWEEN ? AND ? AND {metric} IS NOT NULL ORDER BY date",
-                (start.isoformat(), end.isoformat()),
-            )
-            rows = cursor.fetchall()
+            rows = daily_metrics_wide(conn, [metric], start.isoformat(), end.isoformat())
     except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         if _is_locked_error(exc):
@@ -745,12 +763,7 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
 
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
-            cursor = conn.execute(
-                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " "
-                "FROM daily_metrics WHERE date BETWEEN ? AND ? ORDER BY date",
-                (start.isoformat(), end.isoformat()),
-            )
-            rows = [dict(row) for row in cursor.fetchall()]
+            rows = daily_metrics_wide(conn, METRIC_COLUMNS, start.isoformat(), end.isoformat())
     except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         if _is_locked_error(exc):
@@ -830,12 +843,7 @@ def export_health_data_csv(start_date: str | None = None, end_date: str | None =
 
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
-            cursor = conn.execute(
-                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " "
-                "FROM daily_metrics WHERE date BETWEEN ? AND ? ORDER BY date",
-                (start.isoformat(), end.isoformat()),
-            )
-            rows = [dict(row) for row in cursor.fetchall()]
+            rows = daily_metrics_wide(conn, METRIC_COLUMNS, start.isoformat(), end.isoformat())
     except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         if _is_locked_error(exc):
@@ -856,8 +864,13 @@ def export_health_data_csv(start_date: str | None = None, end_date: str | None =
         writer = csv.writer(f)
         writer.writerow(["date", *METRIC_COLUMNS])
         for row in rows:
-            redacted = _redact_private_fields(row)
-            writer.writerow([redacted["date"], *(redacted[col] for col in METRIC_COLUMNS)])
+            # Routed through DailyMetricsRow (not just _redact_private_fields)
+            # so int-typed metrics come out as ints, not the float SQLite's
+            # REAL-typed daily_metrics.value column hands back — the same
+            # coercion read_health_data/log_daily_metric already get for
+            # free by constructing a DailyMetricsRow.
+            typed = DailyMetricsRow(**_redact_private_fields(row)).model_dump()
+            writer.writerow([typed["date"], *(typed[col] for col in METRIC_COLUMNS)])
 
     return ExportCsvResult(
         path=str(out_path.resolve()),
@@ -964,12 +977,9 @@ def log_daily_metric(
         conn = connect_writable(HEALTH_DB_PATH)
         try:
             ensure_schema(conn)
-            upsert_metrics(conn, [{"date": day.isoformat(), **provided}])
-            conn.row_factory = row_class()
-            row = conn.execute(
-                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
-                (day.isoformat(),),
-            ).fetchone()
+            upsert_daily_metric_measurements(conn, day.isoformat(), provided)
+            rows = daily_metrics_wide(conn, METRIC_COLUMNS, day.isoformat(), day.isoformat())
+            row = rows[0] if rows else None
         finally:
             conn.close()
     except db_error_types() as exc:
@@ -980,7 +990,7 @@ def log_daily_metric(
             "Could not write to the health database — it may be locked by another process. Try again in a moment.",
         ) from exc
 
-    return LogDailyMetricResult(logged=provided, row=DailyMetricsRow(**_redact_private_fields(dict(row))))
+    return LogDailyMetricResult(logged=provided, row=DailyMetricsRow(**_redact_private_fields(row)))
 
 
 @mcp.tool(
@@ -997,7 +1007,11 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
     Blank out (set to null) a single metric for a single day, without
     touching that day's other metrics. The counterpart to log_daily_metric
     for undoing a bad value — e.g. a mood logged for the wrong day, or a
-    weight entered with the wrong units.
+    weight entered with the wrong units. Clears *everything* recorded for
+    that metric/day — including individual log_measurement readings or
+    imported rows, not just a value log_daily_metric wrote directly — so
+    the metric genuinely goes back to "nothing recorded" rather than
+    falling back to a blended value from whatever else is left.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1012,10 +1026,12 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
 
     Returns:
         A ClearMetricResult with "cleared" (the field name) and "row" (the
-        day's full current state after clearing). If no row exists yet
-        for that date, "row" is null and "note" explains there was
-        nothing to clear. Any field listed in HEALTH_PRIVATE_FIELDS is
-        always null in "row".
+        day's full current state after clearing). If field was the only
+        metric that date had any data for, "row" is null and "note" says
+        so explicitly (clearing succeeded — there's just nothing left to
+        show). If there was nothing to clear in the first place, "row" is
+        also null but "note" says so instead. Any field listed in
+        HEALTH_PRIVATE_FIELDS is always null in "row".
     """
     try:
         day = parse_date(date, "date")
@@ -1029,13 +1045,9 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
         conn = connect_writable(HEALTH_DB_PATH)
         try:
             ensure_schema(conn)
-            conn.execute(f"UPDATE daily_metrics SET {field} = NULL WHERE date = ?", (day.isoformat(),))
-            conn.commit()
-            conn.row_factory = row_class()
-            row = conn.execute(
-                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
-                (day.isoformat(),),
-            ).fetchone()
+            deleted = clear_daily_metric(conn, day.isoformat(), field)
+            rows = daily_metrics_wide(conn, METRIC_COLUMNS, day.isoformat(), day.isoformat())
+            row = rows[0] if rows else None
         finally:
             conn.close()
     except db_error_types() as exc:
@@ -1047,8 +1059,15 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
         ) from exc
 
     if row is None:
+        if deleted:
+            # field was the only metric this date had any data for, so
+            # clearing it left the date with nothing at all -- daily_metrics
+            # (now one row per (date, metric), not one row per date) has
+            # no row left to pivot into a DailyMetricsRow. Distinct from
+            # the never-had-anything case below.
+            return ClearMetricResult(cleared=field, note=f"Cleared — {day.isoformat()} now has no metrics recorded.")
         return ClearMetricResult(cleared=field, note=f"No row exists for {day.isoformat()} — nothing to clear.")
-    return ClearMetricResult(cleared=field, row=DailyMetricsRow(**_redact_private_fields(dict(row))))
+    return ClearMetricResult(cleared=field, row=DailyMetricsRow(**_redact_private_fields(row)))
 
 
 # ---------------------------------------------------------------------------
@@ -1060,10 +1079,14 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
 # which needs the individual observations: when each was taken, and where
 # it came from. measurements is that finer-grained layer: every
 # log_measurement call is its own row, never upserted over a previous one,
-# so a day can hold several readings of the same metric. Nothing here
-# changes daily_metrics automatically — aggregate_measurements collapses a
-# day's measurements into it on request, using logic.MEASUREMENT_AGGREGATION
-# to decide how same-day values combine.
+# so a day can hold several readings of the same metric. daily_metrics
+# itself is a database-maintained projection over measurements (see
+# db/schema.sql, db/invariant.py) — every log_measurement/log_daily_metric/
+# import automatically keeps it in sync, using each metric's
+# aggregation_rules method (sum/mean/last); nothing here needs to (or
+# can) push a value into it by hand. aggregate_measurements previews what
+# a source_priority resolution of a day's measurements would look like,
+# without writing anything.
 
 
 @mcp.tool(
@@ -1110,7 +1133,15 @@ def log_measurement(
         timestamp: When the observation was taken, YYYY-MM-DD or a full
             ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS).
         metric: Name of the metric, e.g. "resting_heart_rate", "steps".
-            Free-form — not limited to daily_metrics' fixed columns.
+            Not free-form: must already have an entry in the
+            aggregation_rules table (steps, sleep_hours,
+            resting_heart_rate, weight_kg, workout_minutes, mood,
+            water_ml, heart_rate, hrv_ms, out of the box) — daily_metrics
+            is a database-maintained projection over measurements (see
+            db/schema.sql), so every metric written to it needs a known
+            aggregation method (sum/mean/last) or there would be nothing
+            telling the projection how to roll same-day readings up.
+            metrics_schema lists the current set.
         value: The numeric reading.
         unit: Unit the value is in, e.g. "bpm", "kg". Optional.
         source: Where this came from, e.g. "Apple Watch", "manual". Optional.
@@ -1136,6 +1167,24 @@ def log_measurement(
         finally:
             conn.close()
     except db_error_types() as exc:
+        # The measurements->daily_metrics triggers (db/schema.sql) reject
+        # an INSERT for a metric with no aggregation_rules entry via
+        # RAISE(ABORT, 'no aggregation_rules entry for metric') — surfaces
+        # here as an ordinary db_error_types() exception (sqlite3.
+        # IntegrityError, or the sqlcipher3 equivalent when encrypted; see
+        # logic.db_error_types), so it's distinguished by message rather
+        # than exception type to work under either driver.
+        if "no aggregation_rules entry for metric" in str(exc):
+            try:
+                with _readonly_connection(HEALTH_DB_PATH) as ro_conn:
+                    known = [r[0] for r in ro_conn.execute("SELECT metric FROM aggregation_rules ORDER BY metric")]
+            except db_error_types():
+                known = []
+            raise _tool_error(
+                ERR_INVALID_METRIC,
+                f"{metric!r} has no aggregation_rules entry, so it can't be logged as a measurement."
+                + (f" Supported metrics: {', '.join(known)}." if known else ""),
+            ) from exc
         logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
         code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
         raise _tool_error(
@@ -1376,26 +1425,39 @@ def read_workout_sessions(
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        title="Aggregate measurements into a day",
-        readOnlyHint=False,
-        destructiveHint=False,  # only overwrites the metrics that have measurements that day
-        idempotentHint=True,  # re-running for the same day with the same measurements gives the same result
+        title="Preview a source-priority resolution of a day's measurements",
+        readOnlyHint=True,  # never writes daily_metrics -- see docstring
+        destructiveHint=False,
+        idempotentHint=True,
         openWorldHint=False,
     )
 )
 def aggregate_measurements(date: str, source_priority: list[str] | None = None) -> AggregateMeasurementsResult:
     """
-    Roll up one day's raw measurements into that day's daily_metrics row,
-    so existing analytics tools (which all read daily_metrics) benefit
-    from data logged via log_measurement. Steps/water/workout_minutes sum
-    across the day, resting_heart_rate/mood average, weight_kg takes the
-    latest reading — see logic.MEASUREMENT_AGGREGATION.
+    Preview what one day's raw measurements would roll up to if a
+    conflicting metric were resolved using source_priority, alongside
+    that day's *actual* current daily_metrics values.
+
+    daily_metrics is a database-maintained projection (see db/schema.sql):
+    every log_measurement/import automatically keeps it in sync with
+    *all* of that day's measurements the moment it's written, using each
+    metric's fixed aggregation method (sum/mean/last — see
+    aggregation_rules, or get_baseline's "method" field). It blends every
+    source together and cannot be made to prefer one — there is no
+    stored "priority" it can consult. So unlike before, this tool no
+    longer writes anything: "aggregated" is only a preview of what
+    source_priority would produce; "row" is the real, currently-stored
+    value, computed from every source, which may well differ from
+    "aggregated" whenever sources disagree.
 
     If a metric has measurements from more than one source that day (e.g.
     an Apple Watch and a Garmin both logging resting_heart_rate), use
-    get_metric_provenance first to see whether they actually disagree,
-    then pass source_priority to pick a winner rather than blending two
-    devices' readings into one meaningless average.
+    get_metric_provenance first to see whether they actually disagree. To
+    make daily_metrics itself reflect only one source going forward,
+    remove the other source's data — clear_metric (which now removes
+    every measurement behind that metric/day, not just a
+    log_daily_metric value) followed by re-logging the preferred
+    reading, or re-running its import with --replace.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1404,17 +1466,20 @@ def aggregate_measurements(date: str, source_priority: list[str] | None = None) 
     same as pasting the data into a chat with that provider.
 
     Args:
-        date: The day to aggregate, formatted YYYY-MM-DD.
+        date: The day to preview, formatted YYYY-MM-DD.
         source_priority: Ordered list of source names, e.g. ["Apple
             Watch", "Garmin"]. For any metric with more than one source
             that day, the first name in this list that's actually present
-            wins and the other source's readings for that metric are
-            dropped from the aggregate. Omit to fall back to whichever
-            source was imported most recently.
+            wins in "aggregated" and the other source's readings for that
+            metric are dropped from that preview. Omit to fall back to
+            whichever source was imported most recently. Never affects
+            "row" — see above.
 
     Returns:
-        An AggregateMeasurementsResult with which metrics were written and
-        the day's resulting daily_metrics row.
+        An AggregateMeasurementsResult with "aggregated" (the
+        source_priority preview; only metrics with measurements that day
+        are included) and "row" (that day's actual, currently-stored
+        daily_metrics values — unaffected by source_priority).
     """
     try:
         day = parse_date(date, "date")
@@ -1422,26 +1487,17 @@ def aggregate_measurements(date: str, source_priority: list[str] | None = None) 
         raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
 
     try:
-        conn = connect_writable(HEALTH_DB_PATH)
-        try:
-            ensure_schema(conn)
+        with _readonly_connection(HEALTH_DB_PATH) as conn:
             conn.row_factory = row_class()
             aggregated = aggregate_measurements_to_daily(conn, day.isoformat(), source_priority)
             metrics_only = {k: v for k, v in aggregated.items() if k != "date"}
-            if metrics_only:
-                upsert_metrics(conn, [aggregated])
-            row = conn.execute(
-                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
-                (day.isoformat(),),
-            ).fetchone()
-        finally:
-            conn.close()
+            rows = daily_metrics_wide(conn, METRIC_COLUMNS, day.isoformat(), day.isoformat())
+            row = rows[0] if rows else None
     except db_error_types() as exc:
-        logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
-        code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
+        logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         raise _tool_error(
-            code,
-            "Could not write to the health database — it may be locked by another process. Try again in a moment.",
+            ERR_DATABASE_ERROR,
+            "Could not read the health database — it may be missing or corrupt. Try again, or re-run init_db.py.",
         ) from exc
 
     row_dict = dict(row) if row is not None else {"date": day.isoformat()}
@@ -2293,17 +2349,15 @@ def day_snapshot(date: str) -> dict:
 
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
-            row = conn.execute(
-                "SELECT date, " + ", ".join(METRIC_COLUMNS) + " FROM daily_metrics WHERE date = ?",
-                (day.isoformat(),),
-            ).fetchone()
+            rows = daily_metrics_wide(conn, METRIC_COLUMNS, day.isoformat(), day.isoformat())
+            row = rows[0] if rows else None
     except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         raise ResourceError(f"Could not read the health database: {exc}") from exc
 
     if row is None:
         return DailyMetricsRow(date=day.isoformat()).model_dump()
-    return DailyMetricsRow(**_redact_private_fields(dict(row))).model_dump()
+    return DailyMetricsRow(**_redact_private_fields(row)).model_dump()
 
 
 def main():
