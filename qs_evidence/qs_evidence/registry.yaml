@@ -1,0 +1,53 @@
+# Per-analysis policy. Dimensions not listed are not applicable and are ignored.
+# on_not_assessed: cap      -> unassessed dimension caps tier at "suggestive"
+#                  tolerate -> unassessed dimension is ignored (use sparingly)
+# thresholds are consumed by evaluators (later commits), never by the resolver.
+window_comparison:
+  dimensions:
+    sample:               {on_not_assessed: cap}
+    temporal:             {on_not_assessed: cap}
+    robustness:           {on_not_assessed: cap}
+    missingness:          {on_not_assessed: cap}
+    practical:            {on_not_assessed: cap}
+    measurement_validity: {on_not_assessed: tolerate}
+    provenance:           {on_not_assessed: cap}
+  thresholds:
+    min_n_per_window: 7
+    min_coverage_per_window: 0.6
+    max_gap_days: 4
+    min_third_coverage: 0.5
+    top3_influence_share_max: 0.5
+trend:
+  dimensions:
+    sample:               {on_not_assessed: cap}
+    temporal:             {on_not_assessed: cap}
+    robustness:           {on_not_assessed: cap}
+    missingness:          {on_not_assessed: cap}
+    practical:            {on_not_assessed: cap}
+    measurement_validity: {on_not_assessed: tolerate}
+    provenance:           {on_not_assessed: cap}
+  thresholds:
+    min_n: 14
+    min_span_days: 21
+    top3_influence_share_max: 0.5
+correlation:
+  dimensions:
+    sample:               {on_not_assessed: cap}   # judged on n_paired, not n per series
+    temporal:             {on_not_assessed: cap}
+    robustness:           {on_not_assessed: cap}
+    missingness:          {on_not_assessed: cap}
+    practical:            {on_not_assessed: cap}
+    measurement_validity: {on_not_assessed: tolerate}
+    provenance:           {on_not_assessed: tolerate}
+  thresholds:
+    min_n_paired: 20
+    max_gap_days: 5
+anomaly:
+  dimensions:
+    sample:               {on_not_assessed: cap}   # baseline length
+    temporal:             {on_not_assessed: cap}
+    robustness:           {on_not_assessed: cap}   # baseline variance / contamination
+    practical:            {on_not_assessed: cap}
+    provenance:           {on_not_assessed: cap}
+  thresholds:
+    min_baseline_days: 28
