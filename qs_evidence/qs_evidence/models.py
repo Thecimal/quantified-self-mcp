@@ -1,7 +1,10 @@
 """Evidence contracts. Nothing here knows how any statistic is computed."""
+
 from __future__ import annotations
+
 from enum import Enum
 from typing import Any
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -18,7 +21,7 @@ class Dimension(str, Enum):
 
 class Status(str, Enum):
     ADEQUATE = "adequate"
-    NEGLIGIBLE = "negligible"      # practical only: real but below MDC / normal variation
+    NEGLIGIBLE = "negligible"  # practical only: real but below MDC / normal variation
     NOT_ASSESSED = "not_assessed"  # could not be evaluated; never defaults to adequate
     WEAK = "weak"
     CONCERN = "concern"
@@ -33,14 +36,17 @@ class ClaimTier(str, Enum):
 
 
 # Ordering used by tests (monotonicity). Higher = stronger claim allowed.
-TIER_RANK = {ClaimTier.INSUFFICIENT: 0, ClaimTier.SUGGESTIVE: 1,
-             ClaimTier.DETECTABLE_NOT_MEANINGFUL: 2, ClaimTier.SUPPORTED: 3}
+TIER_RANK = {
+    ClaimTier.INSUFFICIENT: 0,
+    ClaimTier.SUGGESTIVE: 1,
+    ClaimTier.DETECTABLE_NOT_MEANINGFUL: 2,
+    ClaimTier.SUPPORTED: 3,
+}
 
 PHRASING = {
     ClaimTier.INSUFFICIENT: "There isn't enough data to say.",
     ClaimTier.SUGGESTIVE: "Data hints at ..., but {limiting_factors}.",
-    ClaimTier.DETECTABLE_NOT_MEANINGFUL:
-        "A small change is visible but within your normal variation.",
+    ClaimTier.DETECTABLE_NOT_MEANINGFUL: "A small change is visible but within your normal variation.",
     ClaimTier.SUPPORTED: "Your data shows ...",
 }
 
@@ -57,8 +63,7 @@ class DimensionResult(BaseModel):
     @model_validator(mode="after")
     def _reasons_required(self):
         if self.status != Status.ADEQUATE and not self.reason_codes:
-            raise ValueError(
-                f"{self.dimension.value}: status={self.status.value} requires reason_codes")
+            raise ValueError(f"{self.dimension.value}: status={self.status.value} requires reason_codes")
         if self.status == Status.NEGLIGIBLE and self.dimension != Dimension.PRACTICAL:
             raise ValueError("negligible is only valid for the practical dimension")
         return self
@@ -79,11 +84,13 @@ class EvidenceProfile(BaseModel):
 
 class ClaimDecision(BaseModel):
     tier: ClaimTier
-    limiting_factors: list[str]          # becomes must_state
+    limiting_factors: list[str]  # becomes must_state
     permitted_phrasing_class: str
 
     def to_mcp(self) -> dict[str, Any]:
-        return {"tier": self.tier.value,
-                "permitted_phrasing_class": self.permitted_phrasing_class,
-                "must_state": self.limiting_factors,
-                "template": PHRASING[self.tier]}
+        return {
+            "tier": self.tier.value,
+            "permitted_phrasing_class": self.permitted_phrasing_class,
+            "must_state": self.limiting_factors,
+            "template": PHRASING[self.tier],
+        }

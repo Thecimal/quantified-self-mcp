@@ -1,44 +1,70 @@
 import random
+
 import pytest
-from qs_evidence import (ClaimTier, Dimension as D, DimensionResult, EvidenceProfile,
-                         Status as S, load_registry, resolve)
 from qs_evidence.models import TIER_RANK
+
+from qs_evidence import ClaimTier, DimensionResult, EvidenceProfile, load_registry, resolve
+from qs_evidence import Dimension as D
+from qs_evidence import Status as S
 
 REG = load_registry()
 SPEC = REG["window_comparison"]
 
 
 def dr(dim, status=S.ADEQUATE, *codes, can_block=True):
-    return DimensionResult(dimension=dim, status=status, reason_codes=list(codes),
-                           can_block=can_block)
+    return DimensionResult(dimension=dim, status=status, reason_codes=list(codes), can_block=can_block)
 
 
 def profile(**overrides):
     dims = {d: dr(d) for d in D}
     dims.update({D(k): v for k, v in overrides.items()})
-    return EvidenceProfile(metric="hrv_rmssd", analysis="window_comparison",
-                           effect={"change_pct": -24}, dimensions=list(dims.values()))
+    return EvidenceProfile(
+        metric="hrv_rmssd", analysis="window_comparison", effect={"change_pct": -24}, dimensions=list(dims.values())
+    )
 
 
 FIXTURES = [
     ("clean_60d", {}, ClaimTier.SUPPORTED, []),
-    ("gappy_recent", {"temporal": dr(D.TEMPORAL, S.WEAK, "recent_window_gap"),
-                      "missingness": dr(D.MISSINGNESS, S.WEAK, "coverage_below_threshold")},
-     ClaimTier.SUGGESTIVE, ["recent_window_gap", "coverage_below_threshold"]),
-    ("outlier_driven", {"robustness": dr(D.ROBUSTNESS, S.WEAK, "top3_influence_high")},
-     ClaimTier.SUGGESTIVE, ["top3_influence_high"]),
-    ("sign_flip", {"robustness": dr(D.ROBUSTNESS, S.BLOCKING, "loo_sign_flip")},
-     ClaimTier.INSUFFICIENT, ["loo_sign_flip"]),
-    ("tiny_n", {"sample": dr(D.SAMPLE, S.BLOCKING, "n_below_minimum")},
-     ClaimTier.INSUFFICIENT, ["n_below_minimum"]),
-    ("within_noise", {"practical": dr(D.PRACTICAL, S.NEGLIGIBLE, "below_mdc")},
-     ClaimTier.DETECTABLE_NOT_MEANINGFUL, ["below_mdc"]),
-    ("device_switch", {"provenance": dr(D.PROVENANCE, S.CONCERN,
-                                        "shift_coincides_with_source_change")},
-     ClaimTier.SUGGESTIVE, ["shift_coincides_with_source_change"]),
-    ("mnar_sleep", {"missingness": dr(D.MISSINGNESS, S.CONCERN,
-                                      "missing_correlates_with_low_sleep")},
-     ClaimTier.SUGGESTIVE, ["missing_correlates_with_low_sleep"]),
+    (
+        "gappy_recent",
+        {
+            "temporal": dr(D.TEMPORAL, S.WEAK, "recent_window_gap"),
+            "missingness": dr(D.MISSINGNESS, S.WEAK, "coverage_below_threshold"),
+        },
+        ClaimTier.SUGGESTIVE,
+        ["recent_window_gap", "coverage_below_threshold"],
+    ),
+    (
+        "outlier_driven",
+        {"robustness": dr(D.ROBUSTNESS, S.WEAK, "top3_influence_high")},
+        ClaimTier.SUGGESTIVE,
+        ["top3_influence_high"],
+    ),
+    (
+        "sign_flip",
+        {"robustness": dr(D.ROBUSTNESS, S.BLOCKING, "loo_sign_flip")},
+        ClaimTier.INSUFFICIENT,
+        ["loo_sign_flip"],
+    ),
+    ("tiny_n", {"sample": dr(D.SAMPLE, S.BLOCKING, "n_below_minimum")}, ClaimTier.INSUFFICIENT, ["n_below_minimum"]),
+    (
+        "within_noise",
+        {"practical": dr(D.PRACTICAL, S.NEGLIGIBLE, "below_mdc")},
+        ClaimTier.DETECTABLE_NOT_MEANINGFUL,
+        ["below_mdc"],
+    ),
+    (
+        "device_switch",
+        {"provenance": dr(D.PROVENANCE, S.CONCERN, "shift_coincides_with_source_change")},
+        ClaimTier.SUGGESTIVE,
+        ["shift_coincides_with_source_change"],
+    ),
+    (
+        "mnar_sleep",
+        {"missingness": dr(D.MISSINGNESS, S.CONCERN, "missing_correlates_with_low_sleep")},
+        ClaimTier.SUGGESTIVE,
+        ["missing_correlates_with_low_sleep"],
+    ),
 ]
 
 
@@ -73,8 +99,9 @@ def test_missing_required_dimension_is_not_adequate():
 
 
 def test_data_problem_outranks_small_effect():
-    p = profile(practical=dr(D.PRACTICAL, S.NEGLIGIBLE, "below_mdc"),
-                temporal=dr(D.TEMPORAL, S.WEAK, "recent_window_gap"))
+    p = profile(
+        practical=dr(D.PRACTICAL, S.NEGLIGIBLE, "below_mdc"), temporal=dr(D.TEMPORAL, S.WEAK, "recent_window_gap")
+    )
     assert resolve(p, SPEC).tier == ClaimTier.SUGGESTIVE
 
 
@@ -90,14 +117,14 @@ def test_inapplicable_dimension_ignored():
 
 # ---- monotonicity: degrading one dimension one step never raises the tier ----
 def chain(dim):
-    base = [S.ADEQUATE] + ([S.NEGLIGIBLE] if dim == D.PRACTICAL else []) + \
-           [S.NOT_ASSESSED, S.WEAK, S.CONCERN, S.BLOCKING]
+    base = (
+        [S.ADEQUATE] + ([S.NEGLIGIBLE] if dim == D.PRACTICAL else []) + [S.NOT_ASSESSED, S.WEAK, S.CONCERN, S.BLOCKING]
+    )
     return base
 
 
 def build(statuses):
-    return profile(**{d.value: dr(d, s, "r") if s != S.ADEQUATE else dr(d)
-                      for d, s in statuses.items()})
+    return profile(**{d.value: dr(d, s, "r") if s != S.ADEQUATE else dr(d) for d, s in statuses.items()})
 
 
 @pytest.mark.parametrize("analysis", list(REG))

@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import Any, Literal
+
 import yaml
 from pydantic import BaseModel
+
 from .models import Dimension
 
 DEFAULT_PATH = Path(__file__).with_name("registry.yaml")

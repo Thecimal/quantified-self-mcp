@@ -1,7 +1,8 @@
 """Weakest-link resolver. Sees only DimensionResult contracts + registry policy."""
+
 from __future__ import annotations
-from .models import (ClaimDecision, ClaimTier, Dimension, DimensionResult,
-                     EvidenceProfile, Status)
+
+from .models import ClaimDecision, ClaimTier, Dimension, DimensionResult, EvidenceProfile, Status
 from .registry import AnalysisSpec
 
 
@@ -16,7 +17,7 @@ def resolve(profile: EvidenceProfile, spec: AnalysisSpec) -> ClaimDecision:
     blocking = capped = negligible = False
     factors: list[str] = []
 
-    for dim in Dimension:                       # deterministic order
+    for dim in Dimension:  # deterministic order
         policy = spec.dimensions.get(dim)
         if policy is None:
             continue
@@ -38,12 +39,11 @@ def resolve(profile: EvidenceProfile, spec: AnalysisSpec) -> ClaimDecision:
 
     if blocking:
         tier = ClaimTier.INSUFFICIENT
-    elif capped:                     # data problems outrank "small effect"
+    elif capped:  # data problems outrank "small effect"
         tier = ClaimTier.SUGGESTIVE
     elif negligible:
         tier = ClaimTier.DETECTABLE_NOT_MEANINGFUL
     else:
         tier = ClaimTier.SUPPORTED
 
-    return ClaimDecision(tier=tier, limiting_factors=factors,
-                         permitted_phrasing_class=tier.value)
+    return ClaimDecision(tier=tier, limiting_factors=factors, permitted_phrasing_class=tier.value)
