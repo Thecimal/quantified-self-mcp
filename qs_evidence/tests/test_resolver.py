@@ -1,11 +1,11 @@
 import random
 
 import pytest
-from qs_evidence.models import TIER_RANK
 
 from qs_evidence import ClaimTier, DimensionResult, EvidenceProfile, load_registry, resolve
 from qs_evidence import Dimension as D
 from qs_evidence import Status as S
+from qs_evidence.models import TIER_RANK
 
 REG = load_registry()
 SPEC = REG["window_comparison"]

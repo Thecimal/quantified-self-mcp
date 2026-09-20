@@ -21,6 +21,7 @@ classifiers = [
 dependencies = [
     "fastmcp>=4.0.3,<5.0",
     "pydantic>=2.13.5,<3.0",
+    "pyyaml>=6.0,<7.0",
 ]
 
 [project.optional-dependencies]
@@ -34,7 +35,16 @@ quantified-self-mcp = "server:main"
 quantified-self-init-db = "init_db:main"
 
 [tool.hatch.build.targets.wheel]
-include = ["server.py", "init_db.py", "logic.py", "analytics.py", "import_adapters.py"]
+include = [
+    "server.py",
+    "init_db.py",
+    "logic.py",
+    "analytics.py",
+    "evidence.py",
+    "import_adapters.py",
+    "qs_evidence/*.py",
+    "qs_evidence/registry.yaml",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
