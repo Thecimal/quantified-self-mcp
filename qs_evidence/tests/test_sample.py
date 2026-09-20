@@ -135,6 +135,15 @@ def test_anomaly_sparse_baseline_blocks():
     assert sample.evaluate_anomaly(b).reason_codes == ["baseline_too_few_observations"]
 
 
+def test_anomaly_baseline_length_is_observed_span_not_window_length():
+    long_window_short_history = wave(20) + [None] * 70  # 90-day window, 20 days of history
+    r = sample.evaluate_anomaly(long_window_short_history)
+    assert r.status == S.BLOCKING and r.reason_codes == ["baseline_too_short"]
+    assert r.details["checks"][0]["observed"] == 20
+    leading_gap = [None] * 60 + wave(30)  # a long empty lead-in does not count against a real 30-day history
+    assert sample.evaluate_anomaly(leading_gap).status == S.ADEQUATE
+
+
 def test_anomaly_zero_variance_blocks():
     r = sample.evaluate_anomaly([50.0] * 30)
     assert r.status == S.BLOCKING and r.reason_codes == ["baseline_zero_variance"]

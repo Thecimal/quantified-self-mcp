@@ -183,11 +183,17 @@ def evaluate_anomaly(
     baseline: Sequence[float | None],
     thresholds: dict[str, Any] | None = None,
 ) -> DimensionResult:
-    """`baseline` is daily-aligned (None = missing). Length and zero variance block; contamination is diagnostic."""
+    """`baseline` is daily-aligned (None = missing).
+
+    Length (first to last observation, so a long window with a short history does not pass), observation count
+    and zero variance block; contamination is diagnostic.
+    """
     t = _merge(thresholds)
-    vals = [float(v) for v in baseline if _finite(v)]
+    observed = [i for i, v in enumerate(baseline) if _finite(v)]
+    vals = [float(baseline[i]) for i in observed]
+    span = observed[-1] - observed[0] + 1 if observed else 0
     checks = [
-        _at_least("baseline_days", "baseline_too_short", len(baseline), t["min_baseline_days"], True),
+        _at_least("baseline_days", "baseline_too_short", span, t["min_baseline_days"], True),
         _at_least("baseline_obs", "baseline_too_few_observations", len(vals), t["min_baseline_obs"], True),
     ]
     not_assessed: list[str] = []

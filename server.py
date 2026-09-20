@@ -61,7 +61,7 @@ from pathlib import Path
 from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from analytics import (
     Point,
@@ -100,6 +100,14 @@ from logic import (
 )
 from logic import (
     readonly_connection as _logic_readonly_connection,
+)
+from qs_evidence import (
+    Assessment,
+    EvidenceProfile,
+    assess_anomaly,
+    assess_correlation,
+    assess_trend,
+    assess_window_comparison,
 )
 
 # The SQLite file never leaves this machine, but the *rows read out of it*
@@ -322,6 +330,35 @@ class GetMetricHistoryResult(BaseModel):
     evidence: Evidence
 
 
+class ClaimDecisionOut(BaseModel):
+    tier: str
+    permitted_phrasing_class: str
+    must_state: list[str]
+    template: str
+
+
+class ClaimFields(BaseModel):
+    """Evidence pipeline output shared by every analytical result: registry policy -> evaluators ->
+    EvidenceProfile -> weakest-link resolver -> ClaimDecision."""
+
+    evidence_profile: EvidenceProfile | None = Field(
+        default=None,
+        description=(
+            "Per-dimension evidence quality behind this result (sample, temporal, missingness, ...). "
+            "Dimensions without an evaluator yet are 'not_assessed' and cap the claim, "
+            "never count as adequate."
+        ),
+    )
+    claim_decision: ClaimDecisionOut | None = Field(
+        default=None,
+        description=(
+            "How strongly this result may be stated. tier is insufficient, suggestive, "
+            "detectable_not_meaningful or supported; every entry in must_state has to be "
+            "mentioned when reporting it."
+        ),
+    )
+
+
 class BaselineStats(BaseModel):
     mean: float | None = None
     median: float | None = None
@@ -343,7 +380,7 @@ class AnomalyPoint(BaseModel):
     direction: str
 
 
-class DetectAnomaliesResult(BaseModel):
+class DetectAnomaliesResult(ClaimFields):
     metric: str
     range: DateRange
     threshold: float
@@ -359,14 +396,14 @@ class TrendStats(BaseModel):
     span_days: int | None = None
 
 
-class CalculateTrendResult(BaseModel):
+class CalculateTrendResult(ClaimFields):
     metric: str
     range: DateRange
     trend: TrendStats
     evidence: Evidence
 
 
-class ComparePeriodsResult(BaseModel):
+class ComparePeriodsResult(ClaimFields):
     metric: str
     period_a: DateRange
     period_b: DateRange
@@ -378,7 +415,7 @@ class ComparePeriodsResult(BaseModel):
     period_b_evidence: Evidence
 
 
-class CorrelationResult(BaseModel):
+class CorrelationResult(ClaimFields):
     metric_a: str
     metric_b: str
     lag_days: int
@@ -390,7 +427,7 @@ class CorrelationResult(BaseModel):
     evidence_b: Evidence | None = None
 
 
-class ChangeNote(BaseModel):
+class ChangeNote(ClaimFields):
     metric: str
     kind: str  # "shift" (period-over-period) | "anomaly" | "trend"
     detail: str
@@ -426,7 +463,7 @@ class ReadWorkoutSessionsResult(BaseModel):
     count: int
 
 
-class ExplainMetricChangeResult(BaseModel):
+class ExplainMetricChangeResult(ClaimFields):
     metric: str
     date: str
     value: float | None = None
@@ -441,6 +478,10 @@ class ExplainMetricChangeResult(BaseModel):
     baseline_evidence: Evidence
     trend_evidence: Evidence
     conflicting_days: int = 0
+    # evidence_profile/claim_decision above cover the headline claim (this day vs. its 90-day baseline);
+    # the 30-day trend is a separate claim with its own.
+    trend_evidence_profile: EvidenceProfile | None = None
+    trend_claim_decision: ClaimDecisionOut | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -635,6 +676,14 @@ def _baseline_stats(series: list[Point]) -> BaselineStats:
 
 def _trend_stats(series: list[Point]) -> TrendStats:
     return TrendStats(**calculate_trend(series))
+
+
+def _claim_fields(assessment: Assessment, prefix: str = "") -> dict:
+    """Result-model kwargs for one assessed claim (see qs_evidence.assess)."""
+    return {
+        f"{prefix}evidence_profile": assessment.profile,
+        f"{prefix}claim_decision": ClaimDecisionOut(**assessment.decision.to_mcp()),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1758,12 +1807,16 @@ def detect_metric_anomalies(
         raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
     series = _fetch_metric_series(metric, start, end)
     anomalies = detect_anomalies(series, threshold=threshold)
+    assessment = assess_anomaly(
+        metric, series, start, end, effect={"n_anomalies": len(anomalies), "threshold": threshold}
+    )
     return DetectAnomaliesResult(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         threshold=threshold,
         anomalies=[AnomalyPoint(**a) for a in anomalies],
         evidence=Evidence(**build_evidence(series, start, end)),
+        **_claim_fields(assessment),
     )
 
 
@@ -1825,11 +1878,14 @@ def calculate_metric_trend(
     except ValueError as exc:
         raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
     series = _fetch_metric_series(metric, start, end)
+    trend = _trend_stats(series)
+    assessment = assess_trend(metric, series, start, end, effect=trend.model_dump())
     return CalculateTrendResult(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
-        trend=_trend_stats(series),
+        trend=trend,
         evidence=Evidence(**build_evidence(series, start, end)),
+        **_claim_fields(assessment),
     )
 
 
@@ -1898,6 +1954,14 @@ def compare_metric_periods(
     series_a = _fetch_metric_series(metric, start_a, end_a)
     series_b = _fetch_metric_series(metric, start_b, end_b)
     result = compare_periods(series_a, series_b)
+    assessment = assess_window_comparison(
+        metric,
+        series_a,
+        (start_a, end_a),
+        series_b,
+        (start_b, end_b),
+        effect={"delta": result["delta"], "pct_change": result["pct_change"]},
+    )
     return ComparePeriodsResult(
         metric=metric,
         period_a=DateRange(start_date=start_a.isoformat(), end_date=end_a.isoformat()),
@@ -1908,6 +1972,7 @@ def compare_metric_periods(
         pct_change=result["pct_change"],
         period_a_evidence=Evidence(**build_evidence(series_a, start_a, end_a)),
         period_b_evidence=Evidence(**build_evidence(series_b, start_b, end_b)),
+        **_claim_fields(assessment),
     )
 
 
@@ -1978,12 +2043,23 @@ def find_metric_correlation(
     series_a = _fetch_metric_series(metric_a, start, end)
     series_b = _fetch_metric_series(metric_b, start, end)
     result = find_correlations(series_a, series_b, lag_days=lag_days)
+    assessment = assess_correlation(
+        metric_a,
+        series_a,
+        metric_b,
+        series_b,
+        start,
+        end,
+        lag_days=lag_days,
+        effect={"r": result["r"], "n": result["n"], "lag_days": lag_days},
+    )
     return CorrelationResult(
         metric_a=metric_a,
         metric_b=metric_b,
         **result,
         evidence_a=Evidence(**build_evidence(series_a, start, end)),
         evidence_b=Evidence(**build_evidence(series_b, start, end)),
+        **_claim_fields(assessment),
     )
 
 
@@ -2076,6 +2152,14 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
         comparison = compare_periods(recent_series, baseline_series)
         if comparison["pct_change"] is not None and abs(comparison["pct_change"]) >= 15:
             direction = "up" if comparison["pct_change"] > 0 else "down"
+            shift_claim = assess_window_comparison(
+                metric,
+                recent_series,
+                (recent_start, end),
+                baseline_series,
+                (baseline_start, baseline_end),
+                effect={"delta": comparison["delta"], "pct_change": comparison["pct_change"]},
+            )
             changes.append(
                 ChangeNote(
                     metric=metric,
@@ -2086,10 +2170,17 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"(avg {comparison['period_b']['mean']})."
                     ),
                     evidence=metric_evidence,
+                    **_claim_fields(shift_claim),
                 )
             )
 
-        for anomaly in detect_anomalies(recent_series):
+        recent_anomalies = detect_anomalies(recent_series)
+        anomaly_claim = (
+            assess_anomaly(metric, recent_series, recent_start, end, effect={"n_anomalies": len(recent_anomalies)})
+            if recent_anomalies
+            else None
+        )
+        for anomaly in recent_anomalies:
             changes.append(
                 ChangeNote(
                     metric=metric,
@@ -2100,11 +2191,13 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"modified z-score {anomaly['modified_z_score']})."
                     ),
                     evidence=metric_evidence,
+                    **_claim_fields(anomaly_claim),
                 )
             )
 
         trend = calculate_trend(recent_series)
         if trend["direction"] not in ("flat", "insufficient_data") and (trend["r_squared"] or 0) >= 0.3:
+            trend_claim = assess_trend(metric, recent_series, recent_start, end, effect=dict(trend))
             changes.append(
                 ChangeNote(
                     metric=metric,
@@ -2112,6 +2205,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                     detail=f"{metric} has been {trend['direction']} over the last {days} days "
                     f"({trend['slope_per_day']:+g}/day, r²={trend['r_squared']}).",
                     evidence=metric_evidence,
+                    **_claim_fields(trend_claim),
                 )
             )
 
@@ -2215,6 +2309,17 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
                     **result,
                     evidence_a=Evidence(**build_evidence(series, baseline_start, target_day)),
                     evidence_b=Evidence(**build_evidence(other_series, baseline_start, target_day)),
+                    **_claim_fields(
+                        assess_correlation(
+                            metric,
+                            series,
+                            other,
+                            other_series,
+                            baseline_start,
+                            target_day,
+                            effect={"r": result["r"], "n": result["n"], "lag_days": 0},
+                        )
+                    ),
                 )
             )
     correlated.sort(key=lambda c: abs(c.r or 0), reverse=True)
@@ -2272,6 +2377,17 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
                     detail += f", avg HR {s.avg_heart_rate}"
                 facts.append(detail + ".")
 
+    anomaly_assessment = assess_anomaly(
+        metric,
+        series,
+        baseline_start,
+        target_day,
+        effect={
+            "is_anomaly": matching_anomaly is not None,
+            "modified_z_score": matching_anomaly["modified_z_score"] if matching_anomaly else None,
+        },
+    )
+    trend_assessment = assess_trend(metric, trend_series, trend_start, target_day, effect=dict(trend))
     return ExplainMetricChangeResult(
         metric=metric,
         date=date,
@@ -2287,6 +2403,8 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         baseline_evidence=Evidence(**build_evidence(series, baseline_start, target_day)),
         trend_evidence=Evidence(**build_evidence(trend_series, trend_start, target_day)),
         conflicting_days=conflicting_days,
+        **_claim_fields(anomaly_assessment),
+        **_claim_fields(trend_assessment, prefix="trend_"),
     )
 
 
