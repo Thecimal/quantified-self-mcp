@@ -14,7 +14,17 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 - **`export_health_data_csv` annotations** — it writes a CSV to disk, so
   it is now `readOnlyHint=False` (was `True`) and `idempotentHint=True`
   (was `False`; the filename is deterministic per date range, so repeat
-  calls rewrite the same file rather than adding new ones).
+  calls rewrite the same file rather than adding new ones). It also
+  overwrites an existing export for the same range, so it is now
+  `destructiveHint=True`.
+- **`log_daily_metric` is `destructiveHint=True`** — it replaces the
+  previously logged value for that metric and day (the old daily-log
+  measurement row is deleted and a new one inserted), so it is an
+  overwrite, not an additive write. Still idempotent.
+- **Exact annotation regression test** — `test_tool_annotations_complete`
+  compares the serialized `list_tools()` annotations of all 18 tools
+  against an explicit expected matrix, so a missing hint, a wrong value,
+  or an added/removed tool fails CI.
 
 ### Added
 - **Multi-metric `coverage` on `read_health_data`** — per-metric

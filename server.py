@@ -733,6 +733,18 @@ def _is_locked_error(exc: Exception) -> bool:
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+#
+# Annotation conventions (all four hints are set explicitly on every tool;
+# tests/test_mcp_client_integration.py pins the exact values over the wire):
+#   - readOnlyHint: True only if the tool never writes health data or files.
+#   - destructiveHint: True if a call can overwrite or remove existing state
+#     (a replaced value or file counts, not only a deleted row).
+#   - idempotentHint: True if repeating the same call leaves the same state.
+#   - openWorldHint: always False; everything is local SQLite + local disk.
+# Read-only tools may still trigger _ensure_db / ensure_schema first (creating
+# an empty database on first run, applying pending migrations, reinstalling
+# triggers). That is idempotent schema housekeeping that never changes
+# recorded health data, so it does not make a read tool non-read-only.
 
 
 @mcp.tool(
@@ -849,8 +861,8 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
     annotations=ToolAnnotations(
         title="Export health data to CSV",
         readOnlyHint=False,  # writes a CSV file to the local exports/ directory
-        destructiveHint=False,  # never touches the database; only creates/overwrites its own export file
-        idempotentHint=True,  # deterministic filename per date range -> repeat calls rewrite the same file
+        destructiveHint=True,  # opens the file with mode "w": an existing export for the same range is overwritten
+        idempotentHint=True,  # deterministic filename per date range -> repeat calls rewrite the same content
         openWorldHint=False,  # only ever touches the local SQLite file and local disk
     )
 )
@@ -934,8 +946,11 @@ def export_health_data_csv(start_date: str | None = None, end_date: str | None =
     annotations=ToolAnnotations(
         title="Log a daily metric",
         readOnlyHint=False,
-        destructiveHint=False,  # upserts/overwrites values, never drops a row or column
-        idempotentHint=True,  # re-sending the same values leaves the row unchanged
+        # upsert_daily_metric_measurements DELETEs the previous daily-log
+        # measurement for each (metric, day) and inserts the new one, so a
+        # previously logged value is replaced, not just added to.
+        destructiveHint=True,
+        idempotentHint=True,  # re-sending the same values leaves the same state
         openWorldHint=False,
     )
 )

@@ -401,7 +401,7 @@ def test_tool_annotations_reflect_read_write_behavior(health_db):
 
     log_tool = get_tool("log_daily_metric")
     assert log_tool.annotations.read_only_hint is False
-    assert log_tool.annotations.destructive_hint is False  # upserts, never drops data
+    assert log_tool.annotations.destructive_hint is True  # replaces the day's previously logged value
     assert log_tool.annotations.idempotent_hint is True
 
     clear_tool = get_tool("clear_metric")

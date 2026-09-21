@@ -86,27 +86,85 @@ async def test_list_tools_exposes_all_expected_tools_with_schemas_and_annotation
     # not just internal metadata.
     assert tools["read_health_data"].annotations.read_only_hint is True
     assert tools["clear_metric"].annotations.destructive_hint is True
-    # export_health_data_csv writes a file to disk, so it is not read-only
-    # even though it never writes the database.
+    # export_health_data_csv writes a file to disk (so it is not read-only) and
+    # overwrites any existing export for the same range (so it is destructive).
     export_annotations = tools["export_health_data_csv"].annotations
     assert export_annotations.read_only_hint is False
-    assert export_annotations.destructive_hint is False
+    assert export_annotations.destructive_hint is True
     assert export_annotations.idempotent_hint is True
 
 
-async def test_every_tool_declares_all_four_annotation_hints_explicitly(client):
+# The exact annotations every tool must expose over the wire. Derived from what
+# each handler does (see the annotation-conventions comment above the tools in
+# server.py), not from the spec defaults:
+#   - log_daily_metric: upsert_daily_metric_measurements DELETEs the prior
+#     daily-log measurement for (metric, day) and inserts the new one -> replaces
+#     a value (destructive), same args twice leave the same state (idempotent).
+#   - export_health_data_csv: writes a file with mode "w" to a deterministic path
+#     -> not read-only, overwrites an existing export (destructive), idempotent.
+#   - log_measurement / log_workout_session: always INSERT a new row -> additive,
+#     not idempotent.
+#   - clear_metric: DELETEs measurements -> destructive, no-op when repeated.
+_READ_ONLY = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+
+
+def _mutating(*, destructive: bool, idempotent: bool) -> dict:
+    return {
+        "readOnlyHint": False,
+        "destructiveHint": destructive,
+        "idempotentHint": idempotent,
+        "openWorldHint": False,
+    }
+
+
+EXPECTED_ANNOTATIONS = {
+    "read_health_data": _READ_ONLY,
+    "export_health_data_csv": _mutating(destructive=True, idempotent=True),
+    "log_daily_metric": _mutating(destructive=True, idempotent=True),
+    "clear_metric": _mutating(destructive=True, idempotent=True),
+    "log_measurement": _mutating(destructive=False, idempotent=False),
+    "read_measurements": _READ_ONLY,
+    "log_workout_session": _mutating(destructive=False, idempotent=False),
+    "read_workout_sessions": _READ_ONLY,
+    "aggregate_measurements": _READ_ONLY,
+    "get_metric_provenance": _READ_ONLY,
+    "get_metric_history": _READ_ONLY,
+    "get_baseline": _READ_ONLY,
+    "detect_metric_anomalies": _READ_ONLY,
+    "calculate_metric_trend": _READ_ONLY,
+    "compare_metric_periods": _READ_ONLY,
+    "find_metric_correlation": _READ_ONLY,
+    "get_recent_changes": _READ_ONLY,
+    "explain_metric_change": _READ_ONLY,
+}
+
+
+async def test_tool_annotations_complete(client):
     """Directory checkers (e.g. OpenAI's) read the wire-level tool definition,
-    and MCP clients treat an omitted destructiveHint as True. Assert every
-    registered tool sets all four hints as real booleans via list_tools(),
-    so a new tool can't ship with a hint silently omitted.
+    and MCP clients treat an omitted destructiveHint as True. Compare the exact
+    serialized annotations (camelCase wire names, by_alias=True) of every tool
+    returned by list_tools() against EXPECTED_ANNOTATIONS. This fails if a tool
+    is added/removed, if any of the four hints is missing (exclude_none drops
+    unset fields, so a missing hint shows up as a missing key), or if a value
+    flips to the wrong boolean.
     """
     tools = await client.list_tools()
-    assert tools, "expected at least one registered tool"
+    assert len(EXPECTED_ANNOTATIONS) == 18
+    assert {tool.name for tool in tools} == set(EXPECTED_ANNOTATIONS)
+
     for tool in tools:
-        annotations = tool.annotations
-        assert annotations is not None, f"{tool.name}: no annotations"
-        for hint in ("read_only_hint", "destructive_hint", "idempotent_hint", "open_world_hint"):
-            assert isinstance(getattr(annotations, hint), bool), f"{tool.name}: {hint} is not an explicit bool"
+        assert tool.annotations is not None, f"{tool.name}: no annotations"
+        actual = tool.annotations.model_dump(by_alias=True, exclude_none=True, exclude={"title"})
+        assert actual == EXPECTED_ANNOTATIONS[tool.name], (
+            f"{tool.name}: expected {EXPECTED_ANNOTATIONS[tool.name]!r}, got {actual!r}"
+        )
+        # `==` on dicts treats True == 1; also require real booleans.
+        assert all(type(v) is bool for v in actual.values()), f"{tool.name}: non-bool hint in {actual!r}"
 
 
 async def test_call_tool_round_trip_through_the_protocol(client):
