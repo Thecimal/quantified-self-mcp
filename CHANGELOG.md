@@ -7,6 +7,15 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Fixed
+- **Explicit `destructiveHint` on every tool** — ten tools omitted it, so
+  MCP clients fell back to the spec default (`true`). All 18 tools now
+  set all four annotation hints explicitly.
+- **`export_health_data_csv` annotations** — it writes a CSV to disk, so
+  it is now `readOnlyHint=False` (was `True`) and `idempotentHint=True`
+  (was `False`; the filename is deterministic per date range, so repeat
+  calls rewrite the same file rather than adding new ones).
+
 ### Added
 - **Multi-metric `coverage` on `read_health_data`** — per-metric
   coverage percentages plus an overall `coverage_percent`/`confidence`

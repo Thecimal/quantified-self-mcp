@@ -86,7 +86,27 @@ async def test_list_tools_exposes_all_expected_tools_with_schemas_and_annotation
     # not just internal metadata.
     assert tools["read_health_data"].annotations.read_only_hint is True
     assert tools["clear_metric"].annotations.destructive_hint is True
-    assert tools["export_health_data_csv"].annotations.read_only_hint is True
+    # export_health_data_csv writes a file to disk, so it is not read-only
+    # even though it never writes the database.
+    export_annotations = tools["export_health_data_csv"].annotations
+    assert export_annotations.read_only_hint is False
+    assert export_annotations.destructive_hint is False
+    assert export_annotations.idempotent_hint is True
+
+
+async def test_every_tool_declares_all_four_annotation_hints_explicitly(client):
+    """Directory checkers (e.g. OpenAI's) read the wire-level tool definition,
+    and MCP clients treat an omitted destructiveHint as True. Assert every
+    registered tool sets all four hints as real booleans via list_tools(),
+    so a new tool can't ship with a hint silently omitted.
+    """
+    tools = await client.list_tools()
+    assert tools, "expected at least one registered tool"
+    for tool in tools:
+        annotations = tool.annotations
+        assert annotations is not None, f"{tool.name}: no annotations"
+        for hint in ("read_only_hint", "destructive_hint", "idempotent_hint", "open_world_hint"):
+            assert isinstance(getattr(annotations, hint), bool), f"{tool.name}: {hint} is not an explicit bool"
 
 
 async def test_call_tool_round_trip_through_the_protocol(client):

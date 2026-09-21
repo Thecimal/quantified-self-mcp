@@ -739,6 +739,7 @@ def _is_locked_error(exc: Exception) -> bool:
     annotations=ToolAnnotations(
         title="Read health data",
         readOnlyHint=True,  # opened via _readonly_connection; cannot write
+        destructiveHint=False,
         idempotentHint=True,  # same args -> same result, no side effects
         openWorldHint=False,  # only ever touches the local SQLite file
     )
@@ -847,8 +848,9 @@ def read_health_data(start_date: str | None = None, end_date: str | None = None)
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Export health data to CSV",
-        readOnlyHint=True,  # opened via _readonly_connection; cannot write the database
-        idempotentHint=False,  # writes a new file each call
+        readOnlyHint=False,  # writes a CSV file to the local exports/ directory
+        destructiveHint=False,  # never touches the database; only creates/overwrites its own export file
+        idempotentHint=True,  # deterministic filename per date range -> repeat calls rewrite the same file
         openWorldHint=False,  # only ever touches the local SQLite file and local disk
     )
 )
@@ -1628,6 +1630,7 @@ def get_metric_provenance(metric: str, date: str) -> GetMetricProvenanceResult:
     annotations=ToolAnnotations(
         title="Get metric history",
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
@@ -1685,6 +1688,7 @@ def get_metric_history(
     annotations=ToolAnnotations(
         title="Get metric baseline",
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
@@ -1749,6 +1753,7 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
     annotations=ToolAnnotations(
         title="Detect metric anomalies",
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
@@ -1824,6 +1829,7 @@ def detect_metric_anomalies(
     annotations=ToolAnnotations(
         title="Calculate metric trend",
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
@@ -1893,6 +1899,7 @@ def calculate_metric_trend(
     annotations=ToolAnnotations(
         title="Compare two periods",
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
@@ -1980,6 +1987,7 @@ def compare_metric_periods(
     annotations=ToolAnnotations(
         title="Find correlation between two metrics",
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
@@ -2084,6 +2092,7 @@ def find_metric_correlation(
     annotations=ToolAnnotations(
         title="Get recent changes",
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
@@ -2220,6 +2229,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
     annotations=ToolAnnotations(
         title="Explain a metric change",
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
