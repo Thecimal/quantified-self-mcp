@@ -8,6 +8,18 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 ## [Unreleased]
 
 ### Fixed
+- **Apple Health import day-shift bug** — `adapt_apple_health`'s
+  `raw_measurements` kept each record's original UTC offset (e.g.
+  `"...T23:30:00-08:00"`), but `db/aggregation.py` buckets `daily_metrics`
+  with plain SQLite `date(timestamp)`, which normalizes an offset-aware
+  timestamp to UTC before taking the date. A record from the evening or
+  night in any non-UTC timezone was silently stored under the *next* UTC
+  calendar day — disagreeing with both the adapter's own `rows`/`--report`
+  output and with what the source device showed, and feeding every
+  downstream analytics/evidence tool the wrong day. `raw_measurements`
+  timestamps are now stored as naive local wall-clock time (tzinfo
+  stripped), matching the convention every other timestamp in
+  `measurements` already follows.
 - **Explicit `destructiveHint` on every tool** — ten tools omitted it, so
   MCP clients fell back to the spec default (`true`). All 18 tools now
   set all four annotation hints explicitly.

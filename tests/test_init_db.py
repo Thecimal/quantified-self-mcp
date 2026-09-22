@@ -362,6 +362,35 @@ def test_init_health_db_auto_detects_apple_health_from_xml_extension(tmp_path):
     assert rows == [{"date": "2026-01-15", "steps": 4000}]
 
 
+def test_init_health_db_apple_health_late_night_record_lands_on_the_local_day(tmp_path):
+    # Reproduces a real day-shift bug: Apple Health's raw_measurements
+    # timestamps used to keep their UTC offset (e.g. "...T23:30:00-08:00"),
+    # and db/aggregation.py buckets daily_metrics with plain SQLite
+    # `date(timestamp)`, which normalizes an offset-aware string to UTC
+    # before taking the date -- silently moving a late-night local record
+    # into daily_metrics under the *next* UTC day. Before the fix, this
+    # assertion read ('2026-01-16', 'steps', 500.0): the CLI's own printed
+    # "Date range: 2026-01-15 -> 2026-01-15" report disagreed with what was
+    # actually stored, which every analytics/evidence tool in server.py
+    # reads via _fetch_metric_series.
+    export = tmp_path / "export.xml"
+    export.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<HealthData locale="en_US">\n'
+        '<Record type="HKQuantityTypeIdentifierStepCount" unit="count" '
+        'startDate="2026-01-15 23:30:00 -0800" endDate="2026-01-15 23:35:00 -0800" value="500"/>\n'
+        "</HealthData>\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "health.db"
+
+    init_health_db(export, db_path, replace=False)
+
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute("SELECT date, metric, value FROM daily_metrics WHERE metric = 'steps'").fetchall()
+    conn.close()
+    assert rows == [("2026-01-15", "steps", 500.0)]
+
+
 def test_init_health_db_writes_raw_measurements_with_provenance_from_apple_health(tmp_path):
     export = tmp_path / "export.xml"
     export.write_text(

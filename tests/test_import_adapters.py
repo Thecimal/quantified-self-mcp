@@ -212,6 +212,31 @@ def test_apple_health_raw_measurements_empty_when_no_matching_records(tmp_path):
     assert result.raw_measurements == []
 
 
+def test_apple_health_raw_measurement_timestamp_is_naive_local_not_utc_shifted(tmp_path):
+    # A record recorded late at night in a negative UTC offset is on the
+    # *next* UTC calendar day. If raw_measurements kept that offset,
+    # bulk_import_measurements -> db/aggregation.py's plain SQLite
+    # `date(timestamp)` bucketing would normalize it to UTC and silently
+    # move it to the following day in daily_metrics -- disagreeing with
+    # both `rows` below (this same adapter's own local-day aggregate) and
+    # with what the source device/app reports. See
+    # test_init_health_db_apple_health_late_night_record_lands_on_the_local_day
+    # in test_init_db.py for the same bug caught end-to-end through the DB.
+    path = _write_export(
+        tmp_path,
+        """
+        <Record type="HKQuantityTypeIdentifierStepCount" unit="count"
+                startDate="2026-01-15 23:30:00 -0800" endDate="2026-01-15 23:35:00 -0800" value="500"/>
+        """,
+    )
+    result = adapt_apple_health(path)
+    assert result.rows == [{"date": "2026-01-15", "steps": 500}]
+    assert len(result.raw_measurements) == 1
+    ts = result.raw_measurements[0]["timestamp"]
+    assert ts == "2026-01-15T23:30:00"  # naive, no "-08:00" offset
+    assert ts.startswith("2026-01-15")  # matches `rows`, not the UTC-shifted next day
+
+
 def test_apple_health_is_registered_in_adapters():
     assert ADAPTERS["apple-health"] is adapt_apple_health
 

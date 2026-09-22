@@ -196,9 +196,26 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                 # Recorded pre-conversion, in the source's own unit — this
                 # is the provenance layer, not the daily_metrics aggregate
                 # above, so it keeps exactly what the device reported.
+                #
+                # tzinfo is dropped here deliberately: `when` carries
+                # Apple's own UTC offset (from the "%z" in
+                # _APPLE_DATETIME_FORMAT), but every other timestamp this
+                # project writes to `measurements` — CSV rows and the
+                # noon-placeholder rows measurement_rows_from_daily
+                # produces — is naive local wall-clock time, and
+                # db/aggregation.py buckets a day with plain SQLite
+                # `date(timestamp)`. SQLite's date() normalizes an
+                # offset-aware string to UTC before taking the date part
+                # (confirmed: date('2026-01-15T23:30:00-08:00') ==
+                # '2026-01-16'), so keeping the offset here would silently
+                # bucket any evening/night record into daily_metrics under
+                # the *next* UTC day — disagreeing with both `day` above
+                # (used for this same adapter's own `rows`/--report
+                # output) and with what the user's device shows. Stripping
+                # tzinfo keeps the wall-clock date the source reported.
                 raw_measurements.append(
                     {
-                        "timestamp": when.isoformat(),
+                        "timestamp": when.replace(tzinfo=None).isoformat(),
                         "metric": col,
                         "value": float(elem.get("value")),
                         "unit": elem.get("unit"),
