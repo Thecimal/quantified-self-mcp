@@ -1,7 +1,7 @@
 -r requirements.txt
 pytest>=9.1.1,<10.0
 pytest-asyncio>=1.4.0,<2.0
-ruff>=0.16.7,<0.17
+ruff>=0.16.8,<0.17
 # Optional at runtime (see logic.py's "Database encryption" section) but a
 # real dependency for tests, so tests/test_logic.py's encryption tests
 # exercise the actual package rather than a mock.
