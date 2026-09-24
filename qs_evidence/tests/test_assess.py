@@ -45,6 +45,7 @@ def test_every_registry_analysis_has_an_assess_entry_point_and_lists_exactly_its
     calls = {
         "trend": lambda: assess_mod.assess_trend("m", pts(v), START, end_of(60)),
         "anomaly": lambda: assess_mod.assess_anomaly("m", pts(v), START, end_of(60)),
+        "baseline": lambda: assess_mod.assess_baseline("m", pts(v), START, end_of(60)),
         "correlation": lambda: assess_mod.assess_correlation("a", pts(v), "b", pts(v), START, end_of(60)),
         "window_comparison": lambda: assess_mod.assess_window_comparison(
             "m",
@@ -175,3 +176,42 @@ def test_n_eff_is_bounded_by_n_paired_and_handles_constant_series():
     assert assess_mod.lag1_n_eff(x, flat, 30) is None
     alt = assess_mod.align(pts([1.0, -1.0] * 15), START, end_of(30))  # rx*ry -> +1 with itself, negative with shift
     assert assess_mod.lag1_n_eff(alt, alt, 30) <= 30
+
+
+# ---- baseline ---------------------------------------------------------------------------------------
+
+
+def test_baseline_clean_window_is_supported_with_only_its_three_dimensions():
+    a = assess_mod.assess_baseline("m", pts(wave(60)), START, end_of(60), effect={"n": 60})
+    assert {d.dimension for d in a.profile.dimensions} == {Dimension.SAMPLE, Dimension.TEMPORAL, Dimension.MISSINGNESS}
+    assert all(d.status == Status.ADEQUATE for d in a.profile.dimensions)
+    assert a.decision.tier == ClaimTier.SUPPORTED and a.decision.limiting_factors == []
+    assert a.profile.effect == {"n": 60}
+
+
+@pytest.mark.parametrize("values", [wave(10), []])
+def test_baseline_too_short_or_empty_is_insufficient(values):
+    a = assess_mod.assess_baseline("m", pts(values), START, end_of(max(len(values), 10)))
+    assert a.decision.tier == ClaimTier.INSUFFICIENT
+    assert {"baseline_too_short", "baseline_too_few_observations"} <= set(a.decision.limiting_factors)
+
+
+def test_baseline_recent_gap_limits_the_claim_without_blocking_it():
+    a = assess_mod.assess_baseline("m", pts(gap_last(wave(60), 6)), START, end_of(60))
+    assert a.decision.tier == ClaimTier.SUGGESTIVE
+    assert "recent_window_gap" in a.decision.limiting_factors
+
+
+def test_baseline_constant_series_is_not_blocked_by_zero_variance():
+    a = assess_mod.assess_baseline("m", pts([50.0] * 60), START, end_of(60))
+    by = {d.dimension: d for d in a.profile.dimensions}
+    assert by[Dimension.SAMPLE].status == Status.ADEQUATE
+    assert a.decision.tier == ClaimTier.SUPPORTED
+
+
+def test_baseline_drifting_window_is_capped_by_a_diagnostic_never_blocked():
+    drifting = wave(30) + wave(30, base=80.0)
+    a = assess_mod.assess_baseline("m", pts(drifting), START, end_of(60))
+    sample = next(d for d in a.profile.dimensions if d.dimension == Dimension.SAMPLE)
+    assert sample.status == Status.WEAK and sample.can_block is False
+    assert a.decision.tier == ClaimTier.SUGGESTIVE and "baseline_unstable" in a.decision.limiting_factors

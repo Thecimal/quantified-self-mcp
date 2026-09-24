@@ -1,4 +1,11 @@
-from .assess import Assessment, assess_anomaly, assess_correlation, assess_trend, assess_window_comparison
+from .assess import (
+    Assessment,
+    assess_anomaly,
+    assess_baseline,
+    assess_correlation,
+    assess_trend,
+    assess_window_comparison,
+)
 from .missingness import evaluate_missingness
 from .models import ClaimDecision, ClaimTier, Dimension, DimensionResult, EvidenceProfile, Status
 from .registry import AnalysisSpec, load_registry
@@ -21,6 +28,7 @@ __all__ = [
     "evaluate_sample",
     "Assessment",
     "assess_anomaly",
+    "assess_baseline",
     "assess_correlation",
     "assess_trend",
     "assess_window_comparison",

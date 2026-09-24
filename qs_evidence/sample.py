@@ -219,11 +219,62 @@ def evaluate_anomaly(
     return _result(checks, not_assessed)
 
 
+def evaluate_baseline(
+    values: Sequence[float | None],
+    thresholds: dict[str, Any] | None = None,
+) -> DimensionResult:
+    """Sample adequacy of a "what's normal" window. `values` is daily-aligned (None = missing).
+
+    Same length rule as evaluate_anomaly (first to last observation, plus observation count), and both block.
+    Zero variance does not: a constant series still has a well-defined mean/median, unlike a z-score. Drift
+    between the window's halves and MAD contamination are diagnostic (WEAK, can_block=False).
+    """
+    t = _merge(thresholds)
+    observed = [i for i, v in enumerate(values) if _finite(v)]
+    vals = [float(values[i]) for i in observed]
+    span = observed[-1] - observed[0] + 1 if observed else 0
+    checks = [
+        _at_least("baseline_days", "baseline_too_short", span, t["min_baseline_days"], True),
+        _at_least("baseline_obs", "baseline_too_few_observations", len(vals), t["min_baseline_obs"], True),
+    ]
+    not_assessed: list[str] = []
+    drift = _baseline_drift(values, t)
+    if drift is None:
+        not_assessed.append("baseline_stability")
+    else:
+        checks.append(
+            _Check(
+                "baseline_stability",
+                "baseline_unstable",
+                round(drift, 3) if math.isfinite(drift) else None,
+                t["baseline_drift_max"],
+                drift <= t["baseline_drift_max"],
+                False,
+            )
+        )
+    frac = _contamination_frac(vals, t["contamination_z"]) if len(vals) >= 5 else None
+    if frac is None:
+        not_assessed.append("baseline_contamination")
+    else:
+        checks.append(
+            _Check(
+                "baseline_contamination",
+                "baseline_contaminated",
+                round(frac, 3),
+                t["max_contamination_frac"],
+                frac <= t["max_contamination_frac"],
+                False,
+            )
+        )
+    return _result(checks, not_assessed)
+
+
 _EVALUATORS: dict[str, Callable[..., DimensionResult]] = {
     "window_comparison": evaluate_window_comparison,
     "trend": evaluate_trend,
     "correlation": evaluate_correlation,
     "anomaly": evaluate_anomaly,
+    "baseline": evaluate_baseline,
 }
 
 

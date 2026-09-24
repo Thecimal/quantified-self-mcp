@@ -163,6 +163,31 @@ def test_anomaly_mad_zero_contamination_not_assessed():
     assert r.status == S.ADEQUATE and "baseline_contamination" in r.details["not_assessed"]
 
 
+# ---- baseline ---------------------------------------------------------------------------------------
+
+
+def test_baseline_length_and_observation_count_block():
+    assert sample.evaluate_baseline(wave(30)).status == S.ADEQUATE
+    short = sample.evaluate_baseline(wave(20))
+    assert short.status == S.BLOCKING and "baseline_too_short" in short.reason_codes
+    sparse = sample.evaluate_baseline([50.0, 51.0] + [None] * 26 + [52.0, 53.0])  # long span, only 4 observations
+    assert sparse.status == S.BLOCKING and sparse.reason_codes == ["baseline_too_few_observations"]
+
+
+def test_baseline_zero_variance_is_adequate_unlike_anomaly():
+    flat = [50.0] * 30
+    assert sample.evaluate_baseline(flat).status == S.ADEQUATE
+    assert sample.evaluate_anomaly(flat).status == S.BLOCKING
+
+
+def test_baseline_drift_and_contamination_are_diagnostic_only():
+    drifting = sample.evaluate_baseline(wave(15) + wave(15, base=80.0))
+    assert drifting.status == S.WEAK and drifting.can_block is False
+    assert drifting.reason_codes == ["baseline_unstable"]
+    contaminated = sample.evaluate_baseline(wave(24) + [500.0, -400.0, 600.0, -300.0, 700.0, -500.0])
+    assert contaminated.can_block is False and "baseline_contaminated" in contaminated.reason_codes
+
+
 # ---- dispatch / registry ----------------------------------------------------------------------
 
 

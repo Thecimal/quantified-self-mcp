@@ -51,3 +51,10 @@ anomaly:
     provenance:           {on_not_assessed: cap}
   thresholds:
     min_baseline_days: 28
+baseline:
+  dimensions:
+    sample:               {on_not_assessed: cap}   # window length / observation count
+    temporal:             {on_not_assessed: cap}
+    missingness:          {on_not_assessed: cap}
+  thresholds:
+    min_baseline_days: 28   # same policy as anomaly's baseline requirement

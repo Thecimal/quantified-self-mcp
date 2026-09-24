@@ -314,6 +314,44 @@ async def test_explain_metric_change_thin_history_is_insufficient(client):
     assert decision["tier"] == "insufficient" and "baseline_too_short" in decision["must_state"]
 
 
+# ---- baseline ---------------------------------------------------------------------------------------------
+
+
+async def test_baseline_carries_a_claim_envelope_and_short_windows_are_insufficient(client):
+    series = [8000 + (i % 5) * 50 for i in range(60)]
+    args = {"metric": "steps", "start_date": iso(START), "end_date": iso(START + timedelta(days=59))}
+    await seed(client, "steps", series)
+    full = (await client.call_tool("get_baseline", args)).structured_content
+    short = (
+        await client.call_tool("get_baseline", {**args, "start_date": iso(START + timedelta(days=45))})
+    ).structured_content
+
+    for sc in (full, short):
+        claim = sc["claim"]
+        assert set(claim) == {"evidence", "profile", "decision"}
+        assert claim["profile"]["analysis"] == "baseline"
+        assert {d["dimension"] for d in claim["profile"]["dimensions"]} == {d.value for d in REG["baseline"].dimensions}
+        assert claim["decision"]["tier"] in {t.value for t in ClaimTier} and claim["decision"]["template"]
+        assert claim["evidence"] == sc["evidence"]  # legacy field stays identical during the deprecation release
+    assert full["claim"]["decision"]["tier"] == "supported" and full["claim"]["decision"]["must_state"] == []
+    assert short["claim"]["decision"]["tier"] == "insufficient"
+    assert "baseline_too_short" in short["claim"]["decision"]["must_state"]
+    assert full["baseline"]["n"] == 60 and short["baseline"]["n"] == 15  # statistics themselves are unaffected
+
+
+async def test_baseline_with_no_data_is_insufficient_not_an_error(client):
+    args = {"metric": "steps", "start_date": iso(START), "end_date": iso(START + timedelta(days=29))}
+    sc = (await client.call_tool("get_baseline", args)).structured_content
+    assert sc["baseline"]["n"] == 0
+    assert sc["claim"]["decision"]["tier"] == "insufficient"
+
+
+async def test_baseline_schema_declares_claim_and_deprecates_legacy_evidence(client):
+    schema = {t.name: t for t in await client.list_tools()}["get_baseline"].output_schema
+    assert "claim" in schema["properties"] and "claim" in schema["required"]
+    assert schema["properties"]["evidence"].get("deprecated") is True
+
+
 # ---- contract: nothing analytical bypasses the pipeline ---------------------------------------------------
 
 

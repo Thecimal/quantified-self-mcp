@@ -22,7 +22,13 @@ from .missingness import evaluate_missingness
 from .models import ClaimDecision, Dimension, DimensionResult, EvidenceProfile, Status
 from .registry import AnalysisSpec, load_registry
 from .resolver import resolve
-from .sample import evaluate_anomaly, evaluate_correlation, evaluate_trend, evaluate_window_comparison
+from .sample import (
+    evaluate_anomaly,
+    evaluate_baseline,
+    evaluate_correlation,
+    evaluate_trend,
+    evaluate_window_comparison,
+)
 from .temporal import evaluate_temporal
 
 NOT_IMPLEMENTED = "evaluator_not_implemented"
@@ -223,5 +229,27 @@ def assess_anomaly(
         {
             Dimension.SAMPLE: evaluate_anomaly(values, t),
             Dimension.TEMPORAL: evaluate_temporal(values, start, t),
+        },
+    )
+
+
+def assess_baseline(
+    metric: str,
+    points: Iterable[tuple[date, float]],
+    start: date,
+    end: date,
+    effect: dict[str, Any] | None = None,
+) -> Assessment:
+    """A "what's normal" claim over the window: sample adequacy, temporal spread and missingness."""
+    t = _thresholds(_registry()["baseline"])
+    values = align(points, start, end)
+    return _finish(
+        "baseline",
+        metric,
+        effect,
+        {
+            Dimension.SAMPLE: evaluate_baseline(values, t),
+            Dimension.TEMPORAL: evaluate_temporal(values, start, t),
+            Dimension.MISSINGNESS: evaluate_missingness(values, thresholds=t),
         },
     )

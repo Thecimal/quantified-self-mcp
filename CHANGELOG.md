@@ -7,6 +7,16 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Added
+- **Baseline evidence claim** — `get_baseline` now runs through the same
+  pipeline as the other analyses (registry policy -> `assess_baseline` ->
+  `EvidenceProfile` -> `ClaimDecision`) and returns it in a new canonical
+  `claim` envelope (`evidence` / `profile` / `decision`). The `baseline`
+  registry entry lists only dimensions that have evaluators (sample,
+  temporal, missingness) and reuses the anomaly baseline-length policy
+  (`min_baseline_days: 28`). The top-level `evidence` field is deprecated in
+  favor of `claim.evidence` and stays identical for one release.
+
 ### Fixed
 - **Apple Health import day-shift bug** — `adapt_apple_health`'s
   `raw_measurements` kept each record's original UTC offset (e.g.

@@ -106,6 +106,7 @@ from qs_evidence import (
     Assessment,
     EvidenceProfile,
     assess_anomaly,
+    assess_baseline,
     assess_correlation,
     assess_trend,
     assess_window_comparison,
@@ -351,6 +352,28 @@ class ClaimFields(BaseModel):
     )
 
 
+class ClaimEvidence(BaseModel):
+    """Canonical envelope for one assessed claim: the coverage evidence it rests on, the per-dimension
+    EvidenceProfile, and the resulting ClaimDecision. Migrating tools adopt it one at a time; see
+    ClaimFields for the legacy flat fields it replaces."""
+
+    evidence: Evidence = Field(description="Descriptive data coverage behind this claim.")
+    profile: EvidenceProfile = Field(
+        description=(
+            "Per-dimension evidence quality behind this claim (sample, temporal, missingness, ...). "
+            "Dimensions without an evaluator yet are 'not_assessed' and cap the claim, "
+            "never count as adequate."
+        ),
+    )
+    decision: ClaimDecisionOut = Field(
+        description=(
+            "How strongly this claim may be stated. tier is insufficient, suggestive, "
+            "detectable_not_meaningful or supported; every entry in must_state has to be "
+            "mentioned when reporting it."
+        ),
+    )
+
+
 class BaselineStats(BaseModel):
     mean: float | None = None
     median: float | None = None
@@ -362,7 +385,13 @@ class GetBaselineResult(BaseModel):
     metric: str
     range: DateRange
     baseline: BaselineStats
-    evidence: Evidence
+    claim: ClaimEvidence = Field(
+        description="Evidence and decision for the \"what's normal\" claim; read claim.decision before reporting it."
+    )
+    evidence: Evidence = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
+    )
 
 
 class AnomalyPoint(BaseModel):
@@ -674,6 +703,15 @@ def _claim_fields(assessment: Assessment, prefix: str = "") -> dict:
         f"{prefix}evidence_profile": assessment.profile,
         f"{prefix}claim_decision": ClaimDecisionOut(**assessment.decision.to_mcp()),
     }
+
+
+def _claim_evidence(assessment: Assessment, evidence: Evidence) -> ClaimEvidence:
+    """Canonical ClaimEvidence envelope for one assessed claim."""
+    return ClaimEvidence(
+        evidence=evidence,
+        profile=assessment.profile,
+        decision=ClaimDecisionOut(**assessment.decision.to_mcp()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1731,24 +1769,29 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
 
     Returns:
         A GetBaselineResult with "baseline" (mean/median/stdev/n) plus
-        "evidence" — how much of the window this baseline is actually
-        based on. When evidence.confidence is "moderate" or "low", say so
-        when reporting the baseline (e.g. "based on only 60% of days")
-        rather than stating mean/median as if they were computed from a
-        complete series. All baseline fields are null and n is 0 if the
-        metric has no data in range — not an error, since "nothing logged
-        yet" is an expected state.
+        "claim" — the evidence behind it (claim.evidence: how much of the
+        window it is based on; claim.profile: per-dimension quality) and
+        claim.decision, which says how strongly the baseline may be stated.
+        Report every entry in claim.decision.must_state (e.g. "based on only
+        60% of days") rather than stating mean/median as if they were
+        computed from a complete series. All baseline fields are null and n
+        is 0 if the metric has no data in range — not an error, since
+        "nothing logged yet" is an expected state.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
     except ValueError as exc:
         raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
     series = _fetch_metric_series(metric, start, end)
+    stats = _baseline_stats(series)
+    evidence = Evidence(**build_evidence(series, start, end))
+    assessment = assess_baseline(metric, series, start, end, effect=stats.model_dump())
     return GetBaselineResult(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
-        baseline=_baseline_stats(series),
-        evidence=Evidence(**build_evidence(series, start, end)),
+        baseline=stats,
+        claim=_claim_evidence(assessment, evidence),
+        evidence=evidence,
     )
 
 

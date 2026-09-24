@@ -14,7 +14,7 @@ def _claim_fields(model):
     return {
         n: f
         for n, f in model.model_fields.items()
-        if n.endswith(("evidence_profile", "claim_decision"))
+        if n == "claim" or n.endswith(("evidence_profile", "claim_decision"))
     }
 
 
@@ -22,7 +22,7 @@ def _claim_fields(model):
 # Descriptive results that carry coverage evidence but make no analytical claim.
 NOT_CLAIM_BEARING: set[str] = {
     "GetMetricHistoryResult",  # raw history, no claim
-    "GetBaselineResult",  # descriptive baseline stats, no claim
+    "ClaimEvidence",  # the canonical claim envelope itself, not a result that carries one
 }
 
 EVIDENCE_MODELS = [
@@ -75,3 +75,9 @@ def test_trend_result_without_claim_fields_is_rejected():
                 confidence="high",
             ),
         )
+
+
+def test_baseline_result_requires_the_canonical_claim_envelope():
+    field = server.GetBaselineResult.model_fields["claim"]
+    assert field.is_required() and field.annotation is server.ClaimEvidence
+    assert server.GetBaselineResult.model_fields["evidence"].deprecated
