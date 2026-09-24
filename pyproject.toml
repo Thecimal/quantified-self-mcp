@@ -39,6 +39,7 @@ include = [
     "server.py",
     "init_db.py",
     "logic.py",
+    "metric_registry.py",
     "analytics.py",
     "evidence.py",
     "import_adapters.py",

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from db import invariant as db_invariant
+from metric_registry import metric_bounds
 
 logger = logging.getLogger("quantified-self-mcp")
 
@@ -1082,17 +1083,10 @@ def count_source_conflicts(conn: sqlite3.Connection, metric: str, start: date, e
 # what's "normal". mood is fixed at 1-10 so the scale is consistent across
 # every log_daily_metric call, rather than left to whatever scale a given
 # session happens to use.
-METRIC_BOUNDS = {
-    "steps": (0, 200_000, "steps"),
-    "sleep_hours": (0, 24, "sleep_hours"),
-    "resting_heart_rate": (20, 250, "resting_heart_rate (bpm)"),
-    "weight_kg": (1, 500, "weight_kg"),
-    "workout_minutes": (0, 1440, "workout_minutes"),
-    "mood": (1, 10, "mood (expected on a 1-10 scale)"),
-    "water_ml": (0, 10_000, "water_ml"),
-    "heart_rate": (20, 250, "heart_rate (bpm)"),
-    "hrv_ms": (0, 300, "hrv_ms (ms)"),
-}
+# Derived from metric_registry.METRICS, where each metric's range and
+# label are now declared; still exported under this name because
+# server.py, sample_data and the tests import it from here.
+METRIC_BOUNDS = metric_bounds()
 
 
 def validate_metrics(metrics: dict[str, Any]) -> None:

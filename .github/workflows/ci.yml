@@ -58,12 +58,13 @@ jobs:
       - name: Verify wheel contains all required modules
         run: |
           pip install --force-reinstall dist/*.whl
-          python -c "import server, init_db, logic, analytics, evidence, import_adapters, qs_evidence; print('wheel contents OK')"
+          python -c "import server, init_db, logic, metric_registry, analytics, evidence, import_adapters, qs_evidence; print('wheel contents OK')"
           python - <<'PY'
           import glob, zipfile
           names = set(zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist())
           required = {
-              'server.py', 'init_db.py', 'logic.py', 'analytics.py', 'evidence.py', 'import_adapters.py',
+              'server.py', 'init_db.py', 'logic.py', 'metric_registry.py', 'analytics.py', 'evidence.py',
+              'import_adapters.py',
               'qs_evidence/__init__.py', 'qs_evidence/models.py', 'qs_evidence/registry.py',
               'qs_evidence/registry.yaml', 'qs_evidence/resolver.py', 'qs_evidence/sample.py',
           }

@@ -101,6 +101,7 @@ from logic import (
 from logic import (
     readonly_connection as _logic_readonly_connection,
 )
+from metric_registry import INT_METRIC_KEYS, METRIC_KEYS
 from qs_evidence import (
     Assessment,
     EvidenceProfile,
@@ -139,18 +140,11 @@ CLOUD_MODEL_WARNING = (
 )
 
 # All non-date columns in daily_metrics, in the order they're selected and
-# reported — the single place to touch when another metric is added.
-METRIC_COLUMNS = [
-    "steps",
-    "sleep_hours",
-    "resting_heart_rate",
-    "weight_kg",
-    "workout_minutes",
-    "mood",
-    "water_ml",
-    "heart_rate",
-    "hrv_ms",
-]
+# reported. Derived from metric_registry.METRICS; the DailyMetricsRow and
+# HealthDataSummary models and log_daily_metric's parameters below still
+# list each metric by hand (tests/test_metric_registry.py fails if the
+# models drift from the registry).
+METRIC_COLUMNS = list(METRIC_KEYS)
 
 # ---------------------------------------------------------------------------
 # Output schemas
@@ -538,12 +532,10 @@ PRIVATE_FIELDS = _parse_private_fields(os.environ.get("HEALTH_PRIVATE_FIELDS", "
 # type (see db/schema.sql), so a "mean"-method metric can come back with a
 # genuine fractional part -- e.g. two resting_heart_rate readings of 62
 # and 67 average to 64.5 -- that DailyMetricsRow's `int` fields would
-# otherwise reject outright rather than silently truncate. Listed
-# explicitly (matching METRIC_COLUMNS/METRIC_BOUNDS' style elsewhere in
-# this file) rather than introspected from the pydantic model, since only
-# these are declared `int` there; sleep_hours/weight_kg/hrv_ms are `float`
-# and never need this.
-INT_METRIC_COLUMNS = frozenset({"steps", "resting_heart_rate", "workout_minutes", "mood", "water_ml", "heart_rate"})
+# otherwise reject outright rather than silently truncate. Derived from
+# metric_registry (value_type == "int"); the pydantic models' annotations
+# must agree with it, which tests/test_metric_registry.py checks.
+INT_METRIC_COLUMNS = INT_METRIC_KEYS
 
 
 def _redact_private_fields(row: dict) -> dict:
