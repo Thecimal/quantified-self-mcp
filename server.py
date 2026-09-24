@@ -341,16 +341,14 @@ class ClaimFields(BaseModel):
     """Evidence pipeline output shared by every analytical result: registry policy -> evaluators ->
     EvidenceProfile -> weakest-link resolver -> ClaimDecision."""
 
-    evidence_profile: EvidenceProfile | None = Field(
-        default=None,
+    evidence_profile: EvidenceProfile = Field(
         description=(
             "Per-dimension evidence quality behind this result (sample, temporal, missingness, ...). "
             "Dimensions without an evaluator yet are 'not_assessed' and cap the claim, "
             "never count as adequate."
         ),
     )
-    claim_decision: ClaimDecisionOut | None = Field(
-        default=None,
+    claim_decision: ClaimDecisionOut = Field(
         description=(
             "How strongly this result may be stated. tier is insufficient, suggestive, "
             "detectable_not_meaningful or supported; every entry in must_state has to be "
@@ -480,8 +478,8 @@ class ExplainMetricChangeResult(ClaimFields):
     conflicting_days: int = 0
     # evidence_profile/claim_decision above cover the headline claim (this day vs. its 90-day baseline);
     # the 30-day trend is a separate claim with its own.
-    trend_evidence_profile: EvidenceProfile | None = None
-    trend_claim_decision: ClaimDecisionOut | None = None
+    trend_evidence_profile: EvidenceProfile
+    trend_claim_decision: ClaimDecisionOut
 
 
 # ---------------------------------------------------------------------------
