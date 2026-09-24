@@ -98,7 +98,17 @@ def test_ensure_schema_creates_narrow_daily_metrics_projection():
     conn = sqlite3.connect(":memory:")
     ensure_schema(conn)
     columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
-    assert columns == {"date", "metric", "value", "raw_measurement_count", "aggregation_method", "aggregated_at"}
+    assert columns == {
+        "date",
+        "metric",
+        "value",
+        "raw_measurement_count",
+        "aggregation_method",
+        "aggregated_at",
+        "resolved_source",
+        "source_count",
+        "resolution",
+    }
 
 
 def test_ensure_schema_seeds_aggregation_rules_for_every_known_metric():
@@ -222,7 +232,17 @@ def test_ensure_schema_heals_version_for_a_pre_versioning_database():
 
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
-    assert columns == {"date", "metric", "value", "raw_measurement_count", "aggregation_method", "aggregated_at"}
+    assert columns == {
+        "date",
+        "metric",
+        "value",
+        "raw_measurement_count",
+        "aggregation_method",
+        "aggregated_at",
+        "resolved_source",
+        "source_count",
+        "resolution",
+    }
 
 
 def test_ensure_schema_does_not_touch_a_database_from_a_newer_version(caplog):
@@ -632,14 +652,22 @@ def test_resolve_source_conflicts_prefers_explicit_priority():
     assert {r["source"] for r in kept} == {"Apple Watch"}
 
 
-def test_resolve_source_conflicts_falls_back_to_most_recently_imported():
+def test_resolve_source_conflicts_fallback_ignores_when_a_source_was_imported():
+    # imported_at used to decide this; it changes on every re-import, so a
+    # harmless re-run could flip which source won. Observation times decide now.
     rows = [
-        {"source": "Garmin", "value": 67, "imported_at": "2026-06-02T09:00:00"},
-        {"source": "Apple Watch", "value": 62, "imported_at": "2026-06-01T09:00:00"},
+        {
+            "source": "Garmin", "value": 67,
+            "timestamp": "2026-06-01T08:00:00", "imported_at": "2026-06-02T09:00:00",
+        },
+        {
+            "source": "Apple Watch", "value": 62,
+            "timestamp": "2026-06-01T08:30:00", "imported_at": "2026-06-01T09:00:00",
+        },
     ]
     kept, conflict = resolve_source_conflicts(rows)
     assert conflict is True
-    assert {r["source"] for r in kept} == {"Garmin"}
+    assert {r["source"] for r in kept} == {"Apple Watch"}
 
 
 def test_resolve_source_conflicts_is_a_noop_for_a_single_source():

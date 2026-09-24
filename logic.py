@@ -250,6 +250,36 @@ def _migrate_v7_project_daily_metrics_from_measurements(conn: sqlite3.Connection
     db_invariant.repair(conn)
 
 
+# Columns daily_metrics gained when the projection started resolving one source
+# per (metric, day) -- see db/aggregation.py. daily_metrics is derived data, so
+# adding them and rebuilding loses nothing.
+_V8_DAILY_METRICS_COLUMNS = {
+    "resolved_source": "TEXT",
+    "source_count": "INTEGER NOT NULL DEFAULT 1",
+    "resolution": "TEXT NOT NULL DEFAULT 'single' CHECK (resolution IN ('single', 'priority', 'fallback'))",
+}
+
+
+def _migrate_v8_resolve_sources_in_projection(conn: sqlite3.Connection) -> None:
+    """Give daily_metrics its source-resolution columns, create source_priority,
+    seed the one default rank (manual daily-log entries first, once, so removing
+    it later sticks), and rebuild the projection so days that used to blend or
+    sum several sources are recomputed from a single one. Guarded like v2/v4/v5:
+    a brand-new database reaches this with the columns already there, because
+    v7 creates the table from the current db/schema.sql."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
+    for name, declaration in _V8_DAILY_METRICS_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {name} {declaration}")
+    conn.commit()
+    db_invariant.bootstrap(conn)
+    conn.execute(
+        "INSERT OR IGNORE INTO source_priority (metric, rank, source) VALUES ('*', 1, ?)", (DAILY_LOG_SOURCE,)
+    )
+    conn.commit()
+    db_invariant.repair(conn)
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "create daily_metrics table", _migrate_v1_create_table),
     (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
@@ -261,6 +291,11 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
         7,
         "project daily_metrics from measurements (retires the wide per-metric-column table)",
         _migrate_v7_project_daily_metrics_from_measurements,
+    ),
+    (
+        8,
+        "resolve one source per (metric, day) in the daily_metrics projection; add source_priority",
+        _migrate_v8_resolve_sources_in_projection,
     ),
 ]
 
@@ -964,10 +999,14 @@ def resolve_source_conflicts(
     With source_priority given, keeps only the rows from the
     highest-priority source that actually appears (first match in the
     list wins) — e.g. ["Apple Watch", "Garmin"] prefers Apple Watch data
-    whenever both are present for that day. Without a priority list,
-    falls back to whichever source has the most recent imported_at (or
-    created_at if imported_at is null) — i.e. "trust the most recently
-    imported source". A single source (or no rows) is returned unchanged.
+    whenever both are present for that day. Without a priority list (or
+    when none of its sources is present), falls back to the same order
+    db/aggregation.py's projection uses: the source that observed the
+    most distinct hours of the day, then the one with the latest
+    observation, then source name (a missing source last). Hours are
+    read from timestamp[11:13], which matches the projection for the
+    naive timestamps the importers write. A single source (or no rows)
+    is returned unchanged.
     Returns (kept_rows, conflict) — conflict is True whenever this
     function actually had to choose between 2+ distinct sources.
     """
@@ -980,11 +1019,15 @@ def resolve_source_conflicts(
             if preferred in sources:
                 return [r for r in rows if r.get("source") == preferred], True
 
-    def _recency_key(row: dict[str, Any]) -> str:
-        return row.get("imported_at") or row.get("created_at") or ""
+    def _stamps(source: str | None) -> list[str]:
+        return [str(r.get("timestamp") or "") for r in rows if r.get("source") == source]
 
-    newest_source = max(rows, key=_recency_key).get("source")
-    return [r for r in rows if r.get("source") == newest_source], True
+    # Three stable sorts, least significant first: name, then latest observation
+    # (descending), then hours observed (descending).
+    ordered = sorted(sources, key=lambda s: (s is None, s or ""))
+    ordered.sort(key=lambda s: max(_stamps(s)), reverse=True)
+    ordered.sort(key=lambda s: len({t[11:13] for t in _stamps(s) if t[11:13]}), reverse=True)
+    return [r for r in rows if r.get("source") == ordered[0]], True
 
 
 def aggregate_measurements_to_daily(
@@ -1002,19 +1045,18 @@ def aggregate_measurements_to_daily(
     Purely a read-only computation: it does NOT write daily_metrics
     itself (unlike before the measurements/daily_metrics invariant work —
     see db/schema.sql, db/invariant.py). daily_metrics is now a
-    trigger-maintained projection over *every* measurement for a given
-    (date, metric), computed the moment a row is inserted/updated/
-    deleted; there is no way to make it reflect only a source_priority-
-    resolved subset without deleting the other source's raw rows, which
-    this function deliberately does not do. This is therefore a preview
-    of what a given source_priority *would* produce, for comparison
-    against daily_metrics' actual (all-sources) value — see server.py's
-    aggregate_measurements tool, which surfaces both side by side.
+    trigger-maintained projection that keeps one source's observations per
+    (date, metric), chosen from the stored source_priority table (see
+    db/aggregation.py), computed the moment a row is inserted/updated/
+    deleted. This is a preview of what a *different* source_priority would
+    produce, for comparison against daily_metrics' stored value — see
+    server.py's aggregate_measurements tool, which surfaces both side by
+    side. Given no source_priority it reproduces the stored value.
 
     When a metric has measurements from more than one source that day,
     resolve_source_conflicts picks which to keep for this preview (using
-    source_priority if given) rather than blending readings from
-    different devices into one number. See get_metric_provenance to
+    source_priority if given, else the stored one) rather than blending
+    readings from different devices into one number. See get_metric_provenance to
     inspect a disagreement before deciding on a priority.
     """
     methods = dict(conn.execute("SELECT metric, method FROM aggregation_rules").fetchall())
@@ -1033,12 +1075,14 @@ def aggregate_measurements_to_daily(
     for row in rows:
         by_metric.setdefault(row["metric"], []).append(row)
 
+    stored_priority = db_invariant.get_source_priority(conn)
     result: dict[str, Any] = {"date": day}
     for metric, metric_rows in by_metric.items():
         how = methods.get(metric)
         if how is None:
             continue
-        kept_rows, _conflict = resolve_source_conflicts(metric_rows, source_priority)
+        priority = source_priority or stored_priority.get(metric) or stored_priority.get("*")
+        kept_rows, _conflict = resolve_source_conflicts(metric_rows, priority)
         values = [(r["value"], r["timestamp"]) for r in kept_rows]
         if how == "sum":
             result[metric] = sum(v for v, _ts in values)

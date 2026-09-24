@@ -115,13 +115,14 @@ def test_aggregate_measurements_previews_without_writing_daily_metrics(health_db
 
     # The preview reflects source_priority ...
     assert preview.aggregated["resting_heart_rate"] == 62.0
-    # ... but daily_metrics itself (blending both sources via "mean") is
-    # untouched by the call, before and after. (Rounded to the nearest
-    # int -- see INT_METRIC_COLUMNS -- since the true mean, 64.5, isn't
-    # representable in DailyMetricsRow.resting_heart_rate: int.)
-    assert before.rows[0].resting_heart_rate == 64
-    assert after.rows[0].resting_heart_rate == 64
-    assert preview.row.resting_heart_rate == 64
+    # ... but daily_metrics itself is untouched by the call, before and
+    # after. With no stored priority naming either source, the projection
+    # resolves the day to one source deterministically (same hours
+    # observed, so the latest observation wins: Garmin at 08:05) instead
+    # of blending the two readings into 64.5.
+    assert before.rows[0].resting_heart_rate == 67
+    assert after.rows[0].resting_heart_rate == 67
+    assert preview.row.resting_heart_rate == 67
 
 
 def test_read_health_data_rejects_inverted_range(health_db):
@@ -411,8 +412,9 @@ def test_tool_annotations_reflect_read_write_behavior(health_db):
 
     # aggregate_measurements never writes daily_metrics anymore — it's a
     # pure preview (see its docstring for why: daily_metrics is
-    # trigger-maintained from *all* sources, so a source_priority
-    # resolution can't be persisted into it).
+    # trigger-maintained and resolves sources from the stored
+    # source_priority table, so a priority passed to this tool can't be
+    # persisted into it).
     aggregate_tool = get_tool("aggregate_measurements")
     assert aggregate_tool.annotations.read_only_hint is True
     assert aggregate_tool.annotations.destructive_hint is False

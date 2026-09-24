@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS measurements (
 );
 CREATE INDEX IF NOT EXISTS idx_measurements_metric_timestamp
     ON measurements (metric, timestamp);
+-- The projection SQL (db/aggregation.py) always looks measurements up as
+-- (metric, date(timestamp), source). Without an index on that exact
+-- expression every per-key recompute scans all of a metric's rows, which
+-- made a 120k-row repair take ~20s; with it, ~0.1s.
+CREATE INDEX IF NOT EXISTS idx_measurements_metric_day_source
+    ON measurements (metric, date(timestamp), source);
 
 -- Materialized projection of measurements, maintained transactionally by
 -- the triggers in db/aggregation.py's generate_trigger_sql(). Never written
@@ -28,6 +34,18 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
     raw_measurement_count INTEGER NOT NULL,
     aggregation_method    TEXT NOT NULL,
     aggregated_at         TEXT NOT NULL,
+    -- Which source's observations the value was computed from, how many
+    -- distinct sources had data for this (date, metric), and how that
+    -- source was chosen: 'single' (only one source present), 'priority'
+    -- (the highest-ranked present source in source_priority) or
+    -- 'fallback' (several sources, none ranked: most distinct hours
+    -- observed, then latest observation, then source name).
+    -- resolved_source is NULL when the winning rows carry no source
+    -- (e.g. a CSV day total).
+    resolved_source       TEXT,
+    source_count          INTEGER NOT NULL DEFAULT 1,
+    resolution            TEXT NOT NULL DEFAULT 'single'
+        CHECK (resolution IN ('single', 'priority', 'fallback')),
     PRIMARY KEY (date, metric)
 );
 
@@ -56,3 +74,20 @@ INSERT OR IGNORE INTO aggregation_rules (metric, method) VALUES
     ('heart_rate',         'mean'),
     ('mood',               'mean'),
     ('weight_kg',          'last');
+
+-- Which source wins when a (metric, day) has measurements from more than
+-- one source (see db/aggregation.py). One ordered list per metric, or the
+-- '*' list for every metric without its own; a metric with its own list
+-- uses only that list. Not seeded here on purpose: the default
+-- ('*', 1, 'daily-log') is inserted once by schema migration 8, so
+-- removing it is not undone on the next start. Change it through
+-- db.invariant.set_source_priority(), which re-projects daily_metrics in
+-- the same transaction; verify() flags a projection left stale by a
+-- direct edit.
+CREATE TABLE IF NOT EXISTS source_priority (
+    metric TEXT NOT NULL,
+    rank   INTEGER NOT NULL CHECK (rank >= 1),
+    source TEXT NOT NULL,
+    PRIMARY KEY (metric, rank),
+    UNIQUE (metric, source)
+);

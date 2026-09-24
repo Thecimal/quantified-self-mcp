@@ -150,6 +150,26 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 ### Changed
 - CI's "Verify wheel contains all required modules" step now imports
   `analytics` explicitly alongside the existing modules.
+- **`daily_metrics` no longer blends devices** (schema v8). The projection used
+  to aggregate every measurement for a (metric, day), so two devices recording
+  the same walk summed to 19,500 steps from 10,000 + 9,500, two sleep trackers
+  to 14.5 h, and a manual `log_daily_metric` total or a CSV day total stacked
+  on top of an Apple Health import. It now aggregates one source's observations
+  per (metric, day): the highest-ranked present source in the new
+  `source_priority` table (manual `daily-log` entries rank first by default);
+  with none ranked, the source that observed the most distinct hours of the
+  day, then the one with the latest observation, then source name. New
+  `daily_metrics` columns `resolved_source`, `source_count` and `resolution`
+  (`single` / `priority` / `fallback`) record how each value was chosen.
+  Existing databases are migrated and rebuilt on next start, so historical
+  multi-source days change to the single-source value. `db.invariant
+  .set_source_priority()` edits the lists and re-projects in the same
+  transaction; `verify()` flags a projection left stale by a direct edit.
+  The `aggregate_measurements` preview's default fallback now matches the
+  projection instead of using `imported_at`.
+- An expression index on `measurements (metric, date(timestamp), source)`
+  makes the projection's per-day lookups indexed: repairing 120k measurements
+  drops from ~22 s to ~0.1 s.
 
 ## [0.2.0] - 2026-09-06
 

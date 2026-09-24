@@ -128,3 +128,49 @@ def bulk_insert_measurements(conn: sqlite3.Connection, rows: list[dict[str, Any]
     finally:
         install_triggers(conn)
     return repair(conn)
+
+
+def get_source_priority(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """Every configured priority list, best source first: {"*": [...], metric: [...]}.
+    A metric with its own list uses only that list; every other metric uses the
+    "*" list. Empty when nothing is configured."""
+    lists: dict[str, list[str]] = {}
+    for metric, source in conn.execute("SELECT metric, source FROM source_priority ORDER BY metric, rank"):
+        lists.setdefault(metric, []).append(source)
+    return lists
+
+
+def set_source_priority(conn: sqlite3.Connection, metric: str, sources: list[str]) -> dict:
+    """Replace the priority list for `metric` ("*" = the default for every metric
+    without its own list) with `sources`, best first; an empty list removes it.
+    Re-projects the affected daily_metrics rows in the same transaction, so the
+    projection never reflects a stale priority, and returns verify() afterwards.
+    Raises ValueError, changing nothing, for an unknown metric or an empty or
+    duplicated source name."""
+    known = {r[0] for r in conn.execute("SELECT metric FROM aggregation_rules")}
+    if metric != aggregation.GLOBAL_PRIORITY_SCOPE and metric not in known:
+        raise ValueError(
+            f"unknown metric {metric!r}: use '{aggregation.GLOBAL_PRIORITY_SCOPE}' or one of "
+            f"{', '.join(sorted(known))}"
+        )
+    if any(not isinstance(s, str) or not s for s in sources):
+        raise ValueError("source names must be non-empty strings")
+    if len(set(sources)) != len(sources):
+        raise ValueError("duplicate source name in priority list")
+
+    targets = sorted(known) if metric == aggregation.GLOBAL_PRIORITY_SCOPE else [metric]
+    delete_sql, insert_sql = aggregation.generate_scoped_repair_statements()
+    try:
+        conn.execute("DELETE FROM source_priority WHERE metric = ?", (metric,))
+        conn.executemany(
+            "INSERT INTO source_priority (metric, rank, source) VALUES (?, ?, ?)",
+            [(metric, rank, source) for rank, source in enumerate(sources, start=1)],
+        )
+        for target in targets:
+            conn.execute(delete_sql, {"metric": target})
+            conn.execute(insert_sql, {"metric": target})
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return verify(conn)

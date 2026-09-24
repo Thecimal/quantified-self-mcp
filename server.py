@@ -1495,25 +1495,23 @@ def aggregate_measurements(date: str, source_priority: list[str] | None = None) 
     that day's *actual* current daily_metrics values.
 
     daily_metrics is a database-maintained projection (see db/schema.sql):
-    every log_measurement/import automatically keeps it in sync with
-    *all* of that day's measurements the moment it's written, using each
-    metric's fixed aggregation method (sum/mean/last — see
-    aggregation_rules, or get_baseline's "method" field). It blends every
-    source together and cannot be made to prefer one — there is no
-    stored "priority" it can consult. So unlike before, this tool no
-    longer writes anything: "aggregated" is only a preview of what
-    source_priority would produce; "row" is the real, currently-stored
-    value, computed from every source, which may well differ from
-    "aggregated" whenever sources disagree.
+    every log_measurement/import automatically keeps it in sync the
+    moment it's written, using each metric's fixed aggregation method
+    (sum/mean/last — see aggregation_rules, or get_baseline's "method"
+    field). When a metric has measurements from more than one source on
+    a day, the projection uses only one source's observations — never a
+    blend of devices. It takes the highest-ranked present source in the
+    stored source priority list (manual log_daily_metric entries rank
+    first by default); if none is ranked, the source that observed the
+    most hours of that day, then the one with the latest observation,
+    then by name. This tool writes nothing: "aggregated" previews what
+    the source_priority you pass would produce; "row" is the real,
+    currently-stored value, which differs from "aggregated" whenever
+    the stored priority differs from the one you pass.
 
     If a metric has measurements from more than one source that day (e.g.
     an Apple Watch and a Garmin both logging resting_heart_rate), use
-    get_metric_provenance first to see whether they actually disagree. To
-    make daily_metrics itself reflect only one source going forward,
-    remove the other source's data — clear_metric (which now removes
-    every measurement behind that metric/day, not just a
-    log_daily_metric value) followed by re-logging the preferred
-    reading, or re-running its import with --replace.
+    get_metric_provenance first to see whether they actually disagree.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
@@ -1527,9 +1525,9 @@ def aggregate_measurements(date: str, source_priority: list[str] | None = None) 
             Watch", "Garmin"]. For any metric with more than one source
             that day, the first name in this list that's actually present
             wins in "aggregated" and the other source's readings for that
-            metric are dropped from that preview. Omit to fall back to
-            whichever source was imported most recently. Never affects
-            "row" — see above.
+            metric are dropped from that preview. Omit to use the stored
+            priority list and the same fallback the stored projection
+            uses. Never affects "row" — see above.
 
     Returns:
         An AggregateMeasurementsResult with "aggregated" (the
