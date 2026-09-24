@@ -122,6 +122,31 @@ async def test_trend_tiny_sample_is_insufficient_and_never_ranks_above_better_ev
     assert dims(sc)["sample"]["status"] == "blocking"
 
 
+async def test_trend_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
+    """Migration invariant: claim.{evidence,profile,decision} must equal the deprecated flat fields,
+    not merely both be present. Prevents the canonical and legacy representations from diverging
+    silently during the deprecation window."""
+    await seed(client, "steps", [5000 + 100 * i for i in range(30)])
+    sc = (
+        await client.call_tool(
+            "calculate_metric_trend",
+            {"metric": "steps", "start_date": iso(START), "end_date": iso(START + timedelta(days=29))},
+        )
+    ).structured_content
+    assert set(sc["claim"]) == {"evidence", "profile", "decision"}
+    assert sc["claim"]["evidence"] == sc["evidence"]
+    assert sc["claim"]["profile"] == sc["evidence_profile"]
+    assert sc["claim"]["decision"] == sc["claim_decision"]
+
+
+async def test_trend_schema_declares_claim_and_deprecates_legacy_fields(client):
+    schema = {t.name: t for t in await client.list_tools()}["calculate_metric_trend"].output_schema
+    assert "claim" in schema["properties"] and "claim" in schema["required"]
+    for legacy in ("evidence", "evidence_profile", "claim_decision"):
+        assert schema["properties"][legacy].get("deprecated") is True
+        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
+
+
 # ---- period / window comparison ---------------------------------------------------------------------------
 
 
@@ -265,6 +290,31 @@ async def test_anomaly_recent_gap_limits_the_claim(client):
     ).structured_content
     _, decision = assert_pipeline_output(sc, "anomaly")
     assert "recent_window_gap" in decision["must_state"]
+
+
+async def test_anomaly_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
+    """Migration invariant: claim.{evidence,profile,decision} must equal the deprecated flat fields,
+    not merely both be present. Prevents the canonical and legacy representations from diverging
+    silently during the deprecation window."""
+    await seed(client, "steps", [8000 + (i % 5) * 50 for i in range(60)])
+    sc = (
+        await client.call_tool(
+            "detect_metric_anomalies",
+            {"metric": "steps", "start_date": iso(START), "end_date": iso(START + timedelta(days=59))},
+        )
+    ).structured_content
+    assert set(sc["claim"]) == {"evidence", "profile", "decision"}
+    assert sc["claim"]["evidence"] == sc["evidence"]
+    assert sc["claim"]["profile"] == sc["evidence_profile"]
+    assert sc["claim"]["decision"] == sc["claim_decision"]
+
+
+async def test_anomaly_schema_declares_claim_and_deprecates_legacy_fields(client):
+    schema = {t.name: t for t in await client.list_tools()}["detect_metric_anomalies"].output_schema
+    assert "claim" in schema["properties"] and "claim" in schema["required"]
+    for legacy in ("evidence", "evidence_profile", "claim_decision"):
+        assert schema["properties"][legacy].get("deprecated") is True
+        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
 
 
 # ---- recent changes / explanatory analysis ----------------------------------------------------------------

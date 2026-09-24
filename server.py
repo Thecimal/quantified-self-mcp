@@ -401,12 +401,26 @@ class AnomalyPoint(BaseModel):
     direction: str
 
 
-class DetectAnomaliesResult(ClaimFields):
+class DetectAnomaliesResult(BaseModel):
     metric: str
     range: DateRange
     threshold: float
     anomalies: list[AnomalyPoint]
-    evidence: Evidence
+    claim: ClaimEvidence = Field(
+        description="Evidence and decision for the anomaly claim; read claim.decision before reporting it."
+    )
+    evidence: Evidence = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
+    )
+    evidence_profile: EvidenceProfile = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
+    )
+    claim_decision: ClaimDecisionOut = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
+    )
 
 
 class TrendStats(BaseModel):
@@ -417,11 +431,25 @@ class TrendStats(BaseModel):
     span_days: int | None = None
 
 
-class CalculateTrendResult(ClaimFields):
+class CalculateTrendResult(BaseModel):
     metric: str
     range: DateRange
     trend: TrendStats
-    evidence: Evidence
+    claim: ClaimEvidence = Field(
+        description="Evidence and decision for the trend claim; read claim.decision before reporting it."
+    )
+    evidence: Evidence = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
+    )
+    evidence_profile: EvidenceProfile = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
+    )
+    claim_decision: ClaimDecisionOut = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
+    )
 
 
 class ComparePeriodsResult(ClaimFields):
@@ -712,6 +740,20 @@ def _claim_evidence(assessment: Assessment, evidence: Evidence) -> ClaimEvidence
         profile=assessment.profile,
         decision=ClaimDecisionOut(**assessment.decision.to_mcp()),
     )
+
+
+def _migrated_claim_fields(assessment: Assessment, evidence: Evidence) -> dict:
+    """Result-model kwargs for a tool that has adopted ClaimEvidence: the canonical `claim` envelope
+    plus the deprecated flat fields, built as exact mirrors of `claim` (never independently derived)
+    so the two representations cannot silently diverge during the deprecation window. Only for tools
+    on the new contract (currently: detect_metric_anomalies, calculate_metric_trend; get_baseline
+    builds `claim` directly). Tools still on the old contract keep using `_claim_fields`."""
+    claim = _claim_evidence(assessment, evidence)
+    return {
+        "claim": claim,
+        "evidence_profile": claim.profile,
+        "claim_decision": claim.decision,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1861,13 +1903,14 @@ def detect_metric_anomalies(
     assessment = assess_anomaly(
         metric, series, start, end, effect={"n_anomalies": len(anomalies), "threshold": threshold}
     )
+    evidence = Evidence(**build_evidence(series, start, end))
     return DetectAnomaliesResult(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         threshold=threshold,
         anomalies=[AnomalyPoint(**a) for a in anomalies],
-        evidence=Evidence(**build_evidence(series, start, end)),
-        **_claim_fields(assessment),
+        evidence=evidence,
+        **_migrated_claim_fields(assessment, evidence),
     )
 
 
@@ -1932,12 +1975,13 @@ def calculate_metric_trend(
     series = _fetch_metric_series(metric, start, end)
     trend = _trend_stats(series)
     assessment = assess_trend(metric, series, start, end, effect=trend.model_dump())
+    evidence = Evidence(**build_evidence(series, start, end))
     return CalculateTrendResult(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         trend=trend,
-        evidence=Evidence(**build_evidence(series, start, end)),
-        **_claim_fields(assessment),
+        evidence=evidence,
+        **_migrated_claim_fields(assessment, evidence),
     )
 
 
