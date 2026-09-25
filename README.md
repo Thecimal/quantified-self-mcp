@@ -88,10 +88,24 @@ but understanding:
 What data produced this result?
 Where did it come from?
 What period was analyzed?
-How strong is the evidence?
+How strong is the evidence, and how strongly may it be claimed?
 ```
 
-Concretely, every trend, baseline, anomaly, comparison, and correlation carries a coverage/confidence object alongside its numbers, so the AI can talk about the *result* and the *evidence behind it* in the same breath:
+Concretely, every trend, baseline, anomaly, comparison, correlation, recent change, and explained metric carries a `claim` alongside its numbers — not just descriptive coverage, but an explicit, machine-checkable statement of how strongly the result may be reported:
+
+```text
+Analysis result
+    ↓
+claim: ClaimEvidence
+    ├── evidence   → what data was actually observed (coverage, gaps, freshness)
+    ├── profile    → how much evaluative evidence exists, per dimension
+    │                (sample, temporal, missingness, ...)
+    └── decision   → what claim strength is justified: insufficient,
+                     suggestive, detectable_not_meaningful, or supported —
+                     plus the specific caveats that must be stated
+```
+
+`evidence` is descriptive: it reports the coverage a result rests on (how many days were logged, how large any gaps are, how fresh the data is). `profile` evaluates that coverage along several independent dimensions rather than collapsing it into one number. `decision` is the authoritative output: the only field that says how strongly the result may actually be claimed, and it is derived exclusively from the assessed dimensions in `profile` — never from a raw coverage number by itself. Composite results (like explaining a metric change, which combines a headline claim, a trend claim, and any correlations) roll their component decisions up into a single `overall_decision`, which is never stronger than the weakest component.
 
 **Without evidence:**
 > Your HRV decreased 24% over the last 30 days.
@@ -99,7 +113,7 @@ Concretely, every trend, baseline, anomaly, comparison, and correlation carries 
 **With evidence:**
 > Your HRV decreased 24% over the last 30 days — but HRV was only logged on 71% of those days, so treat this trend cautiously rather than as a settled pattern.
 
-The second answer is what `calculate_metric_trend` (and every other analytics tool) is designed to make possible: the tool returns the 24% figure *and* a `confidence: "moderate"` / `coverage_ratio: 0.71` alongside it, and each tool's own description tells the calling model to fold that into its answer instead of reporting the number as if it came from a complete series.
+The second answer is what `calculate_metric_trend` (and every other analytics tool) is designed to make possible: the tool returns the 24% figure *and* a `claim.decision` alongside it (e.g. `tier: "suggestive"`, with `must_state` naming the specific gaps and low-coverage days behind that tier), and each tool's own description tells the calling model to report that tier and those caveats rather than stating the number as if it came from a complete series.
 
 ### 📊 Longitudinal
 

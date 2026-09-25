@@ -50,8 +50,10 @@ def test_claim_fields_subclasses_are_required(model):
 
 def test_explain_metric_change_requires_trend_claim_fields():
     fields = server.ExplainMetricChangeResult.model_fields
-    assert fields["trend_evidence_profile"].is_required()
-    assert fields["trend_claim_decision"].is_required()
+    assert fields["headline_claim"].is_required()
+    assert fields["headline_claim"].annotation is server.ClaimEvidence
+    assert fields["trend_claim"].is_required()
+    assert fields["trend_claim"].annotation is server.ClaimEvidence
 
 
 def test_explain_metric_change_requires_overall_decision():
