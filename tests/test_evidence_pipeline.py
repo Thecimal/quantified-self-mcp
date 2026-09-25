@@ -498,6 +498,64 @@ async def test_explain_metric_change_thin_history_is_insufficient(client):
     assert sc["overall_decision"]["tier"] == "insufficient"
 
 
+async def test_explain_metric_change_headline_and_trend_claims_are_exact_mirrors_of_the_legacy_fields(client):
+    """P0.1 migration invariant: headline_claim.{profile,decision} must equal the deprecated flat
+    evidence_profile/claim_decision, and trend_claim.{profile,decision} must equal the deprecated flat
+    trend_evidence_profile/trend_claim_decision — not merely both be present. Prevents the canonical
+    headline_claim/trend_claim envelopes and the legacy flat mirrors from diverging silently during the
+    deprecation window (same invariant already enforced for trend/anomaly/compare_periods/correlation)."""
+    n = 100
+    steps = [8000 + (i % 5) * 400 for i in range(n)]
+    mood = [3 + (i % 5) for i in range(n)]
+    steps[-1], mood[-1] = 1000, 1
+    await seed(client, "steps", steps)
+    await seed(client, "mood", mood)
+    target = iso(START + timedelta(days=n - 1))
+    sc = (await client.call_tool("explain_metric_change", {"metric": "steps", "date": target})).structured_content
+
+    assert set(sc["headline_claim"]) == {"evidence", "profile", "decision"}
+    assert sc["headline_claim"]["profile"] == sc["evidence_profile"]
+    assert sc["headline_claim"]["decision"] == sc["claim_decision"]
+
+    assert set(sc["trend_claim"]) == {"evidence", "profile", "decision"}
+    assert sc["trend_claim"]["profile"] == sc["trend_evidence_profile"]
+    assert sc["trend_claim"]["decision"] == sc["trend_claim_decision"]
+
+
+async def test_explain_metric_change_overall_decision_is_the_exact_weakest_of_n_of_its_components(client):
+    """P0.1 acceptance condition: overall_decision must equal combine_decisions() applied to the
+    headline claim, the trend claim, and every surfaced correlation's own decision — exact tier and
+    exact must_state (sorted union of every component's must_state), not merely a superset/rank check."""
+    n = 100
+    steps = [8000 + (i % 5) * 400 for i in range(n)]
+    mood = [3 + (i % 5) for i in range(n)]
+    steps[-1], mood[-1] = 1000, 1
+    await seed(client, "steps", steps)
+    await seed(client, "mood", mood)
+    target = iso(START + timedelta(days=n - 1))
+    sc = (await client.call_tool("explain_metric_change", {"metric": "steps", "date": target})).structured_content
+
+    component_decisions = [
+        sc["claim_decision"],
+        sc["trend_claim_decision"],
+        *(c["claim_decision"] for c in sc["correlated_metrics"]),
+    ]
+    expected_tier = min(component_decisions, key=lambda d: TIER_RANK[ClaimTier(d["tier"])])["tier"]
+    expected_must_state = sorted({f for d in component_decisions for f in d["must_state"]})
+
+    assert sc["overall_decision"]["tier"] == expected_tier
+    assert sc["overall_decision"]["must_state"] == expected_must_state
+
+
+async def test_explain_metric_change_schema_declares_claim_envelopes_and_deprecates_legacy_fields(client):
+    schema = {t.name: t for t in await client.list_tools()}["explain_metric_change"].output_schema
+    for envelope in ("headline_claim", "trend_claim", "overall_decision"):
+        assert envelope in schema["properties"] and envelope in schema["required"]
+    for legacy in ("evidence_profile", "claim_decision", "trend_evidence_profile", "trend_claim_decision"):
+        assert schema["properties"][legacy].get("deprecated") is True
+        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
+
+
 # ---- baseline ---------------------------------------------------------------------------------------------
 
 
