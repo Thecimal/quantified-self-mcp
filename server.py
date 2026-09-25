@@ -534,11 +534,25 @@ class CorrelationResult(BaseModel):
     )
 
 
-class ChangeNote(ClaimFields):
+class ChangeNote(BaseModel):
     metric: str
     kind: str  # "shift" (period-over-period) | "anomaly" | "trend"
     detail: str
-    evidence: Evidence
+    claim: ClaimEvidence = Field(
+        description="Evidence and decision for this change note's claim; read claim.decision before reporting it."
+    )
+    evidence: Evidence = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
+    )
+    evidence_profile: EvidenceProfile = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
+    )
+    claim_decision: ClaimDecisionOut = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
+    )
 
 
 class GetRecentChangesResult(BaseModel):
@@ -840,9 +854,10 @@ def _claim_evidence(assessment: Assessment, evidence: Evidence) -> ClaimEvidence
 def _migrated_claim_fields(assessment: Assessment, evidence: Evidence) -> dict:
     """Result-model kwargs for a tool that has adopted ClaimEvidence: the canonical `claim` envelope
     plus the deprecated flat fields, built as exact mirrors of `claim` (never independently derived)
-    so the two representations cannot silently diverge during the deprecation window. Only for tools
-    on the new contract (currently: detect_metric_anomalies, calculate_metric_trend; get_baseline
-    builds `claim` directly). Tools still on the old contract keep using `_claim_fields`."""
+    so the two representations cannot silently diverge during the deprecation window. Used by
+    detect_metric_anomalies, calculate_metric_trend, and each ChangeNote built in get_recent_changes
+    (get_baseline builds `claim` directly instead). `_claim_fields` is now unused dead code, kept only
+    until ClaimFields itself is removed in the post-deprecation cleanup pass."""
     claim = _claim_evidence(assessment, evidence)
     return {
         "claim": claim,
@@ -866,8 +881,9 @@ def _claim_evidence_comparative(
 def _migrated_claim_fields_comparative(assessment: Assessment, evidence_a: Evidence, evidence_b: Evidence) -> dict:
     """Result-model kwargs for a two-source tool that has adopted ClaimEvidenceComparative: the canonical
     `claim` envelope plus the deprecated flat fields, built as exact mirrors of `claim` (never independently
-    derived) so the two representations cannot silently diverge during the deprecation window. Currently only
-    find_metric_correlation; ComparePeriodsResult stays on the old flat contract for now."""
+    derived) so the two representations cannot silently diverge during the deprecation window. Used by
+    find_metric_correlation (ComparePeriodsResult builds `claim` via `_claim_evidence_comparative` directly,
+    and derives its own differently-named deprecated evidence_a/evidence_b-equivalent fields instead)."""
     claim = _claim_evidence_comparative(assessment, evidence_a, evidence_b)
     return {
         "claim": claim,
@@ -2399,7 +2415,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"(avg {comparison['period_b']['mean']})."
                     ),
                     evidence=metric_evidence,
-                    **_claim_fields(shift_claim),
+                    **_migrated_claim_fields(shift_claim, metric_evidence),
                 )
             )
 
@@ -2420,7 +2436,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"modified z-score {anomaly['modified_z_score']})."
                     ),
                     evidence=metric_evidence,
-                    **_claim_fields(anomaly_claim),
+                    **_migrated_claim_fields(anomaly_claim, metric_evidence),
                 )
             )
 
@@ -2434,7 +2450,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                     detail=f"{metric} has been {trend['direction']} over the last {days} days "
                     f"({trend['slope_per_day']:+g}/day, r²={trend['r_squared']}).",
                     evidence=metric_evidence,
-                    **_claim_fields(trend_claim),
+                    **_migrated_claim_fields(trend_claim, metric_evidence),
                 )
             )
 

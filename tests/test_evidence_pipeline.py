@@ -453,6 +453,32 @@ async def test_recent_changes_every_note_carries_its_own_claim(client):
     assert by_kind["shift"]["claim_decision"]["tier"] != "insufficient"
 
 
+async def test_recent_changes_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
+    """P0.2 migration invariant: every ChangeNote's claim.{evidence,profile,decision} must equal its
+    own deprecated flat evidence/evidence_profile/claim_decision fields, not merely both be present —
+    same invariant already enforced for trend/anomaly/compare_periods/correlation/explain_metric_change."""
+    today = date.today()
+    recent_start = today - timedelta(days=7)
+    await seed(client, "steps", [8000] * 28, recent_start - timedelta(days=28))
+    await seed(client, "steps", [2000 + 400 * i for i in range(8)], recent_start)
+    sc = (await client.call_tool("get_recent_changes", {"days": 7})).structured_content
+    assert sc["changes"], "fixture should produce at least one change note"
+    for note in sc["changes"]:
+        assert set(note["claim"]) == {"evidence", "profile", "decision"}
+        assert note["claim"]["evidence"] == note["evidence"]
+        assert note["claim"]["profile"] == note["evidence_profile"]
+        assert note["claim"]["decision"] == note["claim_decision"]
+
+
+async def test_recent_changes_schema_declares_claim_and_deprecates_legacy_fields(client):
+    schema = {t.name: t for t in await client.list_tools()}["get_recent_changes"].output_schema
+    change_note = schema["properties"]["changes"]["items"]  # FastMCP inlines nested models, no $defs/$ref
+    assert "claim" in change_note["properties"] and "claim" in change_note["required"]
+    for legacy in ("evidence", "evidence_profile", "claim_decision"):
+        assert change_note["properties"][legacy].get("deprecated") is True
+        assert legacy in change_note["required"]  # deprecated, not optional, during the migration window
+
+
 async def test_explain_metric_change_carries_a_claim_per_claim(client):
     n = 100
     steps = [8000 + (i % 5) * 400 for i in range(n)]
