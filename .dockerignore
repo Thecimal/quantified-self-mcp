@@ -4,5 +4,9 @@
 __pycache__/
 *.pyc
 data/
-README.md
-LICENSE
+# NOTE: README.md and LICENSE are intentionally NOT excluded here.
+# pyproject.toml declares readme = "README.md" and license = {file = "LICENSE"};
+# hatchling validates both exist at build time. Excluding them breaks any
+# build that runs `pip install .` / `uv sync` against a full `COPY . ./`
+# context (e.g. platform-generated Dockerfiles that don't use our own
+# Dockerfile's selective COPY list).
