@@ -4,7 +4,7 @@ Quantified Self MCP is a privacy-first Model Context Protocol server.
 
 ## Purpose
 
-It allows AI assistants and MCP-compatible clients to query personal health and finance data stored locally.
+It allows AI assistants and MCP-compatible clients to query personal health stored locally.
 
 ## Technology
 
