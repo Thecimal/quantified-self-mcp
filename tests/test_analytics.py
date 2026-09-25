@@ -192,15 +192,36 @@ def test_find_correlations_with_lag_shifts_the_second_series():
     assert unlagged["r"] != 1.0
 
 
-def test_find_correlations_no_sample_confidence_field():
-    """find_correlations must stay silent about how much to trust the result — no bucketed read on
-    "n" alone. That judgment belongs to qs_evidence.assess_correlation's sample dimension, which folds
-    the paired count into a single claim decision instead of a second, competing confidence label."""
-    insufficient = a.find_correlations(series([1, 2, 3]), series([1, 2, 3]))
-    zero_variance = a.find_correlations(series([1, 1, 1, 1]), series([1, 2, 3, 4]))
-    success = a.find_correlations(series([1, 2, 3, 4, 5]), series([2, 4, 6, 8, 10]))
-    for result in (insufficient, zero_variance, success):
-        assert "sample_confidence" not in result
-    assert insufficient["r"] is None
-    assert zero_variance["r"] is None and zero_variance["n"] == 4
-    assert success["r"] == 1.0
+def test_find_correlations_sample_confidence_boundaries():
+    boundaries = {
+        3: "insufficient",
+        4: "very_limited",
+        9: "very_limited",
+        10: "limited",
+        19: "limited",
+        20: "moderate",
+        29: "moderate",
+        30: "strong_sample",
+    }
+    for n, expected in boundaries.items():
+        result = a.find_correlations(series(list(range(1, n + 1))), series(list(range(1, n + 1))))
+        assert result["sample_confidence"] == expected, f"n={n}"
+
+
+def test_find_correlations_sample_confidence_on_insufficient_path():
+    result = a.find_correlations(series([1, 2, 3]), series([1, 2, 3]))
+    assert result["r"] is None
+    assert result["sample_confidence"] == "insufficient"
+
+
+def test_find_correlations_sample_confidence_on_zero_variance_path():
+    result = a.find_correlations(series([1, 1, 1, 1]), series([1, 2, 3, 4]))
+    assert result["r"] is None
+    assert result["n"] == 4
+    assert result["sample_confidence"] == "very_limited"
+
+
+def test_find_correlations_sample_confidence_on_success_path():
+    result = a.find_correlations(series([1, 2, 3, 4, 5]), series([2, 4, 6, 8, 10]))
+    assert result["r"] == 1.0
+    assert result["sample_confidence"] == "very_limited"

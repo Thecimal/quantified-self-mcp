@@ -193,13 +193,7 @@ def assess_correlation(
     lag_days: int = 0,
     effect: dict[str, Any] | None = None,
 ) -> Assessment:
-    """Judged on complete pairs, not per series. b is shifted so a[day] pairs with b[day + lag_days].
-
-    Missingness is assessed per source series (metric_a, metric_b), not on the joined pairs: a series can
-    be sparse in a way that doesn't show up in the paired count alone (e.g. clustered gaps that happen to
-    fall outside the overlap so far, but would bite under a wider window or a different lag). The worse of
-    the two series decides the dimension; both are kept in details (see _worst).
-    """
+    """Judged on complete pairs, not per series. b is shifted so a[day] pairs with b[day + lag_days]."""
     t = _thresholds(_registry()["correlation"])
     x = align(points_a, start, end)
     y = align(points_b, start + timedelta(days=lag_days), end + timedelta(days=lag_days))
@@ -213,10 +207,7 @@ def assess_correlation(
         {
             Dimension.SAMPLE: evaluate_correlation(x, y, n_eff=n_eff, thresholds=t),
             Dimension.TEMPORAL: evaluate_temporal(paired, start, t),
-            Dimension.MISSINGNESS: _worst(
-                Dimension.MISSINGNESS,
-                {"metric_a": evaluate_missingness(x, thresholds=t), "metric_b": evaluate_missingness(y, thresholds=t)},
-            ),
+            Dimension.MISSINGNESS: evaluate_missingness(paired, thresholds=t),
         },
     )
 
