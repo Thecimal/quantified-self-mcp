@@ -570,7 +570,7 @@ class ReadWorkoutSessionsResult(BaseModel):
     count: int
 
 
-class ExplainMetricChangeResult(ClaimFields):
+class ExplainMetricChangeResult(BaseModel):
     metric: str
     date: str
     value: float | None = None
@@ -582,20 +582,42 @@ class ExplainMetricChangeResult(ClaimFields):
     correlated_metrics: list[CorrelationResult]
     sessions: list[WorkoutSessionRow] = []
     narrative_facts: list[str]
-    baseline_evidence: Evidence
-    trend_evidence: Evidence
+    headline_claim: ClaimEvidence = Field(
+        description=(
+            "Evidence and decision for the headline claim: this day's value against its 90-day "
+            "baseline. Read headline_claim.decision before reporting it."
+        ),
+    )
+    trend_claim: ClaimEvidence = Field(
+        description=(
+            "Evidence and decision for the 30-day trend leading into this day, assessed separately "
+            "from the headline claim. Read trend_claim.decision before reporting it."
+        ),
+    )
+    evidence_profile: EvidenceProfile = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to headline_claim.profile. Use headline_claim.decision instead.",
+    )
+    claim_decision: ClaimDecisionOut = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to headline_claim.decision. Use headline_claim.decision instead.",
+    )
+    trend_evidence_profile: EvidenceProfile = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to trend_claim.profile. Use trend_claim.decision instead.",
+    )
+    trend_claim_decision: ClaimDecisionOut = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to trend_claim.decision. Use trend_claim.decision instead.",
+    )
     conflicting_days: int = 0
-    # evidence_profile/claim_decision above cover the headline claim (this day vs. its 90-day baseline);
-    # the 30-day trend is a separate claim with its own.
-    trend_evidence_profile: EvidenceProfile
-    trend_claim_decision: ClaimDecisionOut
     overall_decision: ClaimDecisionOut = Field(
         description=(
-            "The single decision governing this whole result: weakest-of-N over the headline "
-            "(claim_decision), the trend (trend_claim_decision), and every surfaced correlation's "
-            "own decision. If any component is insufficient/suggestive, the composite is too — "
-            "report overall_decision.tier and must_state rather than treating the headline claim "
-            "as though the trend and correlations couldn't drag it down."
+            "The single decision governing this whole result: weakest-of-N over the headline claim "
+            "(headline_claim.decision), the trend (trend_claim.decision), and every surfaced "
+            "correlation's own decision. If any component is insufficient/suggestive, the composite "
+            "is too — report overall_decision.tier and must_state rather than treating the headline "
+            "claim as though the trend and correlations couldn't drag it down."
         ),
     )
 
@@ -2469,7 +2491,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         30-day trend ending on that date, and up to 5 other metrics with
         |r| >= 0.5 over the same 90-day window (each still just a
         correlation — see find_metric_correlation's note on causation).
-        "baseline_evidence" and "trend_evidence" report coverage for the
+        "headline_claim.evidence" and "trend_claim.evidence" report coverage for the
         90-day and 30-day windows respectively; each correlated metric
         carries its own pair too. "narrative_facts" restates the above as
         short plain-English sentences but does NOT itself hedge on
@@ -2608,6 +2630,12 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     overall_decision = combine_decisions(
         [anomaly_assessment.decision, trend_assessment.decision, *(a.decision for a in correlation_assessments)]
     )
+    headline_claim = _claim_evidence(
+        anomaly_assessment, Evidence(**build_evidence(series, baseline_start, target_day))
+    )
+    trend_claim = _claim_evidence(
+        trend_assessment, Evidence(**build_evidence(trend_series, trend_start, target_day))
+    )
     return ExplainMetricChangeResult(
         metric=metric,
         date=date,
@@ -2620,11 +2648,13 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         correlated_metrics=correlated,
         sessions=sessions,
         narrative_facts=facts,
-        baseline_evidence=Evidence(**build_evidence(series, baseline_start, target_day)),
-        trend_evidence=Evidence(**build_evidence(trend_series, trend_start, target_day)),
+        headline_claim=headline_claim,
+        trend_claim=trend_claim,
+        evidence_profile=headline_claim.profile,
+        claim_decision=headline_claim.decision,
+        trend_evidence_profile=trend_claim.profile,
+        trend_claim_decision=trend_claim.decision,
         conflicting_days=conflicting_days,
-        **_claim_fields(anomaly_assessment),
-        **_claim_fields(trend_assessment, prefix="trend_"),
         overall_decision=ClaimDecisionOut(**overall_decision.to_mcp()),
     )
 
