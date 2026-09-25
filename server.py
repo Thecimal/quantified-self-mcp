@@ -477,7 +477,7 @@ class CalculateTrendResult(BaseModel):
     )
 
 
-class ComparePeriodsResult(ClaimFields):
+class ComparePeriodsResult(BaseModel):
     metric: str
     period_a: DateRange
     period_b: DateRange
@@ -485,8 +485,25 @@ class ComparePeriodsResult(ClaimFields):
     period_b_stats: BaselineStats
     delta: float | None = None
     pct_change: float | None = None
-    period_a_evidence: Evidence
-    period_b_evidence: Evidence
+    claim: ClaimEvidenceComparative = Field(
+        description="Evidence and decision for the period comparison claim; read claim.decision before reporting it."
+    )
+    period_a_evidence: Evidence = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.evidence_a. Use claim.decision, not a standalone confidence field.",
+    )
+    period_b_evidence: Evidence = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.evidence_b. Use claim.decision, not a standalone confidence field.",
+    )
+    evidence_profile: EvidenceProfile = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
+    )
+    claim_decision: ClaimDecisionOut = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
+    )
 
 
 class CorrelationResult(BaseModel):
@@ -2116,15 +2133,16 @@ def compare_metric_periods(
 
     Returns:
         A ComparePeriodsResult with each period's own baseline stats, plus
-        "delta" (period_a mean minus period_b mean), "pct_change", and
-        "period_a_evidence"/"period_b_evidence" for each period
+        "delta" (period_a mean minus period_b mean) and "pct_change". Read
+        claim.decision before reporting the comparison: its "tier"
+        (insufficient, suggestive, detectable_not_meaningful, or supported)
+        says how strongly it may be stated, and every entry in
+        "must_state" has to be mentioned if you report it.
+        claim.evidence_a/claim.evidence_b report each period's coverage
         separately — the two periods can have very different coverage
         (e.g. this month is 90% logged, last month only 40%), and that
-        asymmetry matters more than either evidence object alone. If
-        either period's confidence is "moderate" or "low", say the
-        comparison rests on incomplete data for that period rather than
-        stating the delta/pct_change as a clean before/after. Both delta
-        and pct_change are null if either period has no data at all.
+        asymmetry matters more than either evidence object alone. Both
+        delta and pct_change are null if either period has no data at all.
     """
     try:
         start_a, end_a = resolve_range(period_a_start, period_a_end, default_days=0)
@@ -2142,6 +2160,11 @@ def compare_metric_periods(
         (start_b, end_b),
         effect={"delta": result["delta"], "pct_change": result["pct_change"]},
     )
+    claim = _claim_evidence_comparative(
+        assessment,
+        Evidence(**build_evidence(series_a, start_a, end_a)),
+        Evidence(**build_evidence(series_b, start_b, end_b)),
+    )
     return ComparePeriodsResult(
         metric=metric,
         period_a=DateRange(start_date=start_a.isoformat(), end_date=end_a.isoformat()),
@@ -2150,9 +2173,11 @@ def compare_metric_periods(
         period_b_stats=BaselineStats(**result["period_b"]),
         delta=result["delta"],
         pct_change=result["pct_change"],
-        period_a_evidence=Evidence(**build_evidence(series_a, start_a, end_a)),
-        period_b_evidence=Evidence(**build_evidence(series_b, start_b, end_b)),
-        **_claim_fields(assessment),
+        claim=claim,
+        period_a_evidence=claim.evidence_a,
+        period_b_evidence=claim.evidence_b,
+        evidence_profile=claim.profile,
+        claim_decision=claim.decision,
     )
 
 

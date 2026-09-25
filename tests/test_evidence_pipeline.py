@@ -181,6 +181,40 @@ async def test_compare_periods_same_delta_different_evidence_different_decision(
     assert which["period_a"]["status"] == "weak" and which["period_b"]["status"] == "adequate"
 
 
+async def test_compare_periods_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
+    """Migration invariant: claim.{evidence_a,evidence_b,profile,decision} must equal the deprecated
+    flat fields, not merely both be present. Prevents the canonical and legacy representations from
+    diverging silently during the deprecation window."""
+    a_start = START + timedelta(days=14)
+    await seed(client, "steps", [5000] * 14, START)
+    await seed(client, "steps", [9000] * 14, a_start)
+    sc = (
+        await client.call_tool(
+            "compare_metric_periods",
+            {
+                "metric": "steps",
+                "period_a_start": iso(a_start),
+                "period_a_end": iso(a_start + timedelta(days=13)),
+                "period_b_start": iso(START),
+                "period_b_end": iso(START + timedelta(days=13)),
+            },
+        )
+    ).structured_content
+    assert set(sc["claim"]) == {"evidence_a", "evidence_b", "profile", "decision"}
+    assert sc["claim"]["evidence_a"] == sc["period_a_evidence"]
+    assert sc["claim"]["evidence_b"] == sc["period_b_evidence"]
+    assert sc["claim"]["profile"] == sc["evidence_profile"]
+    assert sc["claim"]["decision"] == sc["claim_decision"]
+
+
+async def test_compare_periods_schema_declares_claim_and_deprecates_legacy_fields(client):
+    schema = {t.name: t for t in await client.list_tools()}["compare_metric_periods"].output_schema
+    assert "claim" in schema["properties"] and "claim" in schema["required"]
+    for legacy in ("period_a_evidence", "period_b_evidence", "evidence_profile", "claim_decision"):
+        assert schema["properties"][legacy].get("deprecated") is True
+        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
+
+
 # ---- correlation ------------------------------------------------------------------------------------------
 
 
