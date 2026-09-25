@@ -375,6 +375,30 @@ class ClaimEvidence(BaseModel):
     )
 
 
+class ClaimEvidenceComparative(BaseModel):
+    """Canonical envelope for one assessed claim resting on two source coverages (e.g. two metrics, two
+    periods) rather than one — see ClaimEvidence for the single-window form. There is still exactly one
+    profile and one decision: per-source facts that matter to the assessment (paired sample size, each
+    source's missingness, ...) live inside profile's dimension details, not as a second decision surface."""
+
+    evidence_a: Evidence = Field(description="Descriptive data coverage behind the first source.")
+    evidence_b: Evidence = Field(description="Descriptive data coverage behind the second source.")
+    profile: EvidenceProfile = Field(
+        description=(
+            "Per-dimension evidence quality behind this claim (sample, temporal, missingness, ...), "
+            "assessed jointly across both sources where relevant. Dimensions without an evaluator yet "
+            "are 'not_assessed' and cap the claim, never count as adequate."
+        ),
+    )
+    decision: ClaimDecisionOut = Field(
+        description=(
+            "How strongly this claim may be stated. tier is insufficient, suggestive, "
+            "detectable_not_meaningful or supported; every entry in must_state has to be "
+            "mentioned when reporting it."
+        ),
+    )
+
+
 class BaselineStats(BaseModel):
     mean: float | None = None
     median: float | None = None
@@ -465,16 +489,32 @@ class ComparePeriodsResult(ClaimFields):
     period_b_evidence: Evidence
 
 
-class CorrelationResult(ClaimFields):
+class CorrelationResult(BaseModel):
     metric_a: str
     metric_b: str
     lag_days: int
     r: float | None = None
     n: int
-    sample_confidence: str
     note: str | None = None
-    evidence_a: Evidence | None = None
-    evidence_b: Evidence | None = None
+    claim: ClaimEvidenceComparative = Field(
+        description="Evidence and decision for the correlation claim; read claim.decision before reporting it."
+    )
+    evidence_a: Evidence = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.evidence_a. Use claim.decision, not a standalone confidence field.",
+    )
+    evidence_b: Evidence = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.evidence_b. Use claim.decision, not a standalone confidence field.",
+    )
+    evidence_profile: EvidenceProfile = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
+    )
+    claim_decision: ClaimDecisionOut = Field(
+        deprecated=True,
+        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
+    )
 
 
 class ChangeNote(ClaimFields):
@@ -767,6 +807,33 @@ def _migrated_claim_fields(assessment: Assessment, evidence: Evidence) -> dict:
     claim = _claim_evidence(assessment, evidence)
     return {
         "claim": claim,
+        "evidence_profile": claim.profile,
+        "claim_decision": claim.decision,
+    }
+
+
+def _claim_evidence_comparative(
+    assessment: Assessment, evidence_a: Evidence, evidence_b: Evidence
+) -> ClaimEvidenceComparative:
+    """Canonical ClaimEvidenceComparative envelope for one assessed claim resting on two source coverages."""
+    return ClaimEvidenceComparative(
+        evidence_a=evidence_a,
+        evidence_b=evidence_b,
+        profile=assessment.profile,
+        decision=ClaimDecisionOut(**assessment.decision.to_mcp()),
+    )
+
+
+def _migrated_claim_fields_comparative(assessment: Assessment, evidence_a: Evidence, evidence_b: Evidence) -> dict:
+    """Result-model kwargs for a two-source tool that has adopted ClaimEvidenceComparative: the canonical
+    `claim` envelope plus the deprecated flat fields, built as exact mirrors of `claim` (never independently
+    derived) so the two representations cannot silently diverge during the deprecation window. Currently only
+    find_metric_correlation; ComparePeriodsResult stays on the old flat contract for now."""
+    claim = _claim_evidence_comparative(assessment, evidence_a, evidence_b)
+    return {
+        "claim": claim,
+        "evidence_a": claim.evidence_a,
+        "evidence_b": claim.evidence_b,
         "evidence_profile": claim.profile,
         "claim_decision": claim.decision,
     }
@@ -2138,17 +2205,15 @@ def find_metric_correlation(
             0 (default) compares same-day values.
 
     Returns:
-        A CorrelationResult with "r" (-1 to 1), "n" (overlapping days
-        used), "sample_confidence" (a bucketed read on "n" alone — see
-        analytics._sample_confidence — that makes no claim about "r"
-        itself), and "evidence_a"/"evidence_b" for each metric's own
-        coverage over the window (independent of "n" — a metric can have
-        low overall coverage yet still have enough overlapping days to
-        produce an "r"). "r" is null with fewer than 4 overlapping days.
-        If either evidence's confidence is "moderate" or "low", or if
-        sample_confidence is anything short of "strong_sample", say the
-        correlation is based on a thin sample or gappy series rather than
-        reporting "r" as a settled relationship.
+        A CorrelationResult with "r" (-1 to 1) and "n" (overlapping days
+        used); "r" is null with fewer than 4 overlapping days. Read
+        claim.decision before reporting "r": its "tier" (insufficient,
+        suggestive, detectable_not_meaningful, or supported) says how
+        strongly the correlation may be stated, and every entry in
+        "must_state" has to be mentioned if you report it. A high "r"
+        from a thin paired sample or a gappy series is reflected there,
+        not in "r" itself — never judge the strength of a correlation
+        from "r" alone.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -2171,9 +2236,11 @@ def find_metric_correlation(
         metric_a=metric_a,
         metric_b=metric_b,
         **result,
-        evidence_a=Evidence(**build_evidence(series_a, start, end)),
-        evidence_b=Evidence(**build_evidence(series_b, start, end)),
-        **_claim_fields(assessment),
+        **_migrated_claim_fields_comparative(
+            assessment,
+            Evidence(**build_evidence(series_a, start, end)),
+            Evidence(**build_evidence(series_b, start, end)),
+        ),
     )
 
 
@@ -2436,9 +2503,11 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
                     metric_a=metric,
                     metric_b=other,
                     **result,
-                    evidence_a=Evidence(**build_evidence(series, baseline_start, target_day)),
-                    evidence_b=Evidence(**build_evidence(other_series, baseline_start, target_day)),
-                    **_claim_fields(corr_assessment),
+                    **_migrated_claim_fields_comparative(
+                        corr_assessment,
+                        Evidence(**build_evidence(series, baseline_start, target_day)),
+                        Evidence(**build_evidence(other_series, baseline_start, target_day)),
+                    ),
                 )
             )
             correlation_assessments.append(corr_assessment)
