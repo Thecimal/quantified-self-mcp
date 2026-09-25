@@ -2600,7 +2600,14 @@ def day_snapshot(date: str) -> dict:
 
 
 def main():
-    mcp.run()
+    # Cloud platforms (e.g. Manufact) set PORT and expect an HTTP server
+    # listening on it; Claude Desktop and other local stdio clients don't
+    # set PORT at all, in which case we fall back to stdio as before.
+    port = os.environ.get("PORT")
+    if port is not None:
+        mcp.run(transport="http", host="0.0.0.0", port=int(port))
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":
