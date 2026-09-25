@@ -54,6 +54,11 @@ def test_explain_metric_change_requires_trend_claim_fields():
     assert fields["trend_claim_decision"].is_required()
 
 
+def test_explain_metric_change_requires_overall_decision():
+    field = server.ExplainMetricChangeResult.model_fields["overall_decision"]
+    assert field.is_required() and field.annotation is server.ClaimDecisionOut
+
+
 def test_trend_result_without_claim_fields_is_rejected():
     with pytest.raises(ValidationError):
         server.CalculateTrendResult(

@@ -110,6 +110,7 @@ from qs_evidence import (
     assess_correlation,
     assess_trend,
     assess_window_comparison,
+    combine_decisions,
 )
 
 # The SQLite file never leaves this machine, but the *rows read out of it*
@@ -531,6 +532,15 @@ class ExplainMetricChangeResult(ClaimFields):
     # the 30-day trend is a separate claim with its own.
     trend_evidence_profile: EvidenceProfile
     trend_claim_decision: ClaimDecisionOut
+    overall_decision: ClaimDecisionOut = Field(
+        description=(
+            "The single decision governing this whole result: weakest-of-N over the headline "
+            "(claim_decision), the trend (trend_claim_decision), and every surfaced correlation's "
+            "own decision. If any component is insufficient/suggestive, the composite is too — "
+            "report overall_decision.tier and must_state rather than treating the headline claim "
+            "as though the trend and correlations couldn't drag it down."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2365,10 +2375,11 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         90-day and 30-day windows respectively; each correlated metric
         carries its own pair too. "narrative_facts" restates the above as
         short plain-English sentences but does NOT itself hedge on
-        coverage — if baseline_evidence or trend_evidence has "moderate"
-        or "low" confidence, add that caveat yourself when turning these
-        facts into an answer, rather than presenting them as equally
-        solid regardless of how much data backs each one.
+        coverage. Use "overall_decision" for that: it is the single
+        weakest-of-N decision across the headline claim, the trend, and
+        every surfaced correlation, so its tier and must_state are what
+        to report/caveat with — not something to re-derive yourself from
+        the individual evidence/confidence fields.
     """
     try:
         target_day = parse_date(date, "date")
@@ -2396,12 +2407,24 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         logger.error("Database error counting source conflicts for %s: %s", metric, exc)
 
     correlated: list[CorrelationResult] = []
+    # Paired with `correlated` positionally (before the top-5 truncation below) so the composite
+    # decision below can be built from exactly the correlations actually surfaced to the caller.
+    correlation_assessments: list[Assessment] = []
     for other in METRIC_COLUMNS:
         if other == metric or other in PRIVATE_FIELDS:
             continue
         other_series = _fetch_metric_series(other, baseline_start, target_day)
         result = find_correlations(series, other_series, lag_days=0)
         if result["r"] is not None and abs(result["r"]) >= 0.5:
+            corr_assessment = assess_correlation(
+                metric,
+                series,
+                other,
+                other_series,
+                baseline_start,
+                target_day,
+                effect={"r": result["r"], "n": result["n"], "lag_days": 0},
+            )
             correlated.append(
                 CorrelationResult(
                     metric_a=metric,
@@ -2409,21 +2432,15 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
                     **result,
                     evidence_a=Evidence(**build_evidence(series, baseline_start, target_day)),
                     evidence_b=Evidence(**build_evidence(other_series, baseline_start, target_day)),
-                    **_claim_fields(
-                        assess_correlation(
-                            metric,
-                            series,
-                            other,
-                            other_series,
-                            baseline_start,
-                            target_day,
-                            effect={"r": result["r"], "n": result["n"], "lag_days": 0},
-                        )
-                    ),
+                    **_claim_fields(corr_assessment),
                 )
             )
-    correlated.sort(key=lambda c: abs(c.r or 0), reverse=True)
-    correlated = correlated[:5]
+            correlation_assessments.append(corr_assessment)
+    ranked = sorted(
+        zip(correlated, correlation_assessments, strict=True), key=lambda pair: abs(pair[0].r or 0), reverse=True
+    )[:5]
+    correlated = [c for c, _ in ranked]
+    correlation_assessments = [a for _, a in ranked]
 
     facts: list[str] = []
     if value is None:
@@ -2488,6 +2505,9 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         },
     )
     trend_assessment = assess_trend(metric, trend_series, trend_start, target_day, effect=dict(trend))
+    overall_decision = combine_decisions(
+        [anomaly_assessment.decision, trend_assessment.decision, *(a.decision for a in correlation_assessments)]
+    )
     return ExplainMetricChangeResult(
         metric=metric,
         date=date,
@@ -2505,6 +2525,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         conflicting_days=conflicting_days,
         **_claim_fields(anomaly_assessment),
         **_claim_fields(trend_assessment, prefix="trend_"),
+        overall_decision=ClaimDecisionOut(**overall_decision.to_mcp()),
     )
 
 

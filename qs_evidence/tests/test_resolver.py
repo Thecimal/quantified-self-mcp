@@ -1,8 +1,18 @@
+import inspect
+import itertools
 import random
 
 import pytest
 
-from qs_evidence import ClaimTier, DimensionResult, EvidenceProfile, load_registry, resolve
+from qs_evidence import (
+    ClaimDecision,
+    ClaimTier,
+    DimensionResult,
+    EvidenceProfile,
+    combine_decisions,
+    load_registry,
+    resolve,
+)
 from qs_evidence import Dimension as D
 from qs_evidence import Status as S
 from qs_evidence.models import TIER_RANK
@@ -151,3 +161,94 @@ def _p(statuses, analysis):
 def test_mcp_contract():
     out = resolve(profile(**FIXTURES[6][1]), SPEC).to_mcp()
     assert out["tier"] == "suggestive" and out["must_state"] == ["shift_coincides_with_source_change"]
+
+
+# ---------------------------------------------------------------------------
+# combine_decisions: weakest-of-N composite primitive
+# ---------------------------------------------------------------------------
+
+
+def cd(tier, *factors):
+    return ClaimDecision(tier=tier, limiting_factors=list(factors), permitted_phrasing_class=tier.value)
+
+
+def test_combine_decisions_requires_at_least_one():
+    with pytest.raises(ValueError):
+        combine_decisions([])
+
+
+def test_combine_decisions_single_is_passthrough_tier():
+    d = cd(ClaimTier.SUGGESTIVE, "gappy_recent")
+    out = combine_decisions([d])
+    assert out.tier == ClaimTier.SUGGESTIVE
+    assert out.limiting_factors == ["gappy_recent"]
+
+
+def test_combine_decisions_three_component_weakest_wins():
+    # baseline -> supported, trend -> suggestive, correlation -> insufficient
+    baseline = cd(ClaimTier.SUPPORTED)
+    trend = cd(ClaimTier.SUGGESTIVE, "recent_window_gap")
+    correlation = cd(ClaimTier.INSUFFICIENT, "n_below_minimum")
+    out = combine_decisions([baseline, trend, correlation])
+    assert out.tier == ClaimTier.INSUFFICIENT
+    assert out.limiting_factors == ["n_below_minimum", "recent_window_gap"]
+
+
+def test_combine_decisions_four_component_weakest_wins():
+    decisions = [
+        cd(ClaimTier.SUPPORTED),
+        cd(ClaimTier.SUPPORTED),
+        cd(ClaimTier.SUGGESTIVE, "x"),
+        cd(ClaimTier.INSUFFICIENT, "y"),
+    ]
+    assert combine_decisions(decisions).tier == ClaimTier.INSUFFICIENT
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 5, 8])
+def test_combine_decisions_accepts_n_components(n):
+    tiers = [ClaimTier.SUPPORTED, ClaimTier.DETECTABLE_NOT_MEANINGFUL, ClaimTier.SUGGESTIVE, ClaimTier.INSUFFICIENT]
+    decisions = [cd(tiers[i % len(tiers)], f"reason_{i}") for i in range(n)]
+    out = combine_decisions(decisions)
+    assert TIER_RANK[out.tier] == min(TIER_RANK[d.tier] for d in decisions)
+
+
+def test_combine_decisions_is_permutation_invariant():
+    baseline = cd(ClaimTier.SUPPORTED)
+    trend = cd(ClaimTier.SUGGESTIVE, "recent_window_gap")
+    correlation = cd(ClaimTier.INSUFFICIENT, "n_below_minimum")
+    results = [combine_decisions(list(p)) for p in itertools.permutations([baseline, trend, correlation])]
+    assert all(r == results[0] for r in results)
+
+
+def test_combine_decisions_permutation_invariant_random():
+    rng = random.Random(11)
+    tiers = list(ClaimTier)
+    for _ in range(200):
+        decisions = [cd(rng.choice(tiers), *[f"r{i}"] * rng.randint(0, 2)) for i in range(rng.randint(1, 6))]
+        shuffled = decisions[:]
+        rng.shuffle(shuffled)
+        assert combine_decisions(decisions) == combine_decisions(shuffled)
+
+
+def test_combine_decisions_dedupes_shared_factors():
+    a = cd(ClaimTier.SUGGESTIVE, "coverage_below_threshold")
+    b = cd(ClaimTier.SUGGESTIVE, "coverage_below_threshold", "recent_window_gap")
+    out = combine_decisions([a, b])
+    assert out.limiting_factors == ["coverage_below_threshold", "recent_window_gap"]
+
+
+# ---- authority: legacy confidence fields must be structurally unreachable ----
+# Not a "does the code call this field" test — a signature test. If someone later adds a
+# `confidence` or `sample_confidence` parameter to resolve() or combine_decisions() so a caller
+# *could* pass one in, this fails immediately, before any value ever flows through it.
+_FORBIDDEN_PARAM_NAMES = {"confidence", "sample_confidence"}
+
+
+@pytest.mark.parametrize("fn", [resolve, combine_decisions], ids=lambda f: f.__name__)
+def test_decision_functions_cannot_take_legacy_confidence_fields(fn):
+    params = set(inspect.signature(fn).parameters)
+    assert not (params & _FORBIDDEN_PARAM_NAMES), (
+        f"{fn.__name__} gained a parameter named {params & _FORBIDDEN_PARAM_NAMES}; "
+        "claim_decision must be derivable exclusively from assessed evidence dimensions "
+        "(EvidenceProfile / ClaimDecision), never from a legacy confidence field."
+    )

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .models import ClaimDecision, ClaimTier, Dimension, DimensionResult, EvidenceProfile, Status
+from collections.abc import Sequence
+
+from .models import TIER_RANK, ClaimDecision, ClaimTier, Dimension, DimensionResult, EvidenceProfile, Status
 from .registry import AnalysisSpec
 
 
@@ -47,3 +49,27 @@ def resolve(profile: EvidenceProfile, spec: AnalysisSpec) -> ClaimDecision:
         tier = ClaimTier.SUPPORTED
 
     return ClaimDecision(tier=tier, limiting_factors=factors, permitted_phrasing_class=tier.value)
+
+
+def combine_decisions(decisions: Sequence[ClaimDecision]) -> ClaimDecision:
+    """Weakest-of-N: the single composite decision primitive for a result built from N assessed
+    sub-claims (e.g. explain_metric_change combining a headline anomaly claim, a trend claim, and
+    however many correlation claims it surfaced).
+
+    Takes only already-resolved ClaimDecision objects — never raw confidence, sample_confidence, or
+    any other descriptive field. That keeps a legacy field structurally unable to reach a composite
+    decision, the same way resolve() keeps it out of a single-analysis one: neither function has a
+    parameter a legacy field could be passed through even by accident.
+
+    N >= 1, and the result never depends on the order of `decisions` (see
+    tests/test_resolver.py::test_combine_decisions_is_permutation_invariant) — callers can assemble
+    the sequence in whatever order is convenient (e.g. headline claim first, correlations appended
+    as found) without affecting the outcome.
+    """
+    if not decisions:
+        raise ValueError("combine_decisions requires at least one ClaimDecision")
+    weakest_tier = min((d.tier for d in decisions), key=lambda t: TIER_RANK[t])
+    # Sorted rather than first-seen-order: first-seen order depends on the caller's sequence order,
+    # which is exactly the ordering dependence this function must not have.
+    factors = sorted({f for d in decisions for f in d.limiting_factors})
+    return ClaimDecision(tier=weakest_tier, limiting_factors=factors, permitted_phrasing_class=weakest_tier.value)
