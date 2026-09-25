@@ -647,6 +647,12 @@ TOOL_ROUTING_INSTRUCTIONS = (
 
 mcp = FastMCP("Quantified Self", instructions=TOOL_ROUTING_INSTRUCTIONS, mask_error_details=True)
 
+# ASGI app for platforms that run this module directly under an ASGI server
+# (e.g. `uvicorn server:app`), rather than invoking `python server.py`.
+# Manufact's auto-detected Python build does exactly this, so this needs to
+# exist at import time regardless of how main() below is invoked.
+app = mcp.http_app()
+
 # ---------------------------------------------------------------------------
 # Database bootstrap
 # ---------------------------------------------------------------------------
