@@ -35,6 +35,7 @@ def health_db(tmp_path, monkeypatch):
     sys.modules.pop("privacy", None)
     sys.modules.pop("tools.health", None)
     sys.modules.pop("tools.measurements", None)
+    sys.modules.pop("tools.workouts", None)
     import server
 
     return server
@@ -161,6 +162,7 @@ def test_export_health_data_csv_redacts_private_fields(tmp_path, monkeypatch):
     sys.modules.pop("privacy", None)
     sys.modules.pop("tools.health", None)
     sys.modules.pop("tools.measurements", None)
+    sys.modules.pop("tools.workouts", None)
     import server as health_db
 
     health_db.log_daily_metric(date="2026-01-01", steps=5000, mood=4)
@@ -334,6 +336,7 @@ def _import_server_with_private_fields(tmp_path, monkeypatch, private_fields):
     sys.modules.pop("privacy", None)
     sys.modules.pop("tools.health", None)
     sys.modules.pop("tools.measurements", None)
+    sys.modules.pop("tools.workouts", None)
     import server
 
     return server
@@ -380,6 +383,7 @@ def test_server_tools_work_end_to_end_against_an_encrypted_database(tmp_path, mo
     sys.modules.pop("privacy", None)
     sys.modules.pop("tools.health", None)
     sys.modules.pop("tools.measurements", None)
+    sys.modules.pop("tools.workouts", None)
     import server
 
     logged = server.log_daily_metric(date="2026-01-20", steps=6000)
