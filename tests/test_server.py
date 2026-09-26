@@ -33,6 +33,8 @@ def health_db(tmp_path, monkeypatch):
     monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
     sys.modules.pop("server", None)
     sys.modules.pop("privacy", None)
+    sys.modules.pop("tools.health", None)
+    sys.modules.pop("tools.measurements", None)
     import server
 
     return server
@@ -157,6 +159,8 @@ def test_export_health_data_csv_redacts_private_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("HEALTH_PRIVATE_FIELDS", "mood")
     sys.modules.pop("server", None)
     sys.modules.pop("privacy", None)
+    sys.modules.pop("tools.health", None)
+    sys.modules.pop("tools.measurements", None)
     import server as health_db
 
     health_db.log_daily_metric(date="2026-01-01", steps=5000, mood=4)
@@ -182,10 +186,21 @@ def test_database_locked_error_is_distinguished_from_generic_database_error(heal
     """
     import sqlite3
 
+    import tools.health
+
     def _raise_locked(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(health_db, "connect_writable", _raise_locked)
+    # log_daily_metric now lives in tools/health.py as a closure over that
+    # module's own `connect_writable` import (see register_health_tools) --
+    # a separate name binding from server.py's own `connect_writable`, even
+    # though both originally pointed at the same logic.py function. Patching
+    # health_db.connect_writable (server.py's copy) would no longer reach
+    # the function log_daily_metric actually calls, so this patches
+    # tools.health's binding instead. health_db's own fixture already
+    # popped "tools.health" from sys.modules before reimporting server, so
+    # this is the same freshly-imported module instance server.py wired up.
+    monkeypatch.setattr(tools.health, "connect_writable", _raise_locked)
     with pytest.raises(ToolError, match=r"\[database_locked\]"):
         health_db.log_daily_metric(date="2026-01-08", steps=1000)
 
@@ -317,6 +332,8 @@ def _import_server_with_private_fields(tmp_path, monkeypatch, private_fields):
     monkeypatch.setenv("HEALTH_PRIVATE_FIELDS", private_fields)
     sys.modules.pop("server", None)
     sys.modules.pop("privacy", None)
+    sys.modules.pop("tools.health", None)
+    sys.modules.pop("tools.measurements", None)
     import server
 
     return server
@@ -361,6 +378,8 @@ def test_server_tools_work_end_to_end_against_an_encrypted_database(tmp_path, mo
     monkeypatch.setenv("HEALTH_DB_PASSPHRASE", "correct horse battery staple")
     sys.modules.pop("server", None)
     sys.modules.pop("privacy", None)
+    sys.modules.pop("tools.health", None)
+    sys.modules.pop("tools.measurements", None)
     import server
 
     logged = server.log_daily_metric(date="2026-01-20", steps=6000)

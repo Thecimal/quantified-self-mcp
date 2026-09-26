@@ -53,6 +53,8 @@ def server_module(tmp_path, monkeypatch):
     monkeypatch.delenv("HEALTH_PRIVATE_FIELDS", raising=False)
     sys.modules.pop("server", None)
     sys.modules.pop("privacy", None)
+    sys.modules.pop("tools.health", None)
+    sys.modules.pop("tools.measurements", None)
     import server
 
     return server

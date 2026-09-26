@@ -40,6 +40,8 @@ def health_db(tmp_path, monkeypatch):
     monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
     sys.modules.pop("server", None)
     sys.modules.pop("privacy", None)
+    sys.modules.pop("tools.health", None)
+    sys.modules.pop("tools.measurements", None)
     import server
 
     return server
@@ -316,6 +318,8 @@ async def test_analytics_tools_reject_a_private_metric(client, monkeypatch):
     monkeypatch.setenv("HEALTH_PRIVATE_FIELDS", "mood")
     sys.modules.pop("server", None)
     sys.modules.pop("privacy", None)
+    sys.modules.pop("tools.health", None)
+    sys.modules.pop("tools.measurements", None)
     import server as private_server
 
     async with Client(private_server.mcp) as private_client:
