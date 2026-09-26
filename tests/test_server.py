@@ -32,6 +32,7 @@ def health_db(tmp_path, monkeypatch):
     db_path = tmp_path / "health.db"
     monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
     sys.modules.pop("server", None)
+    sys.modules.pop("privacy", None)
     import server
 
     return server
@@ -155,6 +156,7 @@ def test_export_health_data_csv_redacts_private_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
     monkeypatch.setenv("HEALTH_PRIVATE_FIELDS", "mood")
     sys.modules.pop("server", None)
+    sys.modules.pop("privacy", None)
     import server as health_db
 
     health_db.log_daily_metric(date="2026-01-01", steps=5000, mood=4)
@@ -314,6 +316,7 @@ def _import_server_with_private_fields(tmp_path, monkeypatch, private_fields):
     monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
     monkeypatch.setenv("HEALTH_PRIVATE_FIELDS", private_fields)
     sys.modules.pop("server", None)
+    sys.modules.pop("privacy", None)
     import server
 
     return server
@@ -357,6 +360,7 @@ def test_server_tools_work_end_to_end_against_an_encrypted_database(tmp_path, mo
     monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
     monkeypatch.setenv("HEALTH_DB_PASSPHRASE", "correct horse battery staple")
     sys.modules.pop("server", None)
+    sys.modules.pop("privacy", None)
     import server
 
     logged = server.log_daily_metric(date="2026-01-20", steps=6000)

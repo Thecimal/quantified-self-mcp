@@ -59,9 +59,8 @@ from datetime import timedelta
 from pathlib import Path
 
 from fastmcp import FastMCP
-from fastmcp.exceptions import ResourceError, ToolError
+from fastmcp.exceptions import ResourceError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, Field
 
 from analytics import (
     Point,
@@ -71,12 +70,25 @@ from analytics import (
     find_correlations,
 )
 from analytics import baseline as compute_baseline
+from errors import (
+    ERR_DATABASE_ERROR,
+    ERR_DATABASE_LOCKED,
+    ERR_INVALID_ACTIVITY_TYPE,
+    ERR_INVALID_DATE,
+    ERR_INVALID_DURATION,
+    ERR_INVALID_FIELD,
+    ERR_INVALID_INTENSITY,
+    ERR_INVALID_METRIC_VALUE,
+    ERR_INVALID_RANGE,
+    ERR_MISSING_METRIC,
+    _is_locked_error,
+    _tool_error,
+)
 from evidence import build_coverage_summary, build_evidence
 from logic import (
     MAX_ROWS_RETURNED,
     METRIC_BOUNDS,
     WORKOUT_INTENSITIES,
-    aggregate_measurements_to_daily,
     clear_daily_metric,
     connect_writable,
     count_source_conflicts,
@@ -84,11 +96,9 @@ from logic import (
     db_error_types,
     default_data_dir,
     ensure_schema,
-    insert_measurement,
     insert_workout_session,
     numeric_stats,
     parse_date,
-    query_measurements,
     query_workout_sessions,
     resolve_range,
     row_class,
@@ -96,15 +106,16 @@ from logic import (
     validate_metrics,
 )
 from logic import (
-    get_metric_provenance as _get_metric_provenance,
-)
-from logic import (
     readonly_connection as _logic_readonly_connection,
 )
-from metric_registry import INT_METRIC_KEYS, METRIC_KEYS
+from metric_registry import METRIC_KEYS
+from privacy import (
+    INT_METRIC_COLUMNS,  # noqa: F401 -- unused here, but tests/test_metric_registry.py reaches it via server.INT_METRIC_COLUMNS
+    PRIVATE_FIELDS,
+    _redact_private_fields,
+)
 from qs_evidence import (
     Assessment,
-    EvidenceProfile,
     assess_anomaly,
     assess_baseline,
     assess_correlation,
@@ -112,6 +123,40 @@ from qs_evidence import (
     assess_window_comparison,
     combine_decisions,
 )
+from schemas import (
+    AnomalyPoint,
+    BaselineStats,
+    CalculateTrendResult,
+    ChangeNote,
+    ClaimDecisionOut,
+    ClaimEvidence,
+    ClaimEvidenceComparative,
+    ClaimFields,  # noqa: F401 -- unused here, but tests/test_claim_contract.py reaches it via server.ClaimFields
+    ClearMetricResult,
+    ComparePeriodsResult,
+    CorrelationResult,
+    CoverageSummary,
+    DailyMetricsRow,
+    DateRange,
+    DetectAnomaliesResult,
+    Evidence,
+    ExplainMetricChangeResult,
+    ExportCsvResult,
+    GetBaselineResult,
+    GetMetricHistoryResult,
+    GetRecentChangesResult,
+    HealthDataSummary,
+    LogDailyMetricResult,
+    LogWorkoutSessionResult,
+    MetricDefinition,
+    MetricSeriesPoint,
+    MetricStats,
+    ReadHealthDataResult,
+    ReadWorkoutSessionsResult,
+    TrendStats,
+    WorkoutSessionRow,
+)
+from tools.measurements import register_measurement_tools
 
 # The SQLite file never leaves this machine, but the *rows read out of it*
 # do: whatever text a tool returns becomes part of the conversation sent to
@@ -149,494 +194,6 @@ CLOUD_MODEL_WARNING = (
 METRIC_COLUMNS = list(METRIC_KEYS)
 
 # ---------------------------------------------------------------------------
-# Output schemas
-# ---------------------------------------------------------------------------
-#
-# Each tool below returns one of these Pydantic models instead of a
-# hand-built dict passed through json.dumps. FastMCP derives a JSON output
-# schema from the return-type annotation and populates the response's
-# structured_content field to match it, in addition to the usual text
-# content (still a JSON string, for clients that only read that) — so a
-# client can validate/consume the result as a real typed object instead of
-# re-parsing free-form text. See tests/test_server.py for a check of the
-# actual wire-level structured_content via an in-memory fastmcp Client.
-
-
-class DailyMetricsRow(BaseModel):
-    date: str
-    steps: int | None = None
-    sleep_hours: float | None = None
-    resting_heart_rate: int | None = None
-    weight_kg: float | None = None
-    workout_minutes: int | None = None
-    mood: int | None = None
-    water_ml: int | None = None
-    heart_rate: int | None = None
-    hrv_ms: float | None = None
-
-
-class DateRange(BaseModel):
-    start_date: str
-    end_date: str
-
-
-class Gap(BaseModel):
-    start: str
-    end: str
-    days: int
-
-
-class Evidence(BaseModel):
-    """Coverage/quality of the data a single-metric analytical result is
-    based on. See evidence.build_evidence for how each field is computed.
-"""
-
-    requested_start: str
-    requested_end: str
-    observed_start: str | None = None
-    observed_end: str | None = None
-    expected_days: int
-    observed_days: int
-    coverage_ratio: float
-    missing_days: int
-    measurement_count: int
-    gaps: list[Gap]
-    freshness_days: int | None = None
-    recent_gap_days: int
-    confidence: str
-
-
-class MetricStats(BaseModel):
-    avg: float | None = None
-    min: float | None = None
-    max: float | None = None
-
-
-class HealthDataSummary(BaseModel):
-    days_with_data: int
-    steps: MetricStats
-    sleep_hours: MetricStats
-    resting_heart_rate: MetricStats
-    weight_kg: MetricStats
-    workout_minutes: MetricStats
-    mood: MetricStats
-    water_ml: MetricStats
-    heart_rate: MetricStats
-    hrv_ms: MetricStats
-
-
-class CoverageSummary(BaseModel):
-    """Multi-metric coverage for a Layer-1 result spanning several metrics
-    at once. See evidence.build_coverage_summary for how each field is
-    computed; unlike Evidence (one metric, gaps/freshness/recent_gap),
-    this reports a coverage_percent per metric side by side.
-    """
-
-    period: str
-    days_expected: int
-    days_with_data: int
-    coverage_percent: float
-    missing_days: int
-    metrics: dict[str, float]
-    confidence: str
-
-
-class ReadHealthDataResult(BaseModel):
-    range: DateRange
-    rows: list[DailyMetricsRow]
-    truncated: bool
-    summary: HealthDataSummary
-    coverage: CoverageSummary
-
-
-class ExportCsvResult(BaseModel):
-    path: str
-    rows_exported: int
-    range: DateRange
-
-
-class LogDailyMetricResult(BaseModel):
-    logged: dict[str, int | float]
-    row: DailyMetricsRow
-
-
-class ClearMetricResult(BaseModel):
-    cleared: str
-    row: DailyMetricsRow | None = None
-    note: str | None = None
-
-
-class MeasurementRow(BaseModel):
-    id: int
-    timestamp: str
-    metric: str
-    value: float
-    unit: str | None = None
-    source: str | None = None
-    source_type: str | None = None
-    created_at: str
-
-
-class LogMeasurementResult(BaseModel):
-    measurement: MeasurementRow
-
-
-class ReadMeasurementsResult(BaseModel):
-    measurements: list[MeasurementRow]
-    count: int
-
-
-class AggregateMeasurementsResult(BaseModel):
-    date: str
-    aggregated: dict[str, float]
-    row: DailyMetricsRow
-
-
-class SourceBreakdown(BaseModel):
-    source: str | None = None
-    value: float
-    n: int
-    latest_timestamp: str
-
-
-class GetMetricProvenanceResult(BaseModel):
-    metric: str
-    date: str
-    sources: list[SourceBreakdown]
-    conflict: bool
-
-
-# --- Layer 2 (analytics) / Layer 3 (personal intelligence) output models --
-#
-# These wrap the pure functions in analytics.py the same way the models
-# above wrap logic.py: FastMCP derives a JSON schema from the return type,
-# so a client gets structured_content it can consume directly rather than
-# re-parsing a free-form string.
-
-
-class MetricSeriesPoint(BaseModel):
-    date: str
-    value: float
-
-
-class GetMetricHistoryResult(BaseModel):
-    metric: str
-    range: DateRange
-    points: list[MetricSeriesPoint]
-    evidence: Evidence
-
-
-class ClaimDecisionOut(BaseModel):
-    tier: str
-    permitted_phrasing_class: str
-    must_state: list[str]
-    template: str
-
-
-class ClaimFields(BaseModel):
-    """Evidence pipeline output shared by every analytical result: registry policy -> evaluators ->
-    EvidenceProfile -> weakest-link resolver -> ClaimDecision."""
-
-    evidence_profile: EvidenceProfile = Field(
-        description=(
-            "Per-dimension evidence quality behind this result (sample, temporal, missingness, ...). "
-            "Dimensions without an evaluator yet are 'not_assessed' and cap the claim, "
-            "never count as adequate."
-        ),
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        description=(
-            "How strongly this result may be stated. tier is insufficient, suggestive, "
-            "detectable_not_meaningful or supported; every entry in must_state has to be "
-            "mentioned when reporting it."
-        ),
-    )
-
-
-class ClaimEvidence(BaseModel):
-    """Canonical envelope for one assessed claim: the coverage evidence it rests on, the per-dimension
-    EvidenceProfile, and the resulting ClaimDecision. Migrating tools adopt it one at a time; see
-    ClaimFields for the legacy flat fields it replaces."""
-
-    evidence: Evidence = Field(description="Descriptive data coverage behind this claim.")
-    profile: EvidenceProfile = Field(
-        description=(
-            "Per-dimension evidence quality behind this claim (sample, temporal, missingness, ...). "
-            "Dimensions without an evaluator yet are 'not_assessed' and cap the claim, "
-            "never count as adequate."
-        ),
-    )
-    decision: ClaimDecisionOut = Field(
-        description=(
-            "How strongly this claim may be stated. tier is insufficient, suggestive, "
-            "detectable_not_meaningful or supported; every entry in must_state has to be "
-            "mentioned when reporting it."
-        ),
-    )
-
-
-class ClaimEvidenceComparative(BaseModel):
-    """Canonical envelope for one assessed claim resting on two source coverages (e.g. two metrics, two
-    periods) rather than one — see ClaimEvidence for the single-window form. There is still exactly one
-    profile and one decision: per-source facts that matter to the assessment (paired sample size, each
-    source's missingness, ...) live inside profile's dimension details, not as a second decision surface."""
-
-    evidence_a: Evidence = Field(description="Descriptive data coverage behind the first source.")
-    evidence_b: Evidence = Field(description="Descriptive data coverage behind the second source.")
-    profile: EvidenceProfile = Field(
-        description=(
-            "Per-dimension evidence quality behind this claim (sample, temporal, missingness, ...), "
-            "assessed jointly across both sources where relevant. Dimensions without an evaluator yet "
-            "are 'not_assessed' and cap the claim, never count as adequate."
-        ),
-    )
-    decision: ClaimDecisionOut = Field(
-        description=(
-            "How strongly this claim may be stated. tier is insufficient, suggestive, "
-            "detectable_not_meaningful or supported; every entry in must_state has to be "
-            "mentioned when reporting it."
-        ),
-    )
-
-
-class BaselineStats(BaseModel):
-    mean: float | None = None
-    median: float | None = None
-    stdev: float | None = None
-    n: int
-
-
-class GetBaselineResult(BaseModel):
-    metric: str
-    range: DateRange
-    baseline: BaselineStats
-    claim: ClaimEvidence = Field(
-        description="Evidence and decision for the \"what's normal\" claim; read claim.decision before reporting it."
-    )
-    evidence: Evidence = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
-    )
-
-
-class AnomalyPoint(BaseModel):
-    date: str
-    value: float
-    modified_z_score: float
-    direction: str
-
-
-class DetectAnomaliesResult(BaseModel):
-    metric: str
-    range: DateRange
-    threshold: float
-    anomalies: list[AnomalyPoint]
-    claim: ClaimEvidence = Field(
-        description="Evidence and decision for the anomaly claim; read claim.decision before reporting it."
-    )
-    evidence: Evidence = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
-    )
-
-
-class TrendStats(BaseModel):
-    direction: str
-    slope_per_day: float | None = None
-    r_squared: float | None = None
-    n: int
-    span_days: int | None = None
-
-
-class CalculateTrendResult(BaseModel):
-    metric: str
-    range: DateRange
-    trend: TrendStats
-    claim: ClaimEvidence = Field(
-        description="Evidence and decision for the trend claim; read claim.decision before reporting it."
-    )
-    evidence: Evidence = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
-    )
-
-
-class ComparePeriodsResult(BaseModel):
-    metric: str
-    period_a: DateRange
-    period_b: DateRange
-    period_a_stats: BaselineStats
-    period_b_stats: BaselineStats
-    delta: float | None = None
-    pct_change: float | None = None
-    claim: ClaimEvidenceComparative = Field(
-        description="Evidence and decision for the period comparison claim; read claim.decision before reporting it."
-    )
-    period_a_evidence: Evidence = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.evidence_a. Use claim.decision, not a standalone confidence field.",
-    )
-    period_b_evidence: Evidence = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.evidence_b. Use claim.decision, not a standalone confidence field.",
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
-    )
-
-
-class CorrelationResult(BaseModel):
-    metric_a: str
-    metric_b: str
-    lag_days: int
-    r: float | None = None
-    n: int
-    note: str | None = None
-    claim: ClaimEvidenceComparative = Field(
-        description="Evidence and decision for the correlation claim; read claim.decision before reporting it."
-    )
-    evidence_a: Evidence = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.evidence_a. Use claim.decision, not a standalone confidence field.",
-    )
-    evidence_b: Evidence = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.evidence_b. Use claim.decision, not a standalone confidence field.",
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
-    )
-
-
-class ChangeNote(BaseModel):
-    metric: str
-    kind: str  # "shift" (period-over-period) | "anomaly" | "trend"
-    detail: str
-    claim: ClaimEvidence = Field(
-        description="Evidence and decision for this change note's claim; read claim.decision before reporting it."
-    )
-    evidence: Evidence = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
-    )
-
-
-class GetRecentChangesResult(BaseModel):
-    recent_range: DateRange
-    baseline_range: DateRange
-    changes: list[ChangeNote]
-
-
-class WorkoutSessionRow(BaseModel):
-    id: int
-    date: str
-    activity_type: str
-    start_time: str | None = None
-    duration_minutes: int
-    intensity: str | None = None
-    avg_heart_rate: int | None = None
-    max_heart_rate: int | None = None
-    source: str | None = None
-    notes: str | None = None
-    created_at: str
-
-
-class LogWorkoutSessionResult(BaseModel):
-    session: WorkoutSessionRow
-
-
-class ReadWorkoutSessionsResult(BaseModel):
-    sessions: list[WorkoutSessionRow]
-    count: int
-
-
-class ExplainMetricChangeResult(BaseModel):
-    metric: str
-    date: str
-    value: float | None = None
-    baseline_range: DateRange
-    baseline: BaselineStats
-    is_anomaly: bool
-    modified_z_score: float | None = None
-    trend: TrendStats
-    correlated_metrics: list[CorrelationResult]
-    sessions: list[WorkoutSessionRow] = []
-    narrative_facts: list[str]
-    headline_claim: ClaimEvidence = Field(
-        description=(
-            "Evidence and decision for the headline claim: this day's value against its 90-day "
-            "baseline. Read headline_claim.decision before reporting it."
-        ),
-    )
-    trend_claim: ClaimEvidence = Field(
-        description=(
-            "Evidence and decision for the 30-day trend leading into this day, assessed separately "
-            "from the headline claim. Read trend_claim.decision before reporting it."
-        ),
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to headline_claim.profile. Use headline_claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to headline_claim.decision. Use headline_claim.decision instead.",
-    )
-    trend_evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to trend_claim.profile. Use trend_claim.decision instead.",
-    )
-    trend_claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to trend_claim.decision. Use trend_claim.decision instead.",
-    )
-    conflicting_days: int = 0
-    overall_decision: ClaimDecisionOut = Field(
-        description=(
-            "The single decision governing this whole result: weakest-of-N over the headline claim "
-            "(headline_claim.decision), the trend (trend_claim.decision), and every surfaced "
-            "correlation's own decision. If any component is insufficient/suggestive, the composite "
-            "is too — report overall_decision.tier and must_state rather than treating the headline "
-            "claim as though the trend and correlations couldn't drag it down."
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
@@ -662,54 +219,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("quantified-self-mcp")
-
-# Field-level privacy: metrics listed here (comma-separated) are never
-# exposed by any tool, no matter how they're stored — read_health_data
-# always reports them as null (in both "rows" and "summary"), and the
-# "row" echoed back by log_daily_metric/clear_metric redacts them too, so
-# even the write tools' own responses can't leak a value back to the
-# model. The actual value is still written to and kept in the database
-# (so e.g. weight_kg can still be logged for your own records), just never
-# read back through the MCP tools. Unknown names are logged and ignored
-# rather than crashing the server, since a typo in this config shouldn't
-# take down the whole thing.
-def _parse_private_fields(raw: str) -> frozenset[str]:
-    names = {name.strip() for name in raw.split(",") if name.strip()}
-    unknown = names - set(METRIC_COLUMNS)
-    if unknown:
-        logger.warning(
-            "HEALTH_PRIVATE_FIELDS contains unknown field(s) %s; ignoring. Valid fields: %s",
-            sorted(unknown),
-            ", ".join(METRIC_COLUMNS),
-        )
-    return frozenset(names & set(METRIC_COLUMNS))
-
-
-PRIVATE_FIELDS = _parse_private_fields(os.environ.get("HEALTH_PRIVATE_FIELDS", ""))
-
-
-# daily_metrics.value is stored as REAL regardless of a metric's logical
-# type (see db/schema.sql), so a "mean"-method metric can come back with a
-# genuine fractional part -- e.g. two resting_heart_rate readings of 62
-# and 67 average to 64.5 -- that DailyMetricsRow's `int` fields would
-# otherwise reject outright rather than silently truncate. Derived from
-# metric_registry (value_type == "int"); the pydantic models' annotations
-# must agree with it, which tests/test_metric_registry.py checks.
-INT_METRIC_COLUMNS = INT_METRIC_KEYS
-
-
-def _redact_private_fields(row: dict) -> dict:
-    """Return a copy of a daily_metrics row dict with any private field
-    forced to None, and any INT_METRIC_COLUMNS value rounded to the
-    nearest int (see INT_METRIC_COLUMNS) -- both regardless of what's
-    actually stored for it. Every call site that builds a DailyMetricsRow
-    from a daily_metrics_wide row goes through this first.
-    """
-    return {
-        k: (None if k in PRIVATE_FIELDS else round(v) if k in INT_METRIC_COLUMNS and v is not None else v)
-        for k, v in row.items()
-    }
-
 
 # mask_error_details=True: an unexpected internal error (corrupt DB, disk
 # issue, etc.) is reduced to a generic message instead of leaking a raw
@@ -892,50 +401,6 @@ def _migrated_claim_fields_comparative(assessment: Assessment, evidence_a: Evide
         "evidence_profile": claim.profile,
         "claim_decision": claim.decision,
     }
-
-
-# ---------------------------------------------------------------------------
-# Error semantics
-# ---------------------------------------------------------------------------
-
-# Stable, machine-parseable codes prefixed onto every ToolError message below
-# (as "[code] human message"), so a client or the calling LLM can branch on
-# the failure kind — e.g. retry on "database_locked" but not on
-# "invalid_date" — without parsing free-form English. The human message
-# after the code is still the primary content and is unchanged from before;
-# existing substring-matching tests (e.g. on "mood") keep working since the
-# code is a prefix, not a replacement.
-ERR_INVALID_DATE = "invalid_date"
-ERR_INVALID_RANGE = "invalid_range"
-ERR_MISSING_METRIC = "missing_metric"
-ERR_INVALID_METRIC_VALUE = "invalid_metric_value"
-ERR_INVALID_FIELD = "invalid_field"
-ERR_DATABASE_LOCKED = "database_locked"
-ERR_DATABASE_ERROR = "database_error"
-ERR_INVALID_TIMESTAMP = "invalid_timestamp"
-ERR_INVALID_METRIC = "invalid_metric"
-ERR_INVALID_ACTIVITY_TYPE = "invalid_activity_type"
-ERR_INVALID_DURATION = "invalid_duration"
-ERR_INVALID_INTENSITY = "invalid_intensity"
-
-
-def _tool_error(code: str, message: str) -> ToolError:
-    return ToolError(f"[{code}] {message}")
-
-
-def _is_locked_error(exc: Exception) -> bool:
-    """True if exc looks like a lock/busy contention error rather than a
-    missing/corrupt database — used to pick database_locked vs
-    database_error so the two failure modes (retry-worthy vs not) are
-    distinguishable by code, not just by re-reading the message text.
-
-    Checks the exception's class *name* rather than isinstance against
-    sqlite3.OperationalError specifically, since sqlcipher3's own
-    OperationalError (used when HEALTH_DB_PASSPHRASE is set — see
-    logic.db_error_types) is a separate class, not a subclass of
-    sqlite3's, and this needs to recognize either.
-    """
-    return type(exc).__name__ == "OperationalError" and "lock" in str(exc).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1363,173 +828,13 @@ def clear_metric(date: str, field: str) -> ClearMetricResult:
 # without writing anything.
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        title="Log a raw measurement",
-        readOnlyHint=False,
-        destructiveHint=False,  # always inserts a new row, never overwrites one
-        idempotentHint=False,  # calling it twice logs two measurements, not one
-        openWorldHint=False,
-    )
+log_measurement, read_measurements, aggregate_measurements, get_metric_provenance = register_measurement_tools(
+    mcp,
+    db_path=HEALTH_DB_PATH,
+    logger=logger,
+    readonly_connection=_readonly_connection,
+    metric_columns=METRIC_COLUMNS,
 )
-def log_measurement(
-    timestamp: str,
-    metric: str,
-    value: float,
-    unit: str | None = None,
-    source: str | None = None,
-    source_type: str | None = None,
-) -> LogMeasurementResult:
-    """
-    Record a single raw observation — one metric, one value, one point in
-    time — rather than a whole day's summary. Use this instead of
-    log_daily_metric when the source, exact time, or the fact that there
-    were *multiple* readings that day matters (e.g. three separate
-    workouts, or a wearable's periodic heart-rate samples).
-
-    Use this tool when:
-    - recording one timestamped observation where the exact time, source,
-      or possibility of multiple same-day readings matters (e.g. "record
-      my blood pressure reading from my cuff at 7am").
-
-    Do not use this tool when:
-    - it's just a single end-of-day value for a fixed metric -> use
-      `log_daily_metric` instead.
-    - it's a workout/exercise session -> use `log_workout_session` instead.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
-
-    Args:
-        timestamp: When the observation was taken, YYYY-MM-DD or a full
-            ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS).
-        metric: Name of the metric, e.g. "resting_heart_rate", "steps".
-            Not free-form: must already have an entry in the
-            aggregation_rules table (steps, sleep_hours,
-            resting_heart_rate, weight_kg, workout_minutes, mood,
-            water_ml, heart_rate, hrv_ms, out of the box) — daily_metrics
-            is a database-maintained projection over measurements (see
-            db/schema.sql), so every metric written to it needs a known
-            aggregation method (sum/mean/last) or there would be nothing
-            telling the projection how to roll same-day readings up.
-            metrics_schema lists the current set.
-        value: The numeric reading.
-        unit: Unit the value is in, e.g. "bpm", "kg". Optional.
-        source: Where this came from, e.g. "Apple Watch", "manual". Optional.
-        source_type: Category of source, e.g. "wearable", "manual", "app". Optional.
-
-    Returns:
-        A LogMeasurementResult with the stored row, including its new id.
-    """
-    try:
-        parse_date(timestamp[:10], "timestamp")
-    except ValueError as exc:
-        raise _tool_error(ERR_INVALID_TIMESTAMP, str(exc)) from exc
-    if not metric.strip():
-        raise _tool_error(ERR_INVALID_METRIC, "metric must be a non-empty string.")
-
-    try:
-        conn = connect_writable(HEALTH_DB_PATH)
-        try:
-            ensure_schema(conn)
-            new_id = insert_measurement(conn, timestamp, metric, value, unit, source, source_type)
-            conn.row_factory = row_class()
-            row = conn.execute("SELECT * FROM measurements WHERE id = ?", (new_id,)).fetchone()
-        finally:
-            conn.close()
-    except db_error_types() as exc:
-        # The measurements->daily_metrics triggers (db/schema.sql) reject
-        # an INSERT for a metric with no aggregation_rules entry via
-        # RAISE(ABORT, 'no aggregation_rules entry for metric') — surfaces
-        # here as an ordinary db_error_types() exception (sqlite3.
-        # IntegrityError, or the sqlcipher3 equivalent when encrypted; see
-        # logic.db_error_types), so it's distinguished by message rather
-        # than exception type to work under either driver.
-        if "no aggregation_rules entry for metric" in str(exc):
-            try:
-                with _readonly_connection(HEALTH_DB_PATH) as ro_conn:
-                    known = [r[0] for r in ro_conn.execute("SELECT metric FROM aggregation_rules ORDER BY metric")]
-            except db_error_types():
-                known = []
-            raise _tool_error(
-                ERR_INVALID_METRIC,
-                f"{metric!r} has no aggregation_rules entry, so it can't be logged as a measurement."
-                + (f" Supported metrics: {', '.join(known)}." if known else ""),
-            ) from exc
-        logger.error("Database error writing to %s: %s", HEALTH_DB_PATH, exc)
-        code = ERR_DATABASE_LOCKED if _is_locked_error(exc) else ERR_DATABASE_ERROR
-        raise _tool_error(
-            code,
-            "Could not write to the health database — it may be locked by another process. Try again in a moment.",
-        ) from exc
-
-    return LogMeasurementResult(measurement=MeasurementRow(**dict(row)))
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        title="Read raw measurements",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
-    )
-)
-def read_measurements(
-    metric: str | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    source: str | None = None,
-    limit: int = 200,
-) -> ReadMeasurementsResult:
-    """
-    Read individual measurement rows (not the daily_metrics aggregate),
-    most recent first. Use this to see exactly when and where each
-    reading came from, rather than just a day's summarized value.
-
-    Use this tool when:
-    - the user wants raw/individual observations (e.g. "what measurements
-      have I recorded?"), including their timestamp or source.
-
-    Do not use this tool when:
-    - the user wants a broad, multi-metric overview -> use
-      `read_health_data` instead.
-    - the user wants one metric's day-by-day history -> use
-      `get_metric_history` instead.
-    - the user wants workout sessions -> use `read_workout_sessions` instead.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
-
-    Args:
-        metric: Only return this metric. Omit for all metrics.
-        start_date: Only return rows on/after this date (YYYY-MM-DD). Omit for no lower bound.
-        end_date: Only return rows on/before this date (YYYY-MM-DD). Omit for no upper bound.
-        source: Only return rows from this source, e.g. "Apple Watch". Omit for all sources.
-        limit: Maximum rows to return (default 200).
-
-    Returns:
-        A ReadMeasurementsResult with the matching rows and a count.
-    """
-    try:
-        conn = connect_writable(HEALTH_DB_PATH)
-        try:
-            ensure_schema(conn)
-            conn.row_factory = row_class()
-            rows = query_measurements(conn, metric=metric, start=start_date, end=end_date, source=source, limit=limit)
-        finally:
-            conn.close()
-    except db_error_types() as exc:
-        logger.error("Database error reading from %s: %s", HEALTH_DB_PATH, exc)
-        raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
-
-    return ReadMeasurementsResult(measurements=[MeasurementRow(**row) for row in rows], count=len(rows))
 
 
 @mcp.tool(
@@ -1695,144 +1000,6 @@ def read_workout_sessions(
         raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
 
     return ReadWorkoutSessionsResult(sessions=[WorkoutSessionRow(**row) for row in rows], count=len(rows))
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        title="Preview a source-priority resolution of a day's measurements",
-        readOnlyHint=True,  # never writes daily_metrics -- see docstring
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
-    )
-)
-def aggregate_measurements(date: str, source_priority: list[str] | None = None) -> AggregateMeasurementsResult:
-    """
-    Preview what one day's raw measurements would roll up to if a
-    conflicting metric were resolved using source_priority, alongside
-    that day's *actual* current daily_metrics values.
-
-    daily_metrics is a database-maintained projection (see db/schema.sql):
-    every log_measurement/import automatically keeps it in sync the
-    moment it's written, using each metric's fixed aggregation method
-    (sum/mean/last — see aggregation_rules, or get_baseline's "method"
-    field). When a metric has measurements from more than one source on
-    a day, the projection uses only one source's observations — never a
-    blend of devices. It takes the highest-ranked present source in the
-    stored source priority list (manual log_daily_metric entries rank
-    first by default); if none is ranked, the source that observed the
-    most hours of that day, then the one with the latest observation,
-    then by name. This tool writes nothing: "aggregated" previews what
-    the source_priority you pass would produce; "row" is the real,
-    currently-stored value, which differs from "aggregated" whenever
-    the stored priority differs from the one you pass.
-
-    If a metric has measurements from more than one source that day (e.g.
-    an Apple Watch and a Garmin both logging resting_heart_rate), use
-    get_metric_provenance first to see whether they actually disagree.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
-
-    Args:
-        date: The day to preview, formatted YYYY-MM-DD.
-        source_priority: Ordered list of source names, e.g. ["Apple
-            Watch", "Garmin"]. For any metric with more than one source
-            that day, the first name in this list that's actually present
-            wins in "aggregated" and the other source's readings for that
-            metric are dropped from that preview. Omit to use the stored
-            priority list and the same fallback the stored projection
-            uses. Never affects "row" — see above.
-
-    Returns:
-        An AggregateMeasurementsResult with "aggregated" (the
-        source_priority preview; only metrics with measurements that day
-        are included) and "row" (that day's actual, currently-stored
-        daily_metrics values — unaffected by source_priority).
-    """
-    try:
-        day = parse_date(date, "date")
-    except ValueError as exc:
-        raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
-
-    try:
-        with _readonly_connection(HEALTH_DB_PATH) as conn:
-            conn.row_factory = row_class()
-            aggregated = aggregate_measurements_to_daily(conn, day.isoformat(), source_priority)
-            metrics_only = {k: v for k, v in aggregated.items() if k != "date"}
-            rows = daily_metrics_wide(conn, METRIC_COLUMNS, day.isoformat(), day.isoformat())
-            row = rows[0] if rows else None
-    except db_error_types() as exc:
-        logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
-        raise _tool_error(
-            ERR_DATABASE_ERROR,
-            "Could not read the health database — it may be missing or corrupt. Try again, or re-run init_db.py.",
-        ) from exc
-
-    row_dict = dict(row) if row is not None else {"date": day.isoformat()}
-    return AggregateMeasurementsResult(
-        date=day.isoformat(),
-        aggregated=metrics_only,
-        row=DailyMetricsRow(**_redact_private_fields(row_dict)),
-    )
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        title="Break a metric down by source",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
-    )
-)
-def get_metric_provenance(metric: str, date: str) -> GetMetricProvenanceResult:
-    """
-    Show one metric's raw measurements for one day, broken down by which
-    source reported them — answers "which one is correct?" when e.g. an
-    Apple Watch and a Garmin disagree on resting heart rate, instead of
-    silently averaging two different devices into one number.
-
-    Do not use this tool when:
-    - the user just wants a plain day-by-day history for the metric, with
-      no need to see the per-source breakdown -> use `get_metric_history`
-      instead.
-
-    Privacy note: this server and its SQLite file are entirely local, but
-    the data returned by this tool becomes part of the conversation sent
-    to whatever model the calling client is configured with. If that
-    model runs in the cloud rather than on your machine, treat this the
-    same as pasting the data into a chat with that provider.
-
-    Args:
-        metric: Name of the metric to inspect, e.g. "resting_heart_rate".
-        date: The day to inspect, formatted YYYY-MM-DD.
-
-    Returns:
-        A GetMetricProvenanceResult listing each source's average value,
-        reading count, and latest timestamp that day, plus "conflict"
-        (true when 2+ sources disagree by more than a small tolerance).
-    """
-    try:
-        day = parse_date(date, "date")
-    except ValueError as exc:
-        raise _tool_error(ERR_INVALID_DATE, str(exc)) from exc
-
-    try:
-        conn = connect_writable(HEALTH_DB_PATH)
-        try:
-            ensure_schema(conn)
-            result = _get_metric_provenance(conn, metric, day.isoformat())
-        finally:
-            conn.close()
-    except db_error_types() as exc:
-        logger.error("Database error reading from %s: %s", HEALTH_DB_PATH, exc)
-        raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
-
-    return GetMetricProvenanceResult(**result)
 
 
 # ---------------------------------------------------------------------------
@@ -2684,14 +1851,6 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
 # reference data a client might want to read once and cache (the metric
 # schema) or fetch directly by a known key (a specific day), rather than
 # something that needs a tool call's request/response semantics.
-
-
-class MetricDefinition(BaseModel):
-    name: str
-    min: float
-    max: float
-    label: str
-    private: bool  # mirrors PRIVATE_FIELDS at the time this is read
 
 
 @mcp.resource(

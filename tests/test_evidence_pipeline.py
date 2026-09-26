@@ -42,6 +42,7 @@ def unbuilt(analysis):
 def health_db(tmp_path, monkeypatch):
     monkeypatch.setenv("HEALTH_DB_PATH", str(tmp_path / "health.db"))
     sys.modules.pop("server", None)
+    sys.modules.pop("privacy", None)
     import server
 
     return server

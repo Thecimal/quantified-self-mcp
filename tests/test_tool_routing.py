@@ -104,6 +104,7 @@ def health_db(tmp_path, monkeypatch):
     db_path = tmp_path / "health.db"
     monkeypatch.setenv("HEALTH_DB_PATH", str(db_path))
     sys.modules.pop("server", None)
+    sys.modules.pop("privacy", None)
     import server
 
     return server

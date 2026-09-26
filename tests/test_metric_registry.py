@@ -52,6 +52,7 @@ def server_module(tmp_path, monkeypatch):
     monkeypatch.setenv("HEALTH_DB_PATH", str(tmp_path / "health.db"))
     monkeypatch.delenv("HEALTH_PRIVATE_FIELDS", raising=False)
     sys.modules.pop("server", None)
+    sys.modules.pop("privacy", None)
     import server
 
     return server
