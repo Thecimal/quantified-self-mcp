@@ -1,6 +1,7 @@
 import pytest
 from pydantic import BaseModel, ValidationError
 
+import schemas
 import server
 
 
@@ -23,15 +24,35 @@ def _claim_fields(model):
 NOT_CLAIM_BEARING: set[str] = {
     "GetMetricHistoryResult",  # raw history, no claim
     "ClaimEvidence",  # the canonical claim envelope itself, not a result that carries one
+    "ClaimFields",  # legacy mixin; nothing subclasses it anymore, not a result model
 }
 
 EVIDENCE_MODELS = [
     m
     for m in _all_subclasses(BaseModel)
-    if m.__module__ == server.__name__
-    and any(n.endswith("evidence") for n in m.model_fields)
+    if m.__module__ in (server.__name__, schemas.__name__)
+    and _claim_fields(m)
     and m.__name__ not in NOT_CLAIM_BEARING
 ]
+
+# Result models now live in schemas.py, imported into server.py; without checking
+# both modules above, EVIDENCE_MODELS silently collects zero classes and every
+# parametrized test below passes vacuously (pytest reports it as skipped, not
+# failed). Assert the exact set of models discovered so that regression is loud.
+_EXPECTED_EVIDENCE_MODELS = {
+    "GetBaselineResult",
+    "DetectAnomaliesResult",
+    "CalculateTrendResult",
+    "ComparePeriodsResult",
+    "CorrelationResult",
+    "ChangeNote",
+    "ExplainMetricChangeResult",
+}
+
+
+def test_evidence_models_discovery_is_not_vacuous():
+    discovered = {m.__name__ for m in EVIDENCE_MODELS}
+    assert discovered == _EXPECTED_EVIDENCE_MODELS
 
 
 @pytest.mark.parametrize("model", EVIDENCE_MODELS, ids=lambda m: m.__name__)
@@ -39,13 +60,6 @@ def test_evidence_bearing_models_require_claim_fields(model):
     claim = _claim_fields(model)
     assert claim, f"{model.__name__} has evidence but no claim fields"
     assert all(f.is_required() for f in claim.values())
-
-
-@pytest.mark.parametrize(
-    "model", list(_all_subclasses(server.ClaimFields)), ids=lambda m: m.__name__
-)
-def test_claim_fields_subclasses_are_required(model):
-    assert all(f.is_required() for f in _claim_fields(model).values())
 
 
 def test_explain_metric_change_requires_trend_claim_fields():
