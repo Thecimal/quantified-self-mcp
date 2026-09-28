@@ -118,7 +118,6 @@ from schemas import (
     ClaimDecisionOut,
     ClaimEvidence,
     ClaimEvidenceComparative,
-    ClaimFields,  # noqa: F401 -- unused here, but tests/test_claim_contract.py reaches it via server.ClaimFields
     ComparePeriodsResult,
     CorrelationResult,
     DailyMetricsRow,
@@ -324,14 +323,6 @@ def _trend_stats(series: list[Point]) -> TrendStats:
     return TrendStats(**calculate_trend(series))
 
 
-def _claim_fields(assessment: Assessment, prefix: str = "") -> dict:
-    """Result-model kwargs for one assessed claim (see qs_evidence.assess)."""
-    return {
-        f"{prefix}evidence_profile": assessment.profile,
-        f"{prefix}claim_decision": ClaimDecisionOut(**assessment.decision.to_mcp()),
-    }
-
-
 def _claim_evidence(assessment: Assessment, evidence: Evidence) -> ClaimEvidence:
     """Canonical ClaimEvidence envelope for one assessed claim."""
     return ClaimEvidence(
@@ -339,21 +330,6 @@ def _claim_evidence(assessment: Assessment, evidence: Evidence) -> ClaimEvidence
         profile=assessment.profile,
         decision=ClaimDecisionOut(**assessment.decision.to_mcp()),
     )
-
-
-def _migrated_claim_fields(assessment: Assessment, evidence: Evidence) -> dict:
-    """Result-model kwargs for a tool that has adopted ClaimEvidence: the canonical `claim` envelope
-    plus the deprecated flat fields, built as exact mirrors of `claim` (never independently derived)
-    so the two representations cannot silently diverge during the deprecation window. Used by
-    detect_metric_anomalies, calculate_metric_trend, and each ChangeNote built in get_recent_changes
-    (get_baseline builds `claim` directly instead). `_claim_fields` is now unused dead code, kept only
-    until ClaimFields itself is removed in the post-deprecation cleanup pass."""
-    claim = _claim_evidence(assessment, evidence)
-    return {
-        "claim": claim,
-        "evidence_profile": claim.profile,
-        "claim_decision": claim.decision,
-    }
 
 
 def _claim_evidence_comparative(
@@ -369,18 +345,15 @@ def _claim_evidence_comparative(
 
 
 def _migrated_claim_fields_comparative(assessment: Assessment, evidence_a: Evidence, evidence_b: Evidence) -> dict:
-    """Result-model kwargs for a two-source tool that has adopted ClaimEvidenceComparative: the canonical
-    `claim` envelope plus the deprecated flat fields, built as exact mirrors of `claim` (never independently
-    derived) so the two representations cannot silently diverge during the deprecation window. Used by
-    find_metric_correlation (ComparePeriodsResult builds `claim` via `_claim_evidence_comparative` directly,
-    and derives its own differently-named deprecated evidence_a/evidence_b-equivalent fields instead)."""
+    """Result-model kwargs for a CorrelationResult (find_metric_correlation, and each correlated metric in
+    explain_metric_change): the canonical ClaimEvidenceComparative `claim`, plus the still-deprecated
+    evidence_a/evidence_b copies of claim.evidence_a/claim.evidence_b (never independently derived).
+    `claim` is the only claim representation; there are no flat profile/decision fields."""
     claim = _claim_evidence_comparative(assessment, evidence_a, evidence_b)
     return {
         "claim": claim,
         "evidence_a": claim.evidence_a,
         "evidence_b": claim.evidence_b,
-        "evidence_profile": claim.profile,
-        "claim_decision": claim.decision,
     }
 
 
@@ -661,7 +634,7 @@ def detect_metric_anomalies(
         threshold=threshold,
         anomalies=[AnomalyPoint(**a) for a in anomalies],
         evidence=evidence,
-        **_migrated_claim_fields(assessment, evidence),
+        claim=_claim_evidence(assessment, evidence),
     )
 
 
@@ -732,7 +705,7 @@ def calculate_metric_trend(
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         trend=trend,
         evidence=evidence,
-        **_migrated_claim_fields(assessment, evidence),
+        claim=_claim_evidence(assessment, evidence),
     )
 
 
@@ -827,8 +800,6 @@ def compare_metric_periods(
         claim=claim,
         period_a_evidence=claim.evidence_a,
         period_b_evidence=claim.evidence_b,
-        evidence_profile=claim.profile,
-        claim_decision=claim.decision,
     )
 
 
@@ -1028,7 +999,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"(avg {comparison['period_b']['mean']})."
                     ),
                     evidence=metric_evidence,
-                    **_migrated_claim_fields(shift_claim, metric_evidence),
+                    claim=_claim_evidence(shift_claim, metric_evidence),
                 )
             )
 
@@ -1049,7 +1020,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"modified z-score {anomaly['modified_z_score']})."
                     ),
                     evidence=metric_evidence,
-                    **_migrated_claim_fields(anomaly_claim, metric_evidence),
+                    claim=_claim_evidence(anomaly_claim, metric_evidence),
                 )
             )
 
@@ -1063,7 +1034,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                     detail=f"{metric} has been {trend['direction']} over the last {days} days "
                     f"({trend['slope_per_day']:+g}/day, r²={trend['r_squared']}).",
                     evidence=metric_evidence,
-                    **_migrated_claim_fields(trend_claim, metric_evidence),
+                    claim=_claim_evidence(trend_claim, metric_evidence),
                 )
             )
 
@@ -1291,10 +1262,6 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         baseline_claim=baseline_claim,
         headline_claim=headline_claim,
         trend_claim=trend_claim,
-        evidence_profile=headline_claim.profile,
-        claim_decision=headline_claim.decision,
-        trend_evidence_profile=trend_claim.profile,
-        trend_claim_decision=trend_claim.decision,
         conflicting_days=conflicting_days,
         overall_decision=ClaimDecisionOut(**overall_decision.to_mcp()),
     )

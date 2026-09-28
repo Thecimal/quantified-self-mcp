@@ -17,6 +17,19 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   (`min_baseline_days: 28`). The top-level `evidence` field is deprecated in
   favor of `claim.evidence` and stays identical for one release.
 
+### Removed
+- **BREAKING: deprecated flat claim fields removed from the output schemas** —
+  `evidence_profile` and `claim_decision` are gone from `detect_metric_anomalies`,
+  `calculate_metric_trend`, `compare_metric_periods`, `find_metric_correlation`,
+  every `get_recent_changes` note and every `explain_metric_change` correlated
+  metric, and `explain_metric_change` also drops `trend_evidence_profile` and
+  `trend_claim_decision`. They were exact copies of `claim.profile` /
+  `claim.decision` (`headline_claim.*` / `trend_claim.*` on
+  `explain_metric_change`), so nothing is lost: read the canonical `claim`
+  envelope instead. Clients that read the flat fields must switch before
+  upgrading. The separate deprecations of `evidence`, `evidence_a` /
+  `evidence_b` and `period_a_evidence` / `period_b_evidence` are unchanged.
+
 ### Fixed
 - **Claims now reflect the limits of the statistic actually reported** —
   anomaly detection returns `[]` when MAD is zero (a flat series with one

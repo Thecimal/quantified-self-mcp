@@ -12,11 +12,10 @@ def _all_subclasses(cls):
 
 
 def _claim_fields(model):
-    return {
-        n: f
-        for n, f in model.model_fields.items()
-        if n == "claim" or n.endswith(("evidence_profile", "claim_decision"))
-    }
+    return {n: f for n, f in model.model_fields.items() if n == "claim" or n.endswith("_claim")}
+
+
+LEGACY_CLAIM_FIELDS = {"evidence_profile", "claim_decision", "trend_evidence_profile", "trend_claim_decision"}
 
 
 # Add a model here only with a written reason.
@@ -24,7 +23,6 @@ def _claim_fields(model):
 NOT_CLAIM_BEARING: set[str] = {
     "GetMetricHistoryResult",  # raw history, no claim
     "ClaimEvidence",  # the canonical claim envelope itself, not a result that carries one
-    "ClaimFields",  # legacy mixin; nothing subclasses it anymore, not a result model
 }
 
 EVIDENCE_MODELS = [
@@ -60,6 +58,20 @@ def test_evidence_bearing_models_require_claim_fields(model):
     claim = _claim_fields(model)
     assert claim, f"{model.__name__} has evidence but no claim fields"
     assert all(f.is_required() for f in claim.values())
+
+
+def test_no_model_declares_a_legacy_flat_claim_field():
+    models = [m for m in _all_subclasses(BaseModel) if m.__module__ in (server.__name__, schemas.__name__)]
+    assert len(models) > len(_EXPECTED_EVIDENCE_MODELS)  # scanning the real model set, not an empty list
+    offenders = {m.__name__: sorted(LEGACY_CLAIM_FIELDS & set(m.model_fields)) for m in models}
+    assert not {name: fields for name, fields in offenders.items() if fields}
+
+
+def test_legacy_claim_mixin_and_helper_are_gone():
+    for module in (schemas, server):
+        assert not hasattr(module, "ClaimFields"), module.__name__
+    assert not hasattr(server, "_claim_fields")
+    assert not hasattr(server, "_migrated_claim_fields")
 
 
 def test_explain_metric_change_requires_trend_claim_fields():

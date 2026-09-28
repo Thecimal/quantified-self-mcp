@@ -185,30 +185,10 @@ class ClaimDecisionOut(BaseModel):
     template: str
 
 
-class ClaimFields(BaseModel):
-    """Evidence pipeline output shared by every analytical result: registry policy -> evaluators ->
-    EvidenceProfile -> weakest-link resolver -> ClaimDecision."""
-
-    evidence_profile: EvidenceProfile = Field(
-        description=(
-            "Per-dimension evidence quality behind this result (sample, temporal, missingness, ...). "
-            "Dimensions without an evaluator yet are 'not_assessed' and cap the claim, "
-            "never count as adequate."
-        ),
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        description=(
-            "How strongly this result may be stated. tier is insufficient, suggestive, "
-            "detectable_not_meaningful or supported; every entry in must_state has to be "
-            "mentioned when reporting it."
-        ),
-    )
-
-
 class ClaimEvidence(BaseModel):
     """Canonical envelope for one assessed claim: the coverage evidence it rests on, the per-dimension
-    EvidenceProfile, and the resulting ClaimDecision. Migrating tools adopt it one at a time; see
-    ClaimFields for the legacy flat fields it replaces."""
+    EvidenceProfile, and the resulting ClaimDecision. It is the single claim representation on every
+    result that carries a claim; there are no parallel flat profile/decision fields."""
 
     evidence: Evidence = Field(description="Descriptive data coverage behind this claim.")
     profile: EvidenceProfile = Field(
@@ -290,14 +270,6 @@ class DetectAnomaliesResult(BaseModel):
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
     )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
-    )
 
 
 class TrendStats(BaseModel):
@@ -318,14 +290,6 @@ class CalculateTrendResult(BaseModel):
     evidence: Evidence = Field(
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
     )
 
 
@@ -348,14 +312,6 @@ class ComparePeriodsResult(BaseModel):
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence_b. Use claim.decision, not a standalone confidence field.",
     )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
-    )
 
 
 class CorrelationResult(BaseModel):
@@ -376,14 +332,6 @@ class CorrelationResult(BaseModel):
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence_b. Use claim.decision, not a standalone confidence field.",
     )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
-    )
 
 
 class ChangeNote(BaseModel):
@@ -396,14 +344,6 @@ class ChangeNote(BaseModel):
     evidence: Evidence = Field(
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.profile. Use claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to claim.decision. Use claim.decision instead.",
     )
 
 
@@ -466,22 +406,6 @@ class ExplainMetricChangeResult(BaseModel):
             "Evidence and decision for the 30-day trend leading into this day, assessed separately "
             "from the headline claim. Read trend_claim.decision before reporting it."
         ),
-    )
-    evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to headline_claim.profile. Use headline_claim.decision instead.",
-    )
-    claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to headline_claim.decision. Use headline_claim.decision instead.",
-    )
-    trend_evidence_profile: EvidenceProfile = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to trend_claim.profile. Use trend_claim.decision instead.",
-    )
-    trend_claim_decision: ClaimDecisionOut = Field(
-        deprecated=True,
-        description="DEPRECATED: identical to trend_claim.decision. Use trend_claim.decision instead.",
     )
     conflicting_days: int = 0
     overall_decision: ClaimDecisionOut = Field(

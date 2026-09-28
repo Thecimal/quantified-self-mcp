@@ -1,6 +1,6 @@
 """End-to-end enforcement of the evidence pipeline at the MCP boundary.
 
-Every analytical tool must return its own evidence_profile and claim_decision, produced by
+Every analytical tool must return its own canonical claim (claim.profile and claim.decision), produced by
 registry policy -> evaluators -> EvidenceProfile -> weakest-link resolver -> ClaimDecision, and the
 decision must change when the evidence is deliberately degraded while the statistical result stays put.
 
@@ -71,17 +71,47 @@ def gap_last(values, k):
     return values[: len(values) - k] + [None] * k
 
 
-def rank(sc, key="claim_decision"):
-    return TIER_RANK[ClaimTier(sc[key]["tier"])]
+# Flat claim keys that used to sit beside the canonical `claim` envelope; none may appear in any response.
+LEGACY_CLAIM_KEYS = {"evidence_profile", "claim_decision", "trend_evidence_profile", "trend_claim_decision"}
 
 
-def dims(sc, key="evidence_profile"):
-    return {d["dimension"]: d for d in sc[key]["dimensions"]}
+def assert_no_legacy_claim_keys(payload):
+    """Recursively assert no legacy flat claim key appears anywhere in a serialized MCP response."""
+    if isinstance(payload, dict):
+        found = LEGACY_CLAIM_KEYS & set(payload)
+        assert not found, sorted(found)
+        for v in payload.values():
+            assert_no_legacy_claim_keys(v)
+    elif isinstance(payload, list):
+        for v in payload:
+            assert_no_legacy_claim_keys(v)
 
 
-def assert_pipeline_output(sc, analysis, key_prefix=""):
+def schema_names(node):
+    """Every property and required name anywhere in an output schema (FastMCP inlines nested models)."""
+    found = set()
+    if isinstance(node, dict):
+        found |= set(node.get("properties", {}))
+        found |= set(node.get("required", []))
+        for v in node.values():
+            found |= schema_names(v)
+    elif isinstance(node, list):
+        for v in node:
+            found |= schema_names(v)
+    return found
+
+
+def rank(sc, key="claim"):
+    return TIER_RANK[ClaimTier(sc[key]["decision"]["tier"])]
+
+
+def dims(sc, key="claim"):
+    return {d["dimension"]: d for d in sc[key]["profile"]["dimensions"]}
+
+
+def assert_pipeline_output(sc, analysis, claim_key="claim"):
     """The response carries a real profile + decision for `analysis`, shaped by that analysis's registry entry."""
-    profile, decision = sc[f"{key_prefix}evidence_profile"], sc[f"{key_prefix}claim_decision"]
+    profile, decision = sc[claim_key]["profile"], sc[claim_key]["decision"]
     assert profile is not None and decision is not None
     assert profile["analysis"] == analysis
     assert {d["dimension"] for d in profile["dimensions"]} == {d.value for d in REG[analysis].dimensions}
@@ -125,10 +155,9 @@ async def test_trend_tiny_sample_is_insufficient_and_never_ranks_above_better_ev
     assert dims(sc)["sample"]["status"] == "blocking"
 
 
-async def test_trend_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
-    """Migration invariant: claim.{evidence,profile,decision} must equal the deprecated flat fields,
-    not merely both be present. Prevents the canonical and legacy representations from diverging
-    silently during the deprecation window."""
+async def test_trend_claim_is_the_only_claim_representation(client):
+    """Contract: the serialized response carries exactly one claim representation, the canonical `claim`
+    envelope; no flat profile/decision copies sit beside it."""
     await seed(client, "steps", [5000 + 100 * i for i in range(30)])
     sc = (
         await client.call_tool(
@@ -137,17 +166,15 @@ async def test_trend_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(clie
         )
     ).structured_content
     assert set(sc["claim"]) == {"evidence", "profile", "decision"}
-    assert sc["claim"]["evidence"] == sc["evidence"]
-    assert sc["claim"]["profile"] == sc["evidence_profile"]
-    assert sc["claim"]["decision"] == sc["claim_decision"]
+    assert sc["claim"]["evidence"] == sc["evidence"]  # `evidence` is a separate, still-open deprecation
+    assert_no_legacy_claim_keys(sc)
 
 
-async def test_trend_schema_declares_claim_and_deprecates_legacy_fields(client):
+async def test_trend_schema_declares_claim_and_no_legacy_claim_fields(client):
     schema = {t.name: t for t in await client.list_tools()}["calculate_metric_trend"].output_schema
     assert "claim" in schema["properties"] and "claim" in schema["required"]
-    for legacy in ("evidence", "evidence_profile", "claim_decision"):
-        assert schema["properties"][legacy].get("deprecated") is True
-        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
+    assert schema["properties"]["evidence"].get("deprecated") is True and "evidence" in schema["required"]
+    assert not LEGACY_CLAIM_KEYS & schema_names(schema)
 
 
 # ---- period / window comparison ---------------------------------------------------------------------------
@@ -184,10 +211,9 @@ async def test_compare_periods_same_delta_different_evidence_different_decision(
     assert which["period_a"]["status"] == "weak" and which["period_b"]["status"] == "adequate"
 
 
-async def test_compare_periods_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
-    """Migration invariant: claim.{evidence_a,evidence_b,profile,decision} must equal the deprecated
-    flat fields, not merely both be present. Prevents the canonical and legacy representations from
-    diverging silently during the deprecation window."""
+async def test_compare_periods_claim_is_the_only_claim_representation(client):
+    """Contract: the serialized response carries exactly one claim representation, the canonical `claim`
+    envelope; no flat profile/decision copies sit beside it."""
     a_start = START + timedelta(days=14)
     await seed(client, "steps", [5000] * 14, START)
     await seed(client, "steps", [9000] * 14, a_start)
@@ -206,16 +232,16 @@ async def test_compare_periods_claim_envelope_is_an_exact_mirror_of_the_legacy_f
     assert set(sc["claim"]) == {"evidence_a", "evidence_b", "profile", "decision"}
     assert sc["claim"]["evidence_a"] == sc["period_a_evidence"]
     assert sc["claim"]["evidence_b"] == sc["period_b_evidence"]
-    assert sc["claim"]["profile"] == sc["evidence_profile"]
-    assert sc["claim"]["decision"] == sc["claim_decision"]
+    assert_no_legacy_claim_keys(sc)
 
 
-async def test_compare_periods_schema_declares_claim_and_deprecates_legacy_fields(client):
+async def test_compare_periods_schema_declares_claim_and_no_legacy_claim_fields(client):
     schema = {t.name: t for t in await client.list_tools()}["compare_metric_periods"].output_schema
     assert "claim" in schema["properties"] and "claim" in schema["required"]
-    for legacy in ("period_a_evidence", "period_b_evidence", "evidence_profile", "claim_decision"):
-        assert schema["properties"][legacy].get("deprecated") is True
-        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
+    for still_deprecated in ("period_a_evidence", "period_b_evidence"):  # separate, still-open deprecation
+        assert schema["properties"][still_deprecated].get("deprecated") is True
+        assert still_deprecated in schema["required"]
+    assert not LEGACY_CLAIM_KEYS & schema_names(schema)
 
 
 # ---- correlation ------------------------------------------------------------------------------------------
@@ -314,10 +340,9 @@ async def test_correlation_has_no_sample_confidence_field(client):
     assert "sample_confidence" not in sc["claim"]
 
 
-async def test_correlation_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
-    """Migration invariant: claim.{evidence_a,evidence_b,profile,decision} must equal the deprecated
-    flat fields, not merely both be present. Prevents the canonical and legacy representations from
-    diverging silently during the deprecation window."""
+async def test_correlation_claim_is_the_only_claim_representation(client):
+    """Contract: the serialized response carries exactly one claim representation, the canonical `claim`
+    envelope; no flat profile/decision copies sit beside it."""
     steps, mood = paired_series(40)
     await seed(client, "steps", steps)
     await seed(client, "mood", mood)
@@ -335,16 +360,16 @@ async def test_correlation_claim_envelope_is_an_exact_mirror_of_the_legacy_field
     assert set(sc["claim"]) == {"evidence_a", "evidence_b", "profile", "decision"}
     assert sc["claim"]["evidence_a"] == sc["evidence_a"]
     assert sc["claim"]["evidence_b"] == sc["evidence_b"]
-    assert sc["claim"]["profile"] == sc["evidence_profile"]
-    assert sc["claim"]["decision"] == sc["claim_decision"]
+    assert_no_legacy_claim_keys(sc)
 
 
-async def test_correlation_schema_declares_claim_and_deprecates_legacy_fields(client):
+async def test_correlation_schema_declares_claim_and_no_legacy_claim_fields(client):
     schema = {t.name: t for t in await client.list_tools()}["find_metric_correlation"].output_schema
     assert "claim" in schema["properties"] and "claim" in schema["required"]
-    for legacy in ("evidence_a", "evidence_b", "evidence_profile", "claim_decision"):
-        assert schema["properties"][legacy].get("deprecated") is True
-        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
+    for still_deprecated in ("evidence_a", "evidence_b"):  # separate, still-open deprecation
+        assert schema["properties"][still_deprecated].get("deprecated") is True
+        assert still_deprecated in schema["required"]
+    assert not LEGACY_CLAIM_KEYS & schema_names(schema)
     assert "sample_confidence" not in schema["properties"]
 
 
@@ -411,10 +436,9 @@ async def test_anomaly_recent_gap_limits_the_claim(client):
     assert "recent_window_gap" in decision["must_state"]
 
 
-async def test_anomaly_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
-    """Migration invariant: claim.{evidence,profile,decision} must equal the deprecated flat fields,
-    not merely both be present. Prevents the canonical and legacy representations from diverging
-    silently during the deprecation window."""
+async def test_anomaly_claim_is_the_only_claim_representation(client):
+    """Contract: the serialized response carries exactly one claim representation, the canonical `claim`
+    envelope; no flat profile/decision copies sit beside it."""
     await seed(client, "steps", [8000 + (i % 5) * 50 for i in range(60)])
     sc = (
         await client.call_tool(
@@ -423,17 +447,15 @@ async def test_anomaly_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(cl
         )
     ).structured_content
     assert set(sc["claim"]) == {"evidence", "profile", "decision"}
-    assert sc["claim"]["evidence"] == sc["evidence"]
-    assert sc["claim"]["profile"] == sc["evidence_profile"]
-    assert sc["claim"]["decision"] == sc["claim_decision"]
+    assert sc["claim"]["evidence"] == sc["evidence"]  # `evidence` is a separate, still-open deprecation
+    assert_no_legacy_claim_keys(sc)
 
 
-async def test_anomaly_schema_declares_claim_and_deprecates_legacy_fields(client):
+async def test_anomaly_schema_declares_claim_and_no_legacy_claim_fields(client):
     schema = {t.name: t for t in await client.list_tools()}["detect_metric_anomalies"].output_schema
     assert "claim" in schema["properties"] and "claim" in schema["required"]
-    for legacy in ("evidence", "evidence_profile", "claim_decision"):
-        assert schema["properties"][legacy].get("deprecated") is True
-        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
+    assert schema["properties"]["evidence"].get("deprecated") is True and "evidence" in schema["required"]
+    assert not LEGACY_CLAIM_KEYS & schema_names(schema)
 
 
 # ---- recent changes / explanatory analysis ----------------------------------------------------------------
@@ -448,18 +470,17 @@ async def test_recent_changes_every_note_carries_its_own_claim(client):
     by_kind = {n["kind"]: n for n in sc["changes"] if n["metric"] == "steps"}
     assert {"shift", "trend"} <= set(by_kind)
     for note in sc["changes"]:
-        assert note["evidence_profile"] is not None and note["claim_decision"] is not None
+        assert note["claim"]["profile"] is not None and note["claim"]["decision"] is not None
     assert_pipeline_output(by_kind["shift"], "window_comparison")
     assert_pipeline_output(by_kind["trend"], "trend")
     # a 7-day trend cannot meet the registry's minimum n / span: the note is reported, but as insufficient
-    assert by_kind["trend"]["claim_decision"]["tier"] == "insufficient"
-    assert by_kind["shift"]["claim_decision"]["tier"] != "insufficient"
+    assert by_kind["trend"]["claim"]["decision"]["tier"] == "insufficient"
+    assert by_kind["shift"]["claim"]["decision"]["tier"] != "insufficient"
 
 
-async def test_recent_changes_claim_envelope_is_an_exact_mirror_of_the_legacy_fields(client):
-    """P0.2 migration invariant: every ChangeNote's claim.{evidence,profile,decision} must equal its
-    own deprecated flat evidence/evidence_profile/claim_decision fields, not merely both be present —
-    same invariant already enforced for trend/anomaly/compare_periods/correlation/explain_metric_change."""
+async def test_recent_changes_claim_is_the_only_claim_representation(client):
+    """Contract: every ChangeNote carries exactly one claim representation, the canonical `claim`
+    envelope; no flat profile/decision copies sit beside it."""
     today = date.today()
     recent_start = today - timedelta(days=7)
     await seed(client, "steps", [8000] * 28, recent_start - timedelta(days=28))
@@ -468,18 +489,16 @@ async def test_recent_changes_claim_envelope_is_an_exact_mirror_of_the_legacy_fi
     assert sc["changes"], "fixture should produce at least one change note"
     for note in sc["changes"]:
         assert set(note["claim"]) == {"evidence", "profile", "decision"}
-        assert note["claim"]["evidence"] == note["evidence"]
-        assert note["claim"]["profile"] == note["evidence_profile"]
-        assert note["claim"]["decision"] == note["claim_decision"]
+        assert note["claim"]["evidence"] == note["evidence"]  # `evidence` is a separate, still-open deprecation
+    assert_no_legacy_claim_keys(sc)
 
 
-async def test_recent_changes_schema_declares_claim_and_deprecates_legacy_fields(client):
+async def test_recent_changes_schema_declares_claim_and_no_legacy_claim_fields(client):
     schema = {t.name: t for t in await client.list_tools()}["get_recent_changes"].output_schema
     change_note = schema["properties"]["changes"]["items"]  # FastMCP inlines nested models, no $defs/$ref
     assert "claim" in change_note["properties"] and "claim" in change_note["required"]
-    for legacy in ("evidence", "evidence_profile", "claim_decision"):
-        assert change_note["properties"][legacy].get("deprecated") is True
-        assert legacy in change_note["required"]  # deprecated, not optional, during the migration window
+    assert change_note["properties"]["evidence"].get("deprecated") is True and "evidence" in change_note["required"]
+    assert not LEGACY_CLAIM_KEYS & schema_names(schema)
 
 
 async def test_explain_metric_change_carries_a_claim_per_claim(client):
@@ -493,8 +512,8 @@ async def test_explain_metric_change_carries_a_claim_per_claim(client):
     sc = (await client.call_tool("explain_metric_change", {"metric": "steps", "date": target})).structured_content
 
     assert sc["is_anomaly"] is True
-    assert_pipeline_output(sc, "anomaly")  # headline claim: this day vs its 90-day baseline
-    assert_pipeline_output(sc, "trend", key_prefix="trend_")  # the 30-day trend is its own claim
+    assert_pipeline_output(sc, "anomaly", claim_key="headline_claim")  # this day vs its 90-day baseline
+    assert_pipeline_output(sc, "trend", claim_key="trend_claim")  # the 30-day trend is its own claim
     assert sc["correlated_metrics"], "fixture should produce at least one correlated metric"
     for c in sc["correlated_metrics"]:
         assert_pipeline_output(c, "correlation")
@@ -503,19 +522,19 @@ async def test_explain_metric_change_carries_a_claim_per_claim(client):
     # surfaced correlation's own claim — never stronger than the weakest of the three groups.
     component_ranks = [
         TIER_RANK[ClaimTier(sc["baseline_claim"]["decision"]["tier"])],
-        TIER_RANK[ClaimTier(sc["claim_decision"]["tier"])],
-        TIER_RANK[ClaimTier(sc["trend_claim_decision"]["tier"])],
-        *(TIER_RANK[ClaimTier(c["claim_decision"]["tier"])] for c in sc["correlated_metrics"]),
+        TIER_RANK[ClaimTier(sc["headline_claim"]["decision"]["tier"])],
+        TIER_RANK[ClaimTier(sc["trend_claim"]["decision"]["tier"])],
+        *(TIER_RANK[ClaimTier(c["claim"]["decision"]["tier"])] for c in sc["correlated_metrics"]),
     ]
     assert TIER_RANK[ClaimTier(sc["overall_decision"]["tier"])] == min(component_ranks)
     # every component's must_state that isn't adequate is folded into the composite's must_state
     all_factors = {
         f
         for f in sc["baseline_claim"]["decision"]["must_state"]
-        + sc["claim_decision"]["must_state"]
-        + sc["trend_claim_decision"]["must_state"]
+        + sc["headline_claim"]["decision"]["must_state"]
+        + sc["trend_claim"]["decision"]["must_state"]
         for f in [f]
-    } | {f for c in sc["correlated_metrics"] for f in c["claim_decision"]["must_state"]}
+    } | {f for c in sc["correlated_metrics"] for f in c["claim"]["decision"]["must_state"]}
     assert all_factors <= set(sc["overall_decision"]["must_state"])
 
 
@@ -524,18 +543,15 @@ async def test_explain_metric_change_thin_history_is_insufficient(client):
     sc = (
         await client.call_tool("explain_metric_change", {"metric": "steps", "date": iso(START + timedelta(days=19))})
     ).structured_content
-    _, decision = assert_pipeline_output(sc, "anomaly")
+    _, decision = assert_pipeline_output(sc, "anomaly", claim_key="headline_claim")
     assert decision["tier"] == "insufficient" and "baseline_too_short" in decision["must_state"]
     # the headline claim alone is insufficient, so the composite can never be stronger than that
     assert sc["overall_decision"]["tier"] == "insufficient"
 
 
-async def test_explain_metric_change_headline_and_trend_claims_are_exact_mirrors_of_the_legacy_fields(client):
-    """P0.1 migration invariant: headline_claim.{profile,decision} must equal the deprecated flat
-    evidence_profile/claim_decision, and trend_claim.{profile,decision} must equal the deprecated flat
-    trend_evidence_profile/trend_claim_decision — not merely both be present. Prevents the canonical
-    headline_claim/trend_claim envelopes and the legacy flat mirrors from diverging silently during the
-    deprecation window (same invariant already enforced for trend/anomaly/compare_periods/correlation)."""
+async def test_explain_metric_change_carries_only_the_canonical_claim_envelopes(client):
+    """Contract: headline_claim and trend_claim are the only representations of those claims; no flat
+    evidence_profile/claim_decision/trend_* copies appear at the top level or on any correlated metric."""
     n = 100
     steps = [8000 + (i % 5) * 400 for i in range(n)]
     mood = [3 + (i % 5) for i in range(n)]
@@ -546,12 +562,9 @@ async def test_explain_metric_change_headline_and_trend_claims_are_exact_mirrors
     sc = (await client.call_tool("explain_metric_change", {"metric": "steps", "date": target})).structured_content
 
     assert set(sc["headline_claim"]) == {"evidence", "profile", "decision"}
-    assert sc["headline_claim"]["profile"] == sc["evidence_profile"]
-    assert sc["headline_claim"]["decision"] == sc["claim_decision"]
-
     assert set(sc["trend_claim"]) == {"evidence", "profile", "decision"}
-    assert sc["trend_claim"]["profile"] == sc["trend_evidence_profile"]
-    assert sc["trend_claim"]["decision"] == sc["trend_claim_decision"]
+    assert sc["correlated_metrics"], "fixture should produce at least one correlated metric"
+    assert_no_legacy_claim_keys(sc)  # recursive: also covers every correlated_metrics[] entry
 
 
 async def test_explain_metric_change_overall_decision_is_the_exact_weakest_of_n_of_its_components(client):
@@ -569,9 +582,9 @@ async def test_explain_metric_change_overall_decision_is_the_exact_weakest_of_n_
 
     component_decisions = [
         sc["baseline_claim"]["decision"],
-        sc["claim_decision"],
-        sc["trend_claim_decision"],
-        *(c["claim_decision"] for c in sc["correlated_metrics"]),
+        sc["headline_claim"]["decision"],
+        sc["trend_claim"]["decision"],
+        *(c["claim"]["decision"] for c in sc["correlated_metrics"]),
     ]
     expected_tier = min(component_decisions, key=lambda d: TIER_RANK[ClaimTier(d["tier"])])["tier"]
     expected_must_state = sorted({f for d in component_decisions for f in d["must_state"]})
@@ -580,13 +593,11 @@ async def test_explain_metric_change_overall_decision_is_the_exact_weakest_of_n_
     assert sc["overall_decision"]["must_state"] == expected_must_state
 
 
-async def test_explain_metric_change_schema_declares_claim_envelopes_and_deprecates_legacy_fields(client):
+async def test_explain_metric_change_schema_declares_claim_envelopes_and_no_legacy_claim_fields(client):
     schema = {t.name: t for t in await client.list_tools()}["explain_metric_change"].output_schema
     for envelope in ("headline_claim", "trend_claim", "overall_decision"):
         assert envelope in schema["properties"] and envelope in schema["required"]
-    for legacy in ("evidence_profile", "claim_decision", "trend_evidence_profile", "trend_claim_decision"):
-        assert schema["properties"][legacy].get("deprecated") is True
-        assert legacy in schema["required"]  # deprecated, not optional, during the migration window
+    assert not LEGACY_CLAIM_KEYS & schema_names(schema)
 
 
 # ---- baseline ---------------------------------------------------------------------------------------------
@@ -608,6 +619,7 @@ async def test_baseline_carries_a_claim_envelope_and_short_windows_are_insuffici
         assert {d["dimension"] for d in claim["profile"]["dimensions"]} == {d.value for d in REG["baseline"].dimensions}
         assert claim["decision"]["tier"] in {t.value for t in ClaimTier} and claim["decision"]["template"]
         assert claim["evidence"] == sc["evidence"]  # legacy field stays identical during the deprecation release
+        assert_no_legacy_claim_keys(sc)
     assert full["claim"]["decision"]["tier"] == "supported" and full["claim"]["decision"]["must_state"] == []
     assert short["claim"]["decision"]["tier"] == "insufficient"
     assert "baseline_too_short" in short["claim"]["decision"]["must_state"]
@@ -630,22 +642,11 @@ async def test_baseline_schema_declares_claim_and_deprecates_legacy_evidence(cli
 # ---- contract: nothing analytical bypasses the pipeline ---------------------------------------------------
 
 
-async def test_every_analytical_result_schema_declares_both_fields(client):
+async def test_every_analytical_result_schema_declares_the_canonical_claim_and_no_legacy_field(client):
     tools = {t.name: t for t in await client.list_tools()}
 
-    def props(node):
-        """Every property name anywhere in the schema (FastMCP inlines nested models)."""
-        found = set()
-        if isinstance(node, dict):
-            found |= set(node.get("properties", {}))
-            for v in node.values():
-                found |= props(v)
-        elif isinstance(node, list):
-            for v in node:
-                found |= props(v)
-        return found
-
     for name in (
+        "get_baseline",
         "detect_metric_anomalies",
         "calculate_metric_trend",
         "compare_metric_periods",
@@ -653,5 +654,6 @@ async def test_every_analytical_result_schema_declares_both_fields(client):
         "get_recent_changes",
         "explain_metric_change",
     ):
-        p = props(tools[name].output_schema)
-        assert {"evidence_profile", "claim_decision"} <= p, name
+        names = schema_names(tools[name].output_schema)
+        assert not LEGACY_CLAIM_KEYS & names, name
+        assert {"claim"} & names or {"headline_claim", "trend_claim"} <= names, name

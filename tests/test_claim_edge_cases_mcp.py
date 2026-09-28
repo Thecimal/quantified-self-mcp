@@ -52,8 +52,9 @@ def _noisy(n: int, base: int = 5000) -> list[int]:
     return [base + ((i * 7) % 11) * 100 for i in range(n)]
 
 
-def _assert_claim_matches_legacy_mirror(sc: dict) -> None:
-    assert sc["claim"]["decision"] == sc["claim_decision"]
+def _assert_only_the_canonical_claim(sc: dict) -> None:
+    assert sc["claim"]["decision"]["tier"] in {t.value for t in ClaimTier}
+    assert not {"evidence_profile", "claim_decision"} & set(sc)
 
 
 # ---- anomaly ------------------------------------------------------------------------------------
@@ -74,7 +75,7 @@ async def test_flat_series_with_one_extreme_is_reported_as_unable_to_detect(clie
     assert "baseline_mad_zero" in decision["must_state"]
     sample = next(d for d in sc["claim"]["profile"]["dimensions"] if d["dimension"] == "sample")
     assert sample["status"] == "blocking"
-    _assert_claim_matches_legacy_mirror(sc)
+    _assert_only_the_canonical_claim(sc)
 
 
 async def test_genuinely_uneventful_anomaly_window_is_not_marked_unable(client, health_db):
@@ -105,7 +106,7 @@ async def test_sparse_series_with_steep_slope_reports_its_limits(client, health_
     decision = sc["claim"]["decision"]
     assert decision["tier"] == "insufficient"
     assert "n_below_minimum" in decision["must_state"]
-    _assert_claim_matches_legacy_mirror(sc)
+    _assert_only_the_canonical_claim(sc)
 
 
 async def test_trend_over_short_span_is_insufficient_even_with_dense_data(client, health_db):
