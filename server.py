@@ -636,11 +636,14 @@ def detect_metric_anomalies(
 
     Returns:
         A DetectAnomaliesResult with "anomalies" (empty if fewer than 5
-        days have data, or if the metric has no meaningful spread) plus
-        "evidence" for the window they were computed over. An empty
-        "anomalies" list with evidence.confidence "moderate" or "low"
-        means "not enough data to tell," not "nothing unusual happened" —
-        say that explicitly rather than reporting a clean bill of health.
+        days have data, or if the series has no usable spread: constant, or
+        with a median absolute deviation of zero) plus "claim" for the window
+        they were computed over. An empty "anomalies" list only means
+        "nothing unusual happened" when claim.decision.tier says the data
+        supports it. If the tier is "insufficient" (must_state lists why, e.g.
+        baseline_mad_zero, baseline_zero_variance, baseline_too_short), the
+        detector could not score the series reliably — say that explicitly
+        rather than reporting a clean bill of health.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -1253,8 +1256,19 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         },
     )
     trend_assessment = assess_trend(metric, trend_series, trend_start, target_day, effect=dict(trend))
+    # The response reports baseline statistics (baseline, narrative_facts), so the baseline is a component of
+    # the composite: its coverage/temporal limits must reach overall_decision like every other included claim.
+    baseline_assessment = assess_baseline(metric, series, baseline_start, target_day, effect=dict(stats))
     overall_decision = combine_decisions(
-        [anomaly_assessment.decision, trend_assessment.decision, *(a.decision for a in correlation_assessments)]
+        [
+            baseline_assessment.decision,
+            anomaly_assessment.decision,
+            trend_assessment.decision,
+            *(a.decision for a in correlation_assessments),
+        ]
+    )
+    baseline_claim = _claim_evidence(
+        baseline_assessment, Evidence(**build_evidence(series, baseline_start, target_day))
     )
     headline_claim = _claim_evidence(
         anomaly_assessment, Evidence(**build_evidence(series, baseline_start, target_day))
@@ -1274,6 +1288,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         correlated_metrics=correlated,
         sessions=sessions,
         narrative_facts=facts,
+        baseline_claim=baseline_claim,
         headline_claim=headline_claim,
         trend_claim=trend_claim,
         evidence_profile=headline_claim.profile,

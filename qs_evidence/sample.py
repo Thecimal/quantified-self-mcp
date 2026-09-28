@@ -161,14 +161,26 @@ def evaluate_correlation(
     if len(x) != len(y):
         raise ValueError("x and y must be the same length")
     t = _merge(thresholds)
-    n_paired = sum(_finite(a) and _finite(b) for a, b in zip(x, y, strict=True))
+    paired = [(float(a), float(b)) for a, b in zip(x, y, strict=True) if _finite(a) and _finite(b)]
+    n_paired = len(paired)
     checks = [_at_least("n_paired", "n_paired_below_minimum", n_paired, t["min_n_paired"], True)]
+    if n_paired >= 2:
+        # Judged over the pairs actually used: a series that varies only on unpaired days is constant here.
+        # Pearson r is undefined, so no relationship can be claimed either way. Observed, so it blocks.
+        for name, col in (("metric_a", [p for p, _ in paired]), ("metric_b", [q for _, q in paired])):
+            sd = statistics.pstdev(col)
+            checks.append(_Check(f"variance_{name}", "zero_variance", sd, 0.0, sd > 0, True))
     if n_eff is not None:
         ok = _finite(n_eff) and n_eff >= t["min_n_eff"]
         checks.append(
             _Check("n_eff", "n_eff_low", round(n_eff, 2) if _finite(n_eff) else None, t["min_n_eff"], ok, False)
         )
     return _result(checks)
+
+
+def _mad(vals: Sequence[float]) -> float:
+    med = statistics.median(vals)
+    return statistics.median(abs(v - med) for v in vals)
 
 
 def _contamination_frac(vals: Sequence[float], z_max: float) -> float | None:
@@ -200,6 +212,13 @@ def evaluate_anomaly(
     if len(vals) >= 2:
         sd = statistics.stdev(vals)
         checks.append(_Check("baseline_variance", "baseline_zero_variance", sd, 0.0, sd > 0, True))
+        if sd > 0:
+            # analytics.detect_anomalies scores by median + MAD and returns [] when MAD == 0 (e.g. a flat
+            # series with one extreme value, or a majority of identical readings). That empty list means
+            # "the detector could not score this series", not "nothing unusual happened", so it blocks.
+            # (sd == 0 implies MAD == 0 and is already reported above; not repeated.)
+            mad = _mad(vals)
+            checks.append(_Check("baseline_mad", "baseline_mad_zero", mad, 0.0, mad > 0, True))
     else:
         not_assessed.append("baseline_variance")
     frac = _contamination_frac(vals, t["contamination_z"]) if len(vals) >= 5 else None

@@ -160,7 +160,10 @@ def test_anomaly_contamination_is_diagnostic_only():
 def test_anomaly_mad_zero_contamination_not_assessed():
     b = [50.0] * 28 + [55.0, 45.0]
     r = sample.evaluate_anomaly(b)
-    assert r.status == S.ADEQUATE and "baseline_contamination" in r.details["not_assessed"]
+    # MAD == 0: contamination cannot be scored, and neither can the detector itself, so the baseline
+    # is no longer ADEQUATE (previously pinned as ADEQUATE, which let "no anomalies" read as uneventful).
+    assert r.status == S.BLOCKING and r.reason_codes == ["baseline_mad_zero"]
+    assert "baseline_contamination" in r.details["not_assessed"]
 
 
 # ---- baseline ---------------------------------------------------------------------------------------

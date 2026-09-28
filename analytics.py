@@ -119,8 +119,16 @@ def calculate_trend(series: list[Point]) -> dict:
     ss_xx = sum((x - x_mean) ** 2 for x in xs)
     if ss_xx == 0:
         # Every point falls on the same calendar day (e.g. duplicate-day
-        # rows) — there's no time axis to regress against.
-        return {"direction": "flat", "slope_per_day": 0.0, "r_squared": 0.0, "n": n, "span_days": span_days}
+        # rows) — there's no time axis to regress against, so no direction
+        # can be reported. "flat" would assert a finding this data cannot
+        # support; report the same shape as the too-few-points case.
+        return {
+            "direction": "insufficient_data",
+            "slope_per_day": None,
+            "r_squared": None,
+            "n": n,
+            "span_days": span_days,
+        }
     slope = ss_xy / ss_xx
     intercept = y_mean - slope * x_mean
     ss_tot = sum((y - y_mean) ** 2 for y in ys)

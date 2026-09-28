@@ -502,6 +502,7 @@ async def test_explain_metric_change_carries_a_claim_per_claim(client):
     # overall_decision is weakest-of-N over the headline claim, the trend claim, and every
     # surfaced correlation's own claim — never stronger than the weakest of the three groups.
     component_ranks = [
+        TIER_RANK[ClaimTier(sc["baseline_claim"]["decision"]["tier"])],
         TIER_RANK[ClaimTier(sc["claim_decision"]["tier"])],
         TIER_RANK[ClaimTier(sc["trend_claim_decision"]["tier"])],
         *(TIER_RANK[ClaimTier(c["claim_decision"]["tier"])] for c in sc["correlated_metrics"]),
@@ -510,7 +511,9 @@ async def test_explain_metric_change_carries_a_claim_per_claim(client):
     # every component's must_state that isn't adequate is folded into the composite's must_state
     all_factors = {
         f
-        for f in sc["claim_decision"]["must_state"] + sc["trend_claim_decision"]["must_state"]
+        for f in sc["baseline_claim"]["decision"]["must_state"]
+        + sc["claim_decision"]["must_state"]
+        + sc["trend_claim_decision"]["must_state"]
         for f in [f]
     } | {f for c in sc["correlated_metrics"] for f in c["claim_decision"]["must_state"]}
     assert all_factors <= set(sc["overall_decision"]["must_state"])
@@ -565,6 +568,7 @@ async def test_explain_metric_change_overall_decision_is_the_exact_weakest_of_n_
     sc = (await client.call_tool("explain_metric_change", {"metric": "steps", "date": target})).structured_content
 
     component_decisions = [
+        sc["baseline_claim"]["decision"],
         sc["claim_decision"],
         sc["trend_claim_decision"],
         *(c["claim_decision"] for c in sc["correlated_metrics"]),

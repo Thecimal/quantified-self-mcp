@@ -18,6 +18,15 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   favor of `claim.evidence` and stays identical for one release.
 
 ### Fixed
+- **Claims now reflect the limits of the statistic actually reported** —
+  anomaly detection returns `[]` when MAD is zero (a flat series with one
+  extreme value, or a majority of identical readings), which previously read
+  as "nothing unusual happened"; the anomaly sample dimension now blocks with
+  `baseline_mad_zero`. A correlation over a constant series (r undefined) now
+  blocks with `zero_variance`. `calculate_trend` on points that all share one
+  calendar day reports `insufficient_data` instead of `flat`.
+  `explain_metric_change` now assesses the 90-day baseline it reports
+  (`baseline_claim`) and includes it in `overall_decision`.
 - **Apple Health import day-shift bug** — `adapt_apple_health`'s
   `raw_measurements` kept each record's original UTC offset (e.g.
   `"...T23:30:00-08:00"`), but `db/aggregation.py` buckets `daily_metrics`

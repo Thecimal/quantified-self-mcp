@@ -448,6 +448,13 @@ class ExplainMetricChangeResult(BaseModel):
     correlated_metrics: list[CorrelationResult]
     sessions: list[WorkoutSessionRow] = []
     narrative_facts: list[str]
+    baseline_claim: ClaimEvidence = Field(
+        description=(
+            "Evidence and decision for the 90-day baseline statistics reported in \"baseline\" (and quoted in "
+            "narrative_facts). Read baseline_claim.decision before stating what is typical for this metric; "
+            "it is one of the components overall_decision is the weakest of."
+        )
+    )
     headline_claim: ClaimEvidence = Field(
         description=(
             "Evidence and decision for the headline claim: this day's value against its 90-day "
