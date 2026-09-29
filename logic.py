@@ -767,16 +767,20 @@ def bulk_import_measurements(
     imported_at = datetime.now().isoformat(timespec="seconds")
     tagged = [{**row, "importer": importer, "imported_at": row.get("imported_at", imported_at)} for row in rows]
 
-    if replace:
-        conn.execute("DELETE FROM measurements WHERE importer = :importer", {"importer": importer})
-    elif tagged:
-        touched = {(row["metric"], row["timestamp"][:10]) for row in tagged}
-        conn.executemany(
-            "DELETE FROM measurements WHERE importer = :importer AND metric = :metric AND date(timestamp) = :day",
-            [{"importer": importer, "metric": metric, "day": day} for metric, day in touched],
-        )
-    conn.commit()
-    return db_invariant.bulk_insert_measurements(conn, tagged)
+    def purge_previous(c: sqlite3.Connection) -> None:
+        if replace:
+            c.execute("DELETE FROM measurements WHERE importer = :importer", {"importer": importer})
+        elif tagged:
+            touched = {(row["metric"], row["timestamp"][:10]) for row in tagged}
+            c.executemany(
+                "DELETE FROM measurements WHERE importer = :importer AND metric = :metric AND date(timestamp) = :day",
+                [{"importer": importer, "metric": metric, "day": day} for metric, day in touched],
+            )
+
+    # Deletes and inserts share one transaction inside bulk_insert_measurements,
+    # so an invalid batch (or a failure mid-insert) leaves the importer's
+    # previous rows and the projection untouched.
+    return db_invariant.bulk_insert_measurements(conn, tagged, before_insert=purge_previous)
 
 
 def insert_measurement(

@@ -202,3 +202,120 @@ def test_bulk_insert_then_normal_write_still_maintains_invariant(conn):
     # Triggers must be back in place after the bulk path finishes.
     insert(conn, "steps", 5, "2026-01-01T09:00:00")
     assert daily(conn, "2026-01-01", "steps") == (15, 2)
+
+
+# --- P0 data integrity: failed operations leave both tables unchanged -------
+
+
+def _snapshot(conn):
+    return (
+        conn.execute("SELECT id, timestamp, metric, value, importer FROM measurements ORDER BY id").fetchall(),
+        conn.execute(
+            "SELECT date, metric, value, raw_measurement_count, aggregation_method, "
+            "resolved_source, source_count, resolution FROM daily_metrics ORDER BY date, metric"
+        ).fetchall(),
+    )
+
+
+def _trigger_names(conn):
+    return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+
+
+def _seed_import(conn):
+    from logic import bulk_import_measurements
+
+    bulk_import_measurements(
+        conn,
+        "csv",
+        [
+            {"timestamp": "2026-09-01T12:00:00", "metric": "steps", "value": 1000},
+            {"timestamp": "2026-09-02T12:00:00", "metric": "steps", "value": 2000},
+        ],
+    )
+
+
+def test_single_write_rollback_leaves_both_tables_unchanged(conn):
+    insert(conn, "steps", 1000, "2026-09-17T08:00:00")
+    before = _snapshot(conn)
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(conn, "unknown_metric", 1, "2026-09-17T09:00:00")
+    conn.rollback()
+    assert _snapshot(conn) == before
+    assert invariant.verify(conn)["status"] == "ok"
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_bulk_import_with_unsupported_metric_leaves_previous_import_intact(conn, replace):
+    from logic import bulk_import_measurements
+
+    _seed_import(conn)
+    before = _snapshot(conn)
+    bad = [
+        {"timestamp": "2026-09-01T09:00:00", "metric": "steps", "value": 5},
+        {"timestamp": "2026-09-01T09:00:00", "metric": "not_a_metric", "value": 1},
+    ]
+    with pytest.raises(ValueError):
+        bulk_import_measurements(conn, "csv", bad, replace=replace)
+    assert _snapshot(conn) == before
+    assert invariant.verify(conn)["status"] == "ok"
+    assert len(_trigger_names(conn)) == 3
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_bulk_import_failing_mid_insert_rolls_back_the_deletes_too(conn, replace):
+    from logic import bulk_import_measurements
+
+    _seed_import(conn)
+    before = _snapshot(conn)
+    # value=None passes the metric check but violates NOT NULL during the insert,
+    # after the importer's old rows have already been deleted in the same transaction.
+    bad = [
+        {"timestamp": "2026-09-01T09:00:00", "metric": "steps", "value": 5},
+        {"timestamp": "2026-09-02T09:00:00", "metric": "steps", "value": None},
+    ]
+    with pytest.raises(sqlite3.IntegrityError):
+        bulk_import_measurements(conn, "csv", bad, replace=replace)
+    assert _snapshot(conn) == before
+    assert invariant.verify(conn)["status"] == "ok"
+    assert len(_trigger_names(conn)) == 3
+    # Triggers are back: a normal write still maintains the projection.
+    insert(conn, "steps", 7, "2026-09-03T08:00:00")
+    assert daily(conn, "2026-09-03", "steps") == (7.0, 1)
+
+
+def test_bulk_import_rerun_is_idempotent(conn):
+    _seed_import(conn)
+    first = _snapshot(conn)[1]
+    _seed_import(conn)
+    assert _snapshot(conn)[1] == first
+    assert conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == 2
+    assert invariant.verify(conn)["status"] == "ok"
+
+
+def test_repair_is_deterministic_and_idempotent(conn):
+    insert(conn, "steps", 1000, "2026-09-17T08:00:00")
+    insert(conn, "steps", 500, "2026-09-17T09:00:00")
+    insert(conn, "weight_kg", 80, "2026-09-17T07:00:00")
+    insert(conn, "weight_kg", 79, "2026-09-17T21:00:00")
+    trigger_built = _snapshot(conn)
+    invariant.repair(conn)
+    once = _snapshot(conn)
+    invariant.repair(conn)
+    assert _snapshot(conn) == once == trigger_built
+
+
+def test_repair_failure_restores_the_previous_projection(conn):
+    insert(conn, "steps", 1000, "2026-09-17T08:00:00")
+    conn.execute("UPDATE daily_metrics SET value = 9999 WHERE metric = 'steps'")
+    conn.execute(
+        "CREATE TRIGGER trg_test_block BEFORE INSERT ON daily_metrics "
+        "BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+    )
+    conn.commit()
+    before = _snapshot(conn)
+    with pytest.raises(sqlite3.IntegrityError):
+        invariant.repair(conn)
+    assert _snapshot(conn) == before  # not left half-deleted
+    conn.execute("DROP TRIGGER trg_test_block")
+    conn.commit()
+    assert invariant.repair(conn)["status"] == "ok"

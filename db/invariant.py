@@ -3,6 +3,7 @@ db/aggregation.py. Keep this module thin: all aggregation semantics live in
 aggregation.py so there is exactly one place to change them."""
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -73,14 +74,40 @@ def verify(conn: sqlite3.Connection) -> dict:
 def repair(conn: sqlite3.Connection) -> dict:
     """Rebuild daily_metrics from raw measurements for every metric with a
     rule. Intended for bulk import / post-corruption recovery, not for
-    normal writes (those are handled by triggers). Returns verify() after
-    rebuilding so callers can confirm the invariant now holds."""
-    conn.executescript(aggregation.generate_repair_sql())
-    conn.commit()
+    normal writes (those are handled by triggers). Runs in one transaction:
+    if the rebuild fails part-way, the previous projection is restored rather
+    than left half-deleted. Deterministic and idempotent: repeating it with
+    unchanged measurements yields identical rows (aggregated_at aside).
+    Returns verify() after rebuilding so callers can confirm the invariant
+    now holds."""
+    delete_sql, insert_sql = aggregation.generate_repair_statements()
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(delete_sql)
+        conn.execute(insert_sql)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return verify(conn)
 
 
-def bulk_insert_measurements(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> dict:
+def assert_metrics_supported(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    """Raise ValueError, touching nothing, if any row's metric has no
+    aggregation_rules entry."""
+    known = {r[0] for r in conn.execute("SELECT metric FROM aggregation_rules")}
+    unsupported = sorted({row["metric"] for row in rows if row["metric"] not in known})
+    if unsupported:
+        raise ValueError(f"no aggregation_rules entry for metric(s): {', '.join(unsupported)}")
+
+
+def bulk_insert_measurements(
+    conn: sqlite3.Connection,
+    rows: list[dict[str, Any]],
+    before_insert: Callable[[sqlite3.Connection], None] | None = None,
+) -> dict:
     """Efficient path for large imports (task P0 #15): temporarily drop the
     write-path triggers, insert every row with one executemany, reinstall
     the triggers, then run a single repair() rather than recomputing the
@@ -88,43 +115,50 @@ def bulk_insert_measurements(conn: sqlite3.Connection, rows: list[dict[str, Any]
 
     Each row must have metric/value/timestamp; unit/source/source_type/
     importer/imported_at are optional (None if omitted). Every metric is
-    checked against aggregation_rules *before* anything is inserted — with
+    checked against aggregation_rules *before* anything is changed — with
     the triggers down there is no RAISE(ABORT) to catch this mid-batch, so
     the check happens up front in Python instead, and the whole batch is
     rejected together (matching #7: an unsupported metric must never create
     an orphaned raw measurement, bulk path included).
 
-    Returns the verify() result after rebuilding, so a caller gets the same
-    read-only confirmation repair() gives.
+    `before_insert`, if given, runs on the connection inside the same
+    transaction as the insert (e.g. the deletes an idempotent re-import needs),
+    so a failure anywhere rolls back both and the previous measurements and
+    projection stay exactly as they were. Returns the verify() result after
+    rebuilding, so a caller gets the same read-only confirmation repair() gives.
     """
-    if not rows:
+    if not rows and before_insert is None:
         return verify(conn)
 
-    known = {r[0] for r in conn.execute("SELECT metric FROM aggregation_rules")}
-    unsupported = sorted({row["metric"] for row in rows if row["metric"] not in known})
-    if unsupported:
-        raise ValueError(f"no aggregation_rules entry for metric(s): {', '.join(unsupported)}")
+    assert_metrics_supported(conn, rows)
 
     drop_triggers(conn)
     try:
-        conn.executemany(
-            "INSERT INTO measurements (timestamp, metric, value, unit, source, source_type, importer, imported_at) "
-            "VALUES (:timestamp, :metric, :value, :unit, :source, :source_type, :importer, :imported_at)",
-            [
-                {
-                    "timestamp": row["timestamp"],
-                    "metric": row["metric"],
-                    "value": row["value"],
-                    "unit": row.get("unit"),
-                    "source": row.get("source"),
-                    "source_type": row.get("source_type"),
-                    "importer": row.get("importer"),
-                    "imported_at": row.get("imported_at"),
-                }
-                for row in rows
-            ],
-        )
-        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if before_insert is not None:
+                before_insert(conn)
+            conn.executemany(
+                "INSERT INTO measurements (timestamp, metric, value, unit, source, source_type, importer, imported_at) "
+                "VALUES (:timestamp, :metric, :value, :unit, :source, :source_type, :importer, :imported_at)",
+                [
+                    {
+                        "timestamp": row["timestamp"],
+                        "metric": row["metric"],
+                        "value": row["value"],
+                        "unit": row.get("unit"),
+                        "source": row.get("source"),
+                        "source_type": row.get("source_type"),
+                        "importer": row.get("importer"),
+                        "imported_at": row.get("imported_at"),
+                    }
+                    for row in rows
+                ],
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     finally:
         install_triggers(conn)
     return repair(conn)

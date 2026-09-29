@@ -306,15 +306,15 @@ def generate_verify_sql() -> str:
     """
 
 
-def generate_repair_sql() -> str:
-    """Rebuild daily_metrics from scratch for every metric that has a rule.
-    Leaves rows for unsupported metrics untouched (there is nothing correct
-    to compute for them); run verify() after repair() to confirm those are
-    the only remaining issues, if any."""
-    return f"""
-    DELETE FROM daily_metrics
-    WHERE metric IN (SELECT metric FROM aggregation_rules);
-
+def generate_repair_statements() -> tuple[str, str]:
+    """(delete_sql, insert_sql) that rebuild daily_metrics from scratch for every
+    metric that has a rule. Two separate statements, each meant for
+    conn.execute(), so a caller can run the whole rebuild inside one transaction
+    and a failure part-way leaves the old projection intact. Rows for metrics
+    without a rule are untouched (there is nothing correct to compute for them);
+    run verify() after a repair to confirm those are the only remaining issues."""
+    delete_sql = "DELETE FROM daily_metrics WHERE metric IN (SELECT metric FROM aggregation_rules)"
+    insert_sql = f"""
     {_expected_projection_sql()}
     INSERT INTO daily_metrics (date, metric, value, raw_measurement_count, aggregation_method, aggregated_at,
                                resolved_source, source_count, resolution)
@@ -322,6 +322,14 @@ def generate_repair_sql() -> str:
            resolved_source, source_count, resolution
     FROM expected;
     """
+    return delete_sql, insert_sql
+
+
+def generate_repair_sql() -> str:
+    """The rebuild as one script (see generate_repair_statements). Committing
+    executescript() semantics: prefer the statements form for transactional use."""
+    delete_sql, insert_sql = generate_repair_statements()
+    return f"{delete_sql};\n{insert_sql}"
 
 
 def generate_scoped_repair_statements() -> tuple[str, str]:
