@@ -7,7 +7,10 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-29
+
 ### Added
+
 - **Baseline evidence claim** — `get_baseline` now runs through the same
   pipeline as the other analyses (registry policy -> `assess_baseline` ->
   `EvidenceProfile` -> `ClaimDecision`) and returns it in a new canonical
@@ -16,8 +19,55 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   temporal, missingness) and reuses the anomaly baseline-length policy
   (`min_baseline_days: 28`). The top-level `evidence` field is deprecated in
   favor of `claim.evidence` and stays identical for one release.
+- **Multi-metric `coverage` on `read_health_data`** — per-metric
+  coverage percentages plus an overall `coverage_percent`/`confidence`
+  for the whole date range, computed by the new
+  `evidence.build_coverage_summary`, so a broad "what's my health
+  data look like" read carries the same evidence signal the
+  single-metric analytics tools already did.
+- **`evidence` on every `get_recent_changes` change note** — each
+  shift/anomaly/trend entry now carries its own coverage over the
+  window it was computed from, closing the one analytics tool that
+  previously reported findings with no coverage signal at all.
+- Tool docstrings for `get_baseline`, `detect_metric_anomalies`,
+  `calculate_metric_trend`, `compare_metric_periods`,
+  `find_metric_correlation`, `get_recent_changes`, and
+  `explain_metric_change` now explicitly instruct the calling model to
+  fold `confidence`/`coverage_ratio` into how it phrases a result,
+  rather than just returning the numbers alongside it.
+- **`workout_sessions` table (schema v6)** — one row per workout instead
+  of a single daily `workout_minutes` total: `activity_type`,
+  `start_time`, `duration_minutes`, `intensity` (low/moderate/high),
+  `avg_heart_rate`, `max_heart_rate`, `source`, `notes`. New
+  `log_workout_session` / `read_workout_sessions` tools, and
+  `explain_metric_change` now attaches the day's sessions (and a
+  narrative fact per session) when explaining `workout_minutes`.
+
+### Changed
+
+- **`daily_metrics` no longer blends devices** (schema v8). The projection used
+  to aggregate every measurement for a (metric, day), so two devices recording
+  the same walk summed to 19,500 steps from 10,000 + 9,500, two sleep trackers
+  to 14.5 h, and a manual `log_daily_metric` total or a CSV day total stacked
+  on top of an Apple Health import. It now aggregates one source's observations
+  per (metric, day): the highest-ranked present source in the new
+  `source_priority` table (manual `daily-log` entries rank first by default);
+  with none ranked, the source that observed the most distinct hours of the
+  day, then the one with the latest observation, then source name. New
+  `daily_metrics` columns `resolved_source`, `source_count` and `resolution`
+  (`single` / `priority` / `fallback`) record how each value was chosen.
+  Existing databases are migrated and rebuilt on next start, so historical
+  multi-source days change to the single-source value. `db.invariant
+  .set_source_priority()` edits the lists and re-projects in the same
+  transaction; `verify()` flags a projection left stale by a direct edit.
+  The `aggregate_measurements` preview's default fallback now matches the
+  projection instead of using `imported_at`.
+- An expression index on `measurements (metric, date(timestamp), source)`
+  makes the projection's per-day lookups indexed: repairing 120k measurements
+  drops from ~22 s to ~0.1 s.
 
 ### Removed
+
 - **BREAKING: deprecated flat claim fields removed from the output schemas** —
   `evidence_profile` and `claim_decision` are gone from `detect_metric_anomalies`,
   `calculate_metric_trend`, `compare_metric_periods`, `find_metric_correlation`,
@@ -31,6 +81,7 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   `evidence_b` and `period_a_evidence` / `period_b_evidence` are unchanged.
 
 ### Fixed
+
 - **Claims now reflect the limits of the statistic actually reported** —
   anomaly detection returns `[]` when MAD is zero (a flat series with one
   extreme value, or a majority of identical readings), which previously read
@@ -70,30 +121,9 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   against an explicit expected matrix, so a missing hint, a wrong value,
   or an added/removed tool fails CI.
 
+## [0.3.0] - 2026-09-13
+
 ### Added
-- **Multi-metric `coverage` on `read_health_data`** — per-metric
-  coverage percentages plus an overall `coverage_percent`/`confidence`
-  for the whole date range, computed by the new
-  `evidence.build_coverage_summary`, so a broad "what's my health
-  data look like" read carries the same evidence signal the
-  single-metric analytics tools already did.
-- **`evidence` on every `get_recent_changes` change note** — each
-  shift/anomaly/trend entry now carries its own coverage over the
-  window it was computed from, closing the one analytics tool that
-  previously reported findings with no coverage signal at all.
-- Tool docstrings for `get_baseline`, `detect_metric_anomalies`,
-  `calculate_metric_trend`, `compare_metric_periods`,
-  `find_metric_correlation`, `get_recent_changes`, and
-  `explain_metric_change` now explicitly instruct the calling model to
-  fold `confidence`/`coverage_ratio` into how it phrases a result,
-  rather than just returning the numbers alongside it.
-- **`workout_sessions` table (schema v6)** — one row per workout instead
-  of a single daily `workout_minutes` total: `activity_type`,
-  `start_time`, `duration_minutes`, `intensity` (low/moderate/high),
-  `avg_heart_rate`, `max_heart_rate`, `source`, `notes`. New
-  `log_workout_session` / `read_workout_sessions` tools, and
-  `explain_metric_change` now attaches the day's sessions (and a
-  narrative fact per session) when explaining `workout_minutes`.
 - **Provenance columns on `measurements` (schema v4)** — `importer` (which
   import path wrote the row, e.g. `"apple-health"`) and `imported_at`
   (when that import ran), alongside the existing `source`/`source_type`.
@@ -182,26 +212,6 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 ### Changed
 - CI's "Verify wheel contains all required modules" step now imports
   `analytics` explicitly alongside the existing modules.
-- **`daily_metrics` no longer blends devices** (schema v8). The projection used
-  to aggregate every measurement for a (metric, day), so two devices recording
-  the same walk summed to 19,500 steps from 10,000 + 9,500, two sleep trackers
-  to 14.5 h, and a manual `log_daily_metric` total or a CSV day total stacked
-  on top of an Apple Health import. It now aggregates one source's observations
-  per (metric, day): the highest-ranked present source in the new
-  `source_priority` table (manual `daily-log` entries rank first by default);
-  with none ranked, the source that observed the most distinct hours of the
-  day, then the one with the latest observation, then source name. New
-  `daily_metrics` columns `resolved_source`, `source_count` and `resolution`
-  (`single` / `priority` / `fallback`) record how each value was chosen.
-  Existing databases are migrated and rebuilt on next start, so historical
-  multi-source days change to the single-source value. `db.invariant
-  .set_source_priority()` edits the lists and re-projects in the same
-  transaction; `verify()` flags a projection left stale by a direct edit.
-  The `aggregate_measurements` preview's default fallback now matches the
-  projection instead of using `imported_at`.
-- An expression index on `measurements (metric, date(timestamp), source)`
-  makes the projection's per-day lookups indexed: repairing 120k measurements
-  drops from ~22 s to ~0.1 s.
 
 ## [0.2.0] - 2026-09-06
 
