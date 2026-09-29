@@ -6,9 +6,10 @@ decision must change when the evidence is deliberately degraded while the statis
 
 Everything goes through fastmcp.Client (real tool bodies, real SQLite, real protocol layer).
 
-Note on tiers: robustness, practical and provenance have no evaluator yet, so they resolve as
-not_assessed and cap every claim at "suggestive". "supported" is unreachable until they exist, which is
-why the degradation tests assert on limiting factors (must_state) and on "insufficient", not on "supported".
+Note on tiers: practical has no evaluator yet, so trend, comparison, correlation and anomaly claims carry
+the registry's max_tier ceiling ("suggestive", factor practical_not_evaluated). "supported" is unreachable
+for them until it exists, which is why the degradation tests assert on limiting factors (must_state) and on
+"insufficient", not on "supported".
 """
 
 import sys
@@ -28,14 +29,10 @@ START = date(2026, 3, 1)
 
 
 def unbuilt(analysis):
-    """Factors expected while robustness/practical/provenance have no evaluator: only the dimensions this
-    analysis's registry entry says to cap on (measurement_validity and, for correlation, provenance are tolerated)."""
-    spec = REG[analysis].dimensions
-    return {
-        f"{d}_not_assessed"
-        for d in ("robustness", "practical", "provenance")
-        if d in {k.value for k in spec} and spec[next(k for k in spec if k.value == d)].on_not_assessed == "cap"
-    }
+    """Factors expected on an otherwise clean claim: the ceiling factor the registry declares for this analysis
+    (practical has no evaluator yet), and nothing else."""
+    ceiling = REG[analysis].max_tier
+    return {ceiling.factor} if ceiling else set()
 
 
 @pytest.fixture

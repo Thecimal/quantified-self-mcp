@@ -5,6 +5,7 @@ import random
 import pytest
 
 from qs_evidence import (
+    AnalysisSpec,
     ClaimDecision,
     ClaimTier,
     DimensionResult,
@@ -16,9 +17,15 @@ from qs_evidence import (
 from qs_evidence import Dimension as D
 from qs_evidence import Status as S
 from qs_evidence.models import TIER_RANK
+from qs_evidence.registry import DimensionPolicy
 
 REG = load_registry()
-SPEC = REG["window_comparison"]
+# Resolver policy is tested against a full 7-dimension spec built here, not a registry entry, so these tests
+# don't depend on which evaluators exist today (registry entries list only evaluated dimensions).
+SPEC = AnalysisSpec(
+    name="full_policy_fixture",
+    dimensions={d: DimensionPolicy(on_not_assessed="tolerate" if d == D.MEASUREMENT_VALIDITY else "cap") for d in D},
+)
 
 
 def dr(dim, status=S.ADEQUATE, *codes, can_block=True):
@@ -122,7 +129,8 @@ def test_reason_codes_required_when_not_adequate():
 
 def test_inapplicable_dimension_ignored():
     p = profile(missingness=dr(D.MISSINGNESS, S.BLOCKING, "x"))
-    assert resolve(p, REG["anomaly"]).tier == ClaimTier.SUPPORTED
+    uncapped = REG["anomaly"].model_copy(update={"max_tier": None})  # isolate applicability from the ceiling
+    assert resolve(p, uncapped).tier == ClaimTier.SUPPORTED
 
 
 # ---- monotonicity: degrading one dimension one step never raises the tier ----

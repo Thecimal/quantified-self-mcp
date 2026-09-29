@@ -7,6 +7,25 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Changed
+
+- **The evidence registry now describes what is actually evaluated** — `trend`,
+  `window_comparison`, `correlation` and `anomaly` list only the dimensions that
+  have evaluators (sample and temporal, plus missingness for the first three),
+  like `baseline`. Previously they also listed robustness, practical,
+  provenance and measurement_validity, which no evaluator produced, so every
+  claim resolved those as `not_assessed` and could never exceed `suggestive`.
+  Nothing is tolerated to make that go away: those four analyses now carry an
+  explicit `max_tier: suggestive` ceiling whose factor, `practical_not_evaluated`,
+  is added to `claim.decision.must_state` (a statistically detectable but trivial
+  effect cannot be called `supported` while practical significance is unchecked).
+  `claim.profile.dimensions` for those analyses no longer contains the
+  `not_assessed` robustness/practical/provenance entries, and
+  `robustness_not_assessed`, `practical_not_assessed` and
+  `provenance_not_assessed` no longer appear in `must_state`. A parity test now
+  fails if a registry dimension has no evaluator or an evaluator's output is not
+  in the registry.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

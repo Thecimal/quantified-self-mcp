@@ -131,14 +131,13 @@ def test_adequate_count_but_clustered_in_time_cannot_be_supported():
     assert {"long_gap", "uneven_coverage_across_window"} & codes(a)
 
 
-def test_outlier_driven_trend_is_never_supported_while_robustness_is_unevaluated():
+def test_outlier_driven_trend_is_never_supported_while_practical_is_unevaluated():
     values = noisy(30)
     values[-1] = 500.0  # one extreme final point drives the OLS slope
     a = assess_mod.assess_trend("m", pts(values), START, end_of(30))
-    rob = a.profile.get(Dimension.ROBUSTNESS)
-    assert rob.status == Status.NOT_ASSESSED and rob.reason_codes == [assess_mod.NOT_IMPLEMENTED]
+    assert a.profile.get(Dimension.ROBUSTNESS) is None  # out of scope until an evaluator exists, never "adequate"
     assert a.decision.tier != ClaimTier.SUPPORTED
-    assert "robustness_not_assessed" in codes(a)
+    assert "practical_not_evaluated" in codes(a)
 
 
 # ---- correlation: few pairs, constant series ----------------------------------------------------
@@ -184,19 +183,19 @@ def test_correlation_with_variance_is_not_blocked_by_the_zero_variance_check():
 
 
 def test_registry_dimension_with_no_evaluator_is_never_adequate(monkeypatch):
-    spec = REG["trend"]
+    spec = REG["trend"].model_copy(update={"max_tier": None})  # isolate NOT_ASSESSED from the declared ceiling
     profile = EvidenceProfile(
         metric="m",
         analysis="trend",
         dimensions=[
             DimensionResult(dimension=d, status=Status.ADEQUATE)
             for d in Dimension
-            if d in spec.dimensions and d != Dimension.ROBUSTNESS  # robustness: evaluator missing entirely
+            if d in spec.dimensions and d != Dimension.MISSINGNESS  # missingness: evaluator missing entirely
         ],
     )
     decision = resolve(profile, spec)
     assert decision.tier == ClaimTier.SUGGESTIVE
-    assert "robustness_not_assessed" in decision.limiting_factors
+    assert "missingness_not_assessed" in decision.limiting_factors
 
 
 @pytest.mark.parametrize("analysis", sorted(REG))

@@ -6,7 +6,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel
 
-from .models import Dimension
+from .models import ClaimTier, Dimension
 
 DEFAULT_PATH = Path(__file__).with_name("registry.yaml")
 
@@ -15,10 +15,18 @@ class DimensionPolicy(BaseModel):
     on_not_assessed: Literal["cap", "tolerate"]
 
 
+class MaxTier(BaseModel):
+    """Explicit ceiling on a claim's tier. `factor` is added to must_state whenever a claim reaches it."""
+
+    tier: ClaimTier
+    factor: str
+
+
 class AnalysisSpec(BaseModel):
     name: str
     dimensions: dict[Dimension, DimensionPolicy]
     thresholds: dict[str, Any] = {}
+    max_tier: MaxTier | None = None
 
 
 def load_registry(path: Path | str = DEFAULT_PATH) -> dict[str, AnalysisSpec]:

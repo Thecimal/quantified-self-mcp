@@ -48,6 +48,14 @@ def resolve(profile: EvidenceProfile, spec: AnalysisSpec) -> ClaimDecision:
     else:
         tier = ClaimTier.SUPPORTED
 
+    # A declared ceiling is explicit policy, not a side effect of an unimplemented evaluator: it applies to
+    # claims that would otherwise reach it, and it always names why in the factors.
+    ceiling = spec.max_tier
+    if ceiling is not None and TIER_RANK[tier] >= TIER_RANK[ceiling.tier]:
+        tier = ceiling.tier
+        if ceiling.factor not in factors:
+            factors.append(ceiling.factor)
+
     return ClaimDecision(tier=tier, limiting_factors=factors, permitted_phrasing_class=tier.value)
 
 

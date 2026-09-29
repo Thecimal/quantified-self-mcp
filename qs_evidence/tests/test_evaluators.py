@@ -15,7 +15,8 @@ from qs_evidence import Status as S
 
 START = date(2026, 1, 5)  # Monday
 N = 60
-SPEC = load_registry()["window_comparison"]
+# These tests exercise the evaluators' own tiers, so the registry's practical_not_evaluated ceiling is lifted.
+SPEC = load_registry()["window_comparison"].model_copy(update={"max_tier": None})
 
 
 def series(missing_idx=()):

@@ -27,7 +27,7 @@ def gap_last(values, k):
     return values[: len(values) - k] + [None] * k
 
 
-DATA_FACTORS = {"robustness_not_assessed", "practical_not_assessed", "provenance_not_assessed"}
+CEILING_FACTORS = {"practical_not_evaluated"}
 
 
 def test_align_places_values_by_day_and_drops_non_finite():
@@ -60,13 +60,13 @@ def test_every_registry_analysis_has_an_assess_entry_point_and_lists_exactly_its
     assert a.profile.analysis == analysis
 
 
-def test_unbuilt_dimensions_are_explicit_not_assessed_never_silently_adequate():
+def test_out_of_scope_dimensions_are_absent_and_the_ceiling_names_what_was_not_evaluated():
     a = assess_mod.assess_trend("m", pts(wave(30)), START, end_of(30))
     by = {d.dimension: d for d in a.profile.dimensions}
-    for dim in (Dimension.ROBUSTNESS, Dimension.PRACTICAL, Dimension.PROVENANCE, Dimension.MEASUREMENT_VALIDITY):
-        assert by[dim].status == Status.NOT_ASSESSED and by[dim].reason_codes == [assess_mod.NOT_IMPLEMENTED]
-    for dim in (Dimension.SAMPLE, Dimension.TEMPORAL, Dimension.MISSINGNESS):
-        assert by[dim].status == Status.ADEQUATE
+    assert set(by) == {Dimension.SAMPLE, Dimension.TEMPORAL, Dimension.MISSINGNESS}
+    assert all(d.status == Status.ADEQUATE for d in by.values())
+    assert a.decision.tier == ClaimTier.SUGGESTIVE
+    assert a.decision.limiting_factors == ["practical_not_evaluated"]
 
 
 # ---- same statistical effect, different evidence -> different decision ----------------------------
@@ -79,7 +79,7 @@ def test_trend_clean_vs_recent_gap_vs_tiny_sample():
     tiny = assess_mod.assess_trend("m", pts(wave(10)), START, end_of(10), effect)
 
     assert clean.profile.effect == gappy.profile.effect == effect
-    assert set(clean.decision.limiting_factors) == DATA_FACTORS  # nothing wrong with the data itself
+    assert set(clean.decision.limiting_factors) == CEILING_FACTORS  # nothing wrong with the data itself
     assert "recent_window_gap" in gappy.decision.limiting_factors
     assert "recent_window_gap" not in clean.decision.limiting_factors
     assert tiny.decision.tier == ClaimTier.INSUFFICIENT

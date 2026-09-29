@@ -116,14 +116,14 @@ async def test_trend_over_short_span_is_insufficient_even_with_dense_data(client
     assert sc["claim"]["decision"]["tier"] == "insufficient"
 
 
-async def test_full_trend_is_never_supported_while_robustness_is_unevaluated(client, health_db):
+async def test_full_trend_is_never_supported_while_practical_is_unevaluated(client, health_db):
     values = _noisy(40)
     values[-1] = 90000  # an extreme final point can drive the OLS slope
     _seed(health_db, "steps", values)
     sc = (await client.call_tool("calculate_metric_trend", {"metric": "steps", **_window(40)})).structured_content
     decision = sc["claim"]["decision"]
     assert decision["tier"] != "supported"
-    assert "robustness_not_assessed" in decision["must_state"]
+    assert "practical_not_evaluated" in decision["must_state"]
 
 
 # ---- correlation --------------------------------------------------------------------------------

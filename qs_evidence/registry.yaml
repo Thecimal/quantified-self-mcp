@@ -2,15 +2,15 @@
 # on_not_assessed: cap      -> unassessed dimension caps tier at "suggestive"
 #                  tolerate -> unassessed dimension is ignored (use sparingly)
 # thresholds are consumed by evaluators (later commits), never by the resolver.
+# Only dimensions that have an evaluator are listed (tests/test_registry_parity.py enforces this).
+# max_tier (optional): explicit ceiling on the claim tier, with the factor that is added to must_state
+#                      whenever a claim reaches it. Remove it when the missing evaluator is built.
 window_comparison:
   dimensions:
     sample:               {on_not_assessed: cap}
     temporal:             {on_not_assessed: cap}
-    robustness:           {on_not_assessed: cap}
     missingness:          {on_not_assessed: cap}
-    practical:            {on_not_assessed: cap}
-    measurement_validity: {on_not_assessed: tolerate}
-    provenance:           {on_not_assessed: cap}
+  max_tier: {tier: suggestive, factor: practical_not_evaluated}
   thresholds:
     min_n_per_window: 7
     min_coverage_per_window: 0.6
@@ -21,11 +21,8 @@ trend:
   dimensions:
     sample:               {on_not_assessed: cap}
     temporal:             {on_not_assessed: cap}
-    robustness:           {on_not_assessed: cap}
     missingness:          {on_not_assessed: cap}
-    practical:            {on_not_assessed: cap}
-    measurement_validity: {on_not_assessed: tolerate}
-    provenance:           {on_not_assessed: cap}
+  max_tier: {tier: suggestive, factor: practical_not_evaluated}
   thresholds:
     min_n: 14
     min_span_days: 21
@@ -34,11 +31,8 @@ correlation:
   dimensions:
     sample:               {on_not_assessed: cap}   # judged on n_paired, not n per series
     temporal:             {on_not_assessed: cap}
-    robustness:           {on_not_assessed: cap}
     missingness:          {on_not_assessed: cap}
-    practical:            {on_not_assessed: cap}
-    measurement_validity: {on_not_assessed: tolerate}
-    provenance:           {on_not_assessed: tolerate}
+  max_tier: {tier: suggestive, factor: practical_not_evaluated}
   thresholds:
     min_n_paired: 20
     max_gap_days: 5
@@ -46,9 +40,7 @@ anomaly:
   dimensions:
     sample:               {on_not_assessed: cap}   # baseline length
     temporal:             {on_not_assessed: cap}
-    robustness:           {on_not_assessed: cap}   # baseline variance / contamination
-    practical:            {on_not_assessed: cap}
-    provenance:           {on_not_assessed: cap}
+  max_tier: {tier: suggestive, factor: practical_not_evaluated}
   thresholds:
     min_baseline_days: 28
 baseline:
