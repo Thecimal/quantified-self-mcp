@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from functools import lru_cache
+from typing import Any
 
 from .models import TIER_RANK, ClaimDecision, ClaimTier, Dimension, DimensionResult, EvidenceProfile, Status
-from .registry import AnalysisSpec
+from .registry import AnalysisSpec, load_registry
 
 
 def _effective(r: DimensionResult) -> Status:
@@ -81,3 +83,31 @@ def combine_decisions(decisions: Sequence[ClaimDecision]) -> ClaimDecision:
     # which is exactly the ordering dependence this function must not have.
     factors = sorted({f for d in decisions for f in d.limiting_factors})
     return ClaimDecision(tier=weakest_tier, limiting_factors=factors, permitted_phrasing_class=weakest_tier.value)
+
+
+@lru_cache(maxsize=1)
+def _default_registry() -> dict[str, AnalysisSpec]:
+    return load_registry()
+
+
+def validate_claim_decision(
+    profile: EvidenceProfile, decision: Mapping[str, Any], spec: AnalysisSpec | None = None
+) -> None:
+    """Raise ValueError unless `decision` (in ClaimDecision.to_mcp() shape) is exactly what the canonical
+    resolver derives from `profile`.
+
+    The registry entry is looked up from profile.analysis unless `spec` is given (tests with a custom
+    policy). An unknown analysis is an error, never a pass. Any difference in tier, must_state,
+    phrasing class or template is rejected, so a decision cannot be stronger, weaker, or stripped of
+    caveats relative to its evidence.
+    """
+    if spec is None:
+        spec = _default_registry().get(profile.analysis)
+        if spec is None:
+            raise ValueError(f"unknown analysis {profile.analysis!r}: cannot validate its claim decision")
+    expected = resolve(profile, spec).to_mcp()
+    if dict(decision) != expected:
+        raise ValueError(
+            f"claim decision does not match its evidence profile for {profile.analysis!r}: "
+            f"expected {expected!r}, got {dict(decision)!r}"
+        )

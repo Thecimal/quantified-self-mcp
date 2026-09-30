@@ -9,9 +9,9 @@ output schema from these via the return-type annotation; see
 server.py for where each one is actually used.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from qs_evidence import EvidenceProfile
+from qs_evidence import ClaimDecision, ClaimTier, EvidenceProfile, combine_decisions, validate_claim_decision
 
 
 class DailyMetricsRow(BaseModel):
@@ -206,6 +206,11 @@ class ClaimEvidence(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _decision_matches_profile(self):
+        validate_claim_decision(self.profile, self.decision.model_dump())
+        return self
+
 
 class ClaimEvidenceComparative(BaseModel):
     """Canonical envelope for one assessed claim resting on two source coverages (e.g. two metrics, two
@@ -229,6 +234,11 @@ class ClaimEvidenceComparative(BaseModel):
             "mentioned when reporting it."
         ),
     )
+
+    @model_validator(mode="after")
+    def _decision_matches_profile(self):
+        validate_claim_decision(self.profile, self.decision.model_dump())
+        return self
 
 
 class BaselineStats(BaseModel):
@@ -417,6 +427,31 @@ class ExplainMetricChangeResult(BaseModel):
             "claim as though the trend and correlations couldn't drag it down."
         ),
     )
+
+    @model_validator(mode="after")
+    def _overall_is_weakest_of_components(self):
+        components = [
+            self.baseline_claim.decision,
+            self.headline_claim.decision,
+            self.trend_claim.decision,
+            *(c.claim.decision for c in self.correlated_metrics),
+        ]
+        expected = combine_decisions(
+            [
+                ClaimDecision(
+                    tier=ClaimTier(d.tier),
+                    limiting_factors=list(d.must_state),
+                    permitted_phrasing_class=d.permitted_phrasing_class,
+                )
+                for d in components
+            ]
+        ).to_mcp()
+        if self.overall_decision.model_dump() != expected:
+            raise ValueError(
+                "overall_decision is not the weakest-of-N of its component claims: "
+                f"expected {expected!r}, got {self.overall_decision.model_dump()!r}"
+            )
+        return self
 
 
 class MetricDefinition(BaseModel):
