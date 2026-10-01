@@ -407,3 +407,35 @@ async def test_explain_metric_change_includes_workout_sessions_for_workout_minut
     result = explanation.structured_content
     assert result["sessions"][0]["activity_type"] == "running"
     assert any("running" in fact for fact in result["narrative_facts"])
+
+
+async def test_out_of_range_measurement_is_rejected_and_cannot_poison_analytics(client):
+    """P0.4 regression: log_measurement skipped the METRIC_BOUNDS check that log_daily_metric applies, so a
+    finite but absurd value (steps=1e308) was stored and then made get_baseline, calculate_metric_trend,
+    explain_metric_change and get_recent_changes fail with an unclassified error for every later call."""
+    today = date.today()
+    for i in range(30):
+        await client.call_tool(
+            "log_measurement",
+            {"timestamp": (today - timedelta(days=i)).isoformat() + "T08:00:00", "metric": "steps", "value": 5000 + i},
+        )
+
+    rejected = await client.call_tool(
+        "log_measurement",
+        {"timestamp": (today - timedelta(days=2)).isoformat() + "T09:00:00", "metric": "steps", "value": 1e308},
+        raise_on_error=False,
+    )
+    assert rejected.is_error is True
+    assert "[invalid_metric_value]" in rejected.content[0].text
+
+    # Nothing was stored, so every downstream tool still works.
+    count = (await client.call_tool("read_measurements", {})).structured_content["count"]
+    assert count == 30
+    for tool, args in [
+        ("get_baseline", {"metric": "steps"}),
+        ("calculate_metric_trend", {"metric": "steps"}),
+        ("explain_metric_change", {"metric": "steps", "date": today.isoformat()}),
+        ("get_recent_changes", {}),
+    ]:
+        result = await client.call_tool(tool, args, raise_on_error=False)
+        assert result.is_error is False, f"{tool} failed after a rejected out-of-range measurement"

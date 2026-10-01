@@ -20,6 +20,7 @@ from errors import (
     ERR_INVALID_DATE,
     ERR_INVALID_FIELD,
     ERR_INVALID_METRIC,
+    ERR_INVALID_METRIC_VALUE,
     ERR_INVALID_TIMESTAMP,
     _is_locked_error,
     _tool_error,
@@ -35,6 +36,7 @@ from logic import (
     parse_date,
     query_measurements,
     row_class,
+    validate_metrics,
 )
 from logic import (
     get_metric_provenance as _get_metric_provenance,
@@ -158,6 +160,14 @@ def register_measurement_tools(
             raise _tool_error(ERR_INVALID_TIMESTAMP, str(exc)) from exc
         if not metric.strip():
             raise _tool_error(ERR_INVALID_METRIC, "metric must be a non-empty string.")
+        # Same bounds log_daily_metric and the CSV importers enforce. Without it an absurd value is stored
+        # and flows into daily_metrics: mood=99 corrupts baselines and claims, and e.g. steps=1e308 makes
+        # get_baseline/trend/explain/recent-changes raise OverflowError. Also rejects NaN/inf (the
+        # comparison is False) before they reach SQLite.
+        try:
+            validate_metrics({metric: value})
+        except ValueError as exc:
+            raise _tool_error(ERR_INVALID_METRIC_VALUE, str(exc)) from exc
 
         try:
             conn = connect_writable(db_path)

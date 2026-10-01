@@ -8,12 +8,12 @@ the whole body of get_metric_provenance). Each test pins down observable
 behavior -- stored data, returned values, error codes -- rather than just
 executing lines.
 
-Two tests are strict xfails. They assert the behavior the docs and the
-sibling tools promise, and they currently fail because of real defects found
-during the audit (end_date excluding same-day timestamped rows, no value
-validation). strict=True means the suite goes red the moment a fix lands,
-forcing the marker to be removed deliberately. (The private-field leakage
-xfail was promoted to the HEALTH_PRIVATE_FIELDS tests below once fixed.)
+One test is a strict xfail. It asserts the behavior the docs and the
+sibling tools promise, and it currently fails because of a real defect found
+during the audit (end_date excluding same-day timestamped rows). strict=True
+means the suite goes red the moment a fix lands, forcing the marker to be
+removed deliberately. (The private-field leakage and value-validation xfails
+were promoted to regular regression tests once fixed.)
 """
 
 import sqlite3
@@ -373,12 +373,6 @@ def test_metric_specific_measurement_tools_refuse_a_private_metric(private_srv, 
         call(private_srv)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DEFECT: log_measurement does no value validation (inf, negative steps, mood=99 are "
-    "stored and flow into daily_metrics/analytics) while log_daily_metric rejects the same "
-    "values with invalid_metric_value; NaN surfaces as a misleading 'database may be locked' error.",
-)
 @pytest.mark.parametrize(
     "metric,value",
     [("steps", float("inf")), ("steps", -5), ("mood", 99), ("steps", float("nan"))],
@@ -387,3 +381,12 @@ def test_log_measurement_rejects_values_log_daily_metric_would_reject(srv, metri
     with pytest.raises(ToolError, match=r"\[invalid_metric_value\]"):
         srv.log_measurement(timestamp="2026-01-10T08:00:00", metric=metric, value=value)
     assert srv.read_measurements().count == 0
+
+
+@pytest.mark.parametrize(
+    "metric,value",
+    [("steps", 0), ("steps", 200_000), ("mood", 1), ("mood", 10), ("weight_kg", 70.5)],
+)
+def test_log_measurement_still_accepts_in_range_values_including_the_bounds(srv, metric, value):
+    srv.log_measurement(timestamp="2026-01-10T08:00:00", metric=metric, value=value)
+    assert [m.value for m in srv.read_measurements().measurements] == [value]
