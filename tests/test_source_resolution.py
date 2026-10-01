@@ -29,9 +29,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from db import invariant
 from logic import (
     DAILY_LOG_SOURCE,
+    MAX_ROWS_RETURNED,
     SCHEMA_VERSION,
     aggregate_measurements_to_daily,
     bulk_import_measurements,
+    count_source_conflicts,
     ensure_schema,
     insert_measurement,
     resolve_source_conflicts,
@@ -440,3 +442,24 @@ def test_v8_migration_upgrades_a_v7_database_and_re_resolves_blended_days():
 def test_measurements_has_the_expression_index_the_projection_queries_rely_on(conn):
     indexes = {r[1] for r in conn.execute("PRAGMA index_list(measurements)")}
     assert "idx_measurements_metric_day_source" in indexes
+
+
+def test_count_source_conflicts_is_not_truncated_by_the_row_limit(conn):
+    """P0.1 regression: the count is a mandatory data-quality caveat, so it must see every measurement in
+    the window. It used to inherit query_measurements' MAX_ROWS_RETURNED cap (newest rows first), silently
+    dropping the oldest days -- and any conflicts on them -- once a metric had more raw rows than the cap.
+    """
+    from datetime import date, timedelta
+
+    days = 31
+    start = date(2026, 3, 1)
+    readings_per_source = MAX_ROWS_RETURNED // (days * 2) + 1  # total rows > MAX_ROWS_RETURNED
+    for i in range(days):
+        day = (start + timedelta(days=i)).isoformat()
+        for h in range(readings_per_source):
+            insert_measurement(conn, f"{day}T{h:02d}:00:00", "steps", 1000 + h, source="a")
+            insert_measurement(conn, f"{day}T{h:02d}:30:00", "steps", 2000 + h, source="b")
+    total = conn.execute("SELECT COUNT(*) FROM measurements WHERE metric = 'steps'").fetchone()[0]
+    assert total > MAX_ROWS_RETURNED  # the fixture really exceeds the old cap
+
+    assert count_source_conflicts(conn, "steps", start, start + timedelta(days=days - 1)) == days

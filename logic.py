@@ -1110,9 +1110,9 @@ def count_source_conflicts(conn: sqlite3.Connection, metric: str, start: date, e
     is purely a count of disagreement, for the caller to decide how to
     caveat downstream analytics.
     """
-    rows = query_measurements(
-        conn, metric=metric, start=start.isoformat(), end=end.isoformat() + "T23:59:59", limit=MAX_ROWS_RETURNED
-    )
+    # limit=-1 (SQLite: no limit): this count is a mandatory caveat, so it must see every row in the window.
+    # A MAX_ROWS_RETURNED cap would drop the oldest days (newest-first order) and undercount conflicts.
+    rows = query_measurements(conn, metric=metric, start=start.isoformat(), end=end.isoformat() + "T23:59:59", limit=-1)
     by_day: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         by_day.setdefault(row["timestamp"][:10], []).append(row)
