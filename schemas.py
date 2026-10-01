@@ -122,7 +122,7 @@ class MeasurementRow(BaseModel):
     id: int
     timestamp: str
     metric: str
-    value: float
+    value: float | None  # null for a metric listed in HEALTH_PRIVATE_FIELDS
     unit: str | None = None
     source: str | None = None
     source_type: str | None = None

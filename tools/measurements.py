@@ -18,6 +18,7 @@ from errors import (
     ERR_DATABASE_ERROR,
     ERR_DATABASE_LOCKED,
     ERR_INVALID_DATE,
+    ERR_INVALID_FIELD,
     ERR_INVALID_METRIC,
     ERR_INVALID_TIMESTAMP,
     _is_locked_error,
@@ -38,7 +39,7 @@ from logic import (
 from logic import (
     get_metric_provenance as _get_metric_provenance,
 )
-from privacy import _redact_private_fields
+from privacy import PRIVATE_FIELDS, _redact_private_fields
 from schemas import (
     AggregateMeasurementsResult,
     DailyMetricsRow,
@@ -47,6 +48,23 @@ from schemas import (
     MeasurementRow,
     ReadMeasurementsResult,
 )
+
+
+def _redact_measurement(row: dict) -> dict:
+    """Null the value of a raw measurement row whose metric is in HEALTH_PRIVATE_FIELDS (the value stays
+    stored locally; it just never reaches the model), mirroring what read_health_data does for daily rows."""
+    return {**row, "value": None} if row["metric"] in PRIVATE_FIELDS else row
+
+
+def _refuse_private_metric(metric: str) -> None:
+    """Metric-specific tools refuse a private metric outright, like get_metric_history and the analytics
+    tools: a flag derived from private values (e.g. provenance's `conflict`) would leak their shape even
+    with the numbers nulled."""
+    if metric in PRIVATE_FIELDS:
+        raise _tool_error(
+            ERR_INVALID_FIELD,
+            f"{metric!r} is configured as private (HEALTH_PRIVATE_FIELDS); its measurements can't be returned.",
+        )
 
 
 def register_measurement_tools(
@@ -178,7 +196,7 @@ def register_measurement_tools(
                 "Could not write to the health database — it may be locked by another process. Try again in a moment.",
             ) from exc
 
-        return LogMeasurementResult(measurement=MeasurementRow(**dict(row)))
+        return LogMeasurementResult(measurement=MeasurementRow(**_redact_measurement(dict(row))))
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -228,6 +246,8 @@ def register_measurement_tools(
         Returns:
             A ReadMeasurementsResult with the matching rows and a count.
         """
+        if metric is not None:
+            _refuse_private_metric(metric)
         try:
             conn = connect_writable(db_path)
             try:
@@ -242,7 +262,9 @@ def register_measurement_tools(
             logger.error("Database error reading from %s: %s", db_path, exc)
             raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
 
-        return ReadMeasurementsResult(measurements=[MeasurementRow(**row) for row in rows], count=len(rows))
+        return ReadMeasurementsResult(
+            measurements=[MeasurementRow(**_redact_measurement(dict(row))) for row in rows], count=len(rows)
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -309,7 +331,7 @@ def register_measurement_tools(
             with readonly_connection(db_path) as conn:
                 conn.row_factory = row_class()
                 aggregated = aggregate_measurements_to_daily(conn, day.isoformat(), source_priority)
-                metrics_only = {k: v for k, v in aggregated.items() if k != "date"}
+                metrics_only = {k: v for k, v in aggregated.items() if k != "date" and k not in PRIVATE_FIELDS}
                 rows = daily_metrics_wide(conn, metric_columns, day.isoformat(), day.isoformat())
                 row = rows[0] if rows else None
         except db_error_types() as exc:
@@ -362,6 +384,7 @@ def register_measurement_tools(
             reading count, and latest timestamp that day, plus "conflict"
             (true when 2+ sources disagree by more than a small tolerance).
         """
+        _refuse_private_metric(metric)
         try:
             day = parse_date(date, "date")
         except ValueError as exc:

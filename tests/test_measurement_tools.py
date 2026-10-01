@@ -8,11 +8,12 @@ the whole body of get_metric_provenance). Each test pins down observable
 behavior -- stored data, returned values, error codes -- rather than just
 executing lines.
 
-Three tests are strict xfails. They assert the behavior the docs and the
+Two tests are strict xfails. They assert the behavior the docs and the
 sibling tools promise, and they currently fail because of real defects found
-during the audit (private-field leakage, end_date excluding same-day
-timestamped rows, no value validation). strict=True means the suite goes red
-the moment a fix lands, forcing the marker to be removed deliberately.
+during the audit (end_date excluding same-day timestamped rows, no value
+validation). strict=True means the suite goes red the moment a fix lands,
+forcing the marker to be removed deliberately. (The private-field leakage
+xfail was promoted to the HEALTH_PRIVATE_FIELDS tests below once fixed.)
 """
 
 import sqlite3
@@ -322,31 +323,54 @@ def test_provenance_read_failure_reports_database_error(srv, monkeypatch):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DEFECT: HEALTH_PRIVATE_FIELDS is honored by read_health_data/log_daily_metric/export "
-    "and the analytics tools, but log_measurement, read_measurements, "
-    "aggregate_measurements['aggregated'] and get_metric_provenance return the raw value.",
-)
-def test_private_fields_are_not_exposed_by_any_measurement_tool(private_srv):
+# --------------------------------------------------------------------------
+# HEALTH_PRIVATE_FIELDS (P0.3 regression). The README promises private fields
+# are "excluded from MCP read and analytical operations"; read_health_data,
+# log_daily_metric, the export and the analytics tools honored that, but the
+# four measurement tools returned the raw value.
+# --------------------------------------------------------------------------
+
+
+def test_private_metric_values_never_leave_the_measurement_tools(private_srv):
     private_srv.log_measurement(timestamp="2026-01-10T07:00:00", metric="weight_kg", value=81.5, source="Scale")
     echoed = private_srv.log_measurement(
         timestamp="2026-01-10T08:00:00", metric="weight_kg", value=82.0, source="Scale"
     ).measurement
-    read = private_srv.read_measurements(metric="weight_kg").measurements
-    agg = private_srv.aggregate_measurements(date="2026-01-10")
-    prov = private_srv.get_metric_provenance(metric="weight_kg", date="2026-01-10")
+    private_srv.log_measurement(timestamp="2026-01-10T09:00:00", metric="steps", value=1234)
 
-    leaked = []
-    if echoed.value is not None:
-        leaked.append("log_measurement")
-    if any(m.value is not None for m in read):
-        leaked.append("read_measurements")
-    if agg.aggregated.get("weight_kg") is not None:
-        leaked.append("aggregate_measurements.aggregated")
-    if any(s.value is not None for s in prov.sources):
-        leaked.append("get_metric_provenance")
-    assert leaked == []
+    read = private_srv.read_measurements().measurements
+    agg = private_srv.aggregate_measurements(date="2026-01-10")
+
+    assert echoed.value is None
+    assert [m.value for m in read if m.metric == "weight_kg"] == [None, None]
+    assert "weight_kg" not in agg.aggregated
+    assert agg.row.weight_kg is None
+    # Only private metrics are redacted.
+    assert [m.value for m in read if m.metric == "steps"] == [1234]
+    assert agg.aggregated["steps"] == 1234
+
+
+def test_private_metric_is_still_stored_locally(private_srv, tmp_path):
+    private_srv.log_measurement(timestamp="2026-01-10T07:00:00", metric="weight_kg", value=81.5, source="Scale")
+    with sqlite3.connect(tmp_path / "health.db") as conn:
+        assert conn.execute("SELECT value FROM measurements WHERE metric = 'weight_kg'").fetchall() == [(81.5,)]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda s: s.read_measurements(metric="weight_kg"),
+        lambda s: s.get_metric_provenance(metric="weight_kg", date="2026-01-10"),
+    ],
+    ids=["read_measurements", "get_metric_provenance"],
+)
+def test_metric_specific_measurement_tools_refuse_a_private_metric(private_srv, call):
+    """Same rule as get_metric_history/the analytics tools: provenance's `conflict` flag is computed from the
+    private values, so redacting the numbers alone would still leak their shape."""
+    private_srv.log_measurement(timestamp="2026-01-10T07:00:00", metric="weight_kg", value=81.5, source="A")
+    private_srv.log_measurement(timestamp="2026-01-10T08:00:00", metric="weight_kg", value=95.0, source="B")
+    with pytest.raises(ToolError, match=r"\[invalid_field\].*private"):
+        call(private_srv)
 
 
 @pytest.mark.xfail(
