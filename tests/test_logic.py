@@ -28,6 +28,7 @@ from logic import (
     SCHEMA_VERSION,
     V5_ADDED_COLUMNS,
     WORKOUT_INTENSITIES,
+    InvalidTimestampError,
     aggregate_measurements_to_daily,
     bulk_import_measurements,
     clear_daily_metric,
@@ -297,6 +298,33 @@ def test_upsert_daily_metric_measurements_handles_multiple_dates_independently()
     rows = {r["date"]: r for r in daily_metrics_wide(conn, ["steps", "mood", "water_ml"])}
     assert rows["2026-08-01"] == {"date": "2026-08-01", "steps": 8000, "mood": None, "water_ml": None}
     assert rows["2026-08-02"] == {"date": "2026-08-02", "steps": None, "mood": 3, "water_ml": 2000}
+
+
+def test_upsert_daily_metric_measurements_is_atomic_when_a_later_metric_fails():
+    """P0.2 regression: a failure on a later metric used to leave the earlier metrics' DELETE+INSERT pending
+    in the open transaction, so the caller's next commit() persisted a partial write."""
+    conn = _conn_with_schema()
+    with pytest.raises(sqlite3.IntegrityError):
+        upsert_daily_metric_measurements(conn, "2026-03-01", {"steps": 100, "not_a_metric": 5})
+    conn.commit()  # whatever the caller does next must not resurrect the half-applied write
+    assert conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == 0
+    assert daily_metrics_wide(conn, ["steps"], "2026-03-01", "2026-03-01") == []
+
+
+@pytest.mark.parametrize("bad", ["2026-03-01T25:99:00", "2026-03-01Xjunk", "2026-03-01 garbage"])
+def test_insert_measurement_rejects_timestamp_sqlite_cannot_bucket_to_a_day(bad):
+    """P0.2 regression: such a row has date(timestamp) IS NULL, so it is orphaned from daily_metrics."""
+    conn = _conn_with_schema()
+    with pytest.raises(InvalidTimestampError):
+        insert_measurement(conn, bad, "steps", 100.0)
+    assert conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("ok", ["2026-03-01", "2026-03-01T10:00:00", "2026-03-01 10:00:00", "2026-03-01T10:00:00.5"])
+def test_insert_measurement_still_accepts_valid_timestamps(ok):
+    conn = _conn_with_schema()
+    insert_measurement(conn, ok, "steps", 100.0)
+    assert daily_metrics_wide(conn, ["steps"], "2026-03-01", "2026-03-01") == [{"date": "2026-03-01", "steps": 100.0}]
 
 
 def test_upsert_daily_metric_measurements_is_a_noop_for_an_empty_dict():

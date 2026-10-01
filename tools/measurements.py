@@ -24,6 +24,7 @@ from errors import (
     _tool_error,
 )
 from logic import (
+    InvalidTimestampError,
     aggregate_measurements_to_daily,
     connect_writable,
     daily_metrics_wide,
@@ -149,6 +150,8 @@ def register_measurement_tools(
                 row = conn.execute("SELECT * FROM measurements WHERE id = ?", (new_id,)).fetchone()
             finally:
                 conn.close()
+        except InvalidTimestampError as exc:
+            raise _tool_error(ERR_INVALID_TIMESTAMP, str(exc)) from exc
         except db_error_types() as exc:
             # The measurements->daily_metrics triggers (db/schema.sql) reject
             # an INSERT for a metric with no aggregation_rules entry via

@@ -633,16 +633,23 @@ def upsert_daily_metric_measurements(conn: sqlite3.Connection, day: str, metrics
     if not metrics:
         return
     timestamp = f"{day}T12:00:00"
-    for metric, value in metrics.items():
-        conn.execute(
-            "DELETE FROM measurements WHERE metric = :metric AND date(timestamp) = :day AND source = :source",
-            {"metric": metric, "day": day, "source": DAILY_LOG_SOURCE},
-        )
-        conn.execute(
-            "INSERT INTO measurements (timestamp, metric, value, source) VALUES (:timestamp, :metric, :value, :source)",
-            {"timestamp": timestamp, "metric": metric, "value": value, "source": DAILY_LOG_SOURCE},
-        )
-    conn.commit()
+    try:
+        for metric, value in metrics.items():
+            conn.execute(
+                "DELETE FROM measurements WHERE metric = :metric AND date(timestamp) = :day AND source = :source",
+                {"metric": metric, "day": day, "source": DAILY_LOG_SOURCE},
+            )
+            conn.execute(
+                "INSERT INTO measurements (timestamp, metric, value, source) "
+                "VALUES (:timestamp, :metric, :value, :source)",
+                {"timestamp": timestamp, "metric": metric, "value": value, "source": DAILY_LOG_SOURCE},
+            )
+        conn.commit()
+    except Exception:
+        # All-or-nothing: without this, the metrics already written stay pending in the open
+        # transaction and the caller's next commit() persists a partial update.
+        conn.rollback()
+        raise
 
 
 def clear_daily_metric(conn: sqlite3.Connection, day: str, metric: str) -> int:
@@ -783,6 +790,10 @@ def bulk_import_measurements(
     return db_invariant.bulk_insert_measurements(conn, tagged, before_insert=purge_previous)
 
 
+class InvalidTimestampError(ValueError):
+    """A measurement timestamp SQLite cannot bucket to a calendar day."""
+
+
 def insert_measurement(
     conn: sqlite3.Connection,
     timestamp: str,
@@ -804,8 +815,13 @@ def insert_measurement(
     series of readings). importer/imported_at record provenance for rows written by an
     automated import (see import_adapters.py) — leave both None for a
     measurement logged directly (e.g. via the log_measurement tool).
-    Requires a writable connection; commits before returning.
+    Requires a writable connection; commits before returning. Raises
+    InvalidTimestampError, writing nothing, if SQLite's date() cannot read the
+    timestamp: the projection buckets days with date(timestamp), so such a row
+    would be stored but never reach daily_metrics.
     """
+    if conn.execute("SELECT date(?)", (timestamp,)).fetchone()[0] is None:
+        raise InvalidTimestampError(f"timestamp {timestamp!r} is not a valid ISO 8601 date or datetime")
     cursor = conn.execute(
         "INSERT INTO measurements (timestamp, metric, value, unit, source, source_type, importer, imported_at) "
         "VALUES (:timestamp, :metric, :value, :unit, :source, :source_type, :importer, :imported_at)",

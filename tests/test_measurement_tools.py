@@ -90,6 +90,16 @@ def test_log_measurement_rejects_bad_timestamp_and_stores_nothing(srv, bad):
     assert srv.read_measurements().count == 0
 
 
+@pytest.mark.parametrize("bad", ["2026-03-01T25:99:00", "2026-03-01Xjunk", "2026-03-01 garbage"])
+def test_log_measurement_rejects_timestamp_with_an_unparseable_time_part(srv, bad):
+    """P0.2 regression: only timestamp[:10] used to be validated. A valid date followed by junk was stored,
+    but SQLite's date() is NULL for it, so the row never reached daily_metrics (verify() == mismatch) while
+    the tool reported success."""
+    with pytest.raises(ToolError, match=r"\[invalid_timestamp\]"):
+        srv.log_measurement(timestamp=bad, metric="steps", value=1)
+    assert srv.read_measurements().count == 0
+
+
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_log_measurement_rejects_blank_metric(srv, blank):
     with pytest.raises(ToolError, match=r"\[invalid_metric\].*non-empty"):
