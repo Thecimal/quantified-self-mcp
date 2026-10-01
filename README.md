@@ -6,9 +6,7 @@
 [![M8ven Score](https://m8ven.ai/badge/mcp/thecimal-quantified-self-mcp-v6tlvp)](https://m8ven.ai/mcp/thecimal-quantified-self-mcp-v6tlvp)
 [![Quantified Self MCP Server MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/score.svg)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
 
-
-<img width="1024" height="351" alt="cover-photo" src="https://github.com/user-attachments/assets/a6400b94-7184-401a-8c1d-4ffe098cca11" />
-
+<img width="1536" height="1024" alt="bd0ee6dc-c3e0-4c7d-8bc7-17de569e1cb5" src="https://github.com/user-attachments/assets/447e8018-b56f-4dfb-bfa9-909e9ad0de6f" />
 
 > **Your health data. Your AI. Your machine.**
 >
