@@ -45,6 +45,7 @@ include = [
     "import_adapters.py",
     "qs_evidence/*.py",
     "qs_evidence/registry.yaml",
+    "integrations/jev/*.py",
 ]
 
 [tool.pytest.ini_options]
