@@ -42,6 +42,7 @@ Currently supported:
 from __future__ import annotations
 
 import json
+import math
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -49,6 +50,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
+
+from metric_registry import metric_bounds
 
 
 class RowError(ValueError):
@@ -112,6 +115,45 @@ _APPLE_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S %z"
 
 _LB_UNITS = {"lb", "lbs", "pound", "pounds"}
 _LITER_UNITS = {"l", "liter", "liters", "litre", "litres"}
+# Units taken as already canonical. An empty unit is accepted as canonical
+# (legacy behaviour); any other unit is rejected rather than silently read as
+# kg/ml, which is how stones or fluid ounces would otherwise corrupt a sum.
+_KG_UNITS = {"", "kg", "kilogram", "kilograms"}
+_ML_UNITS = {"", "ml", "milliliter", "milliliters", "millilitre", "millilitres"}
+_LB_TO_KG = 0.45359237
+
+_BOUNDS = metric_bounds()
+
+
+def _finite_float(raw: Any, what: str) -> float:
+    """float(raw), but NaN/inf and non-numbers raise RowError so the record is
+    skipped and reported instead of crashing the import (int(round(nan)) and
+    int(inf) raise) or reaching an aggregate."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise RowError(f"{what} has non-numeric value {raw!r}") from exc
+    if not math.isfinite(value):
+        raise RowError(f"{what} has non-finite value {raw!r}")
+    return value
+
+
+def _weight_to_kg(value: float, unit: str, what: str) -> float:
+    if unit in _LB_UNITS:
+        return value * _LB_TO_KG
+    if unit in _KG_UNITS:
+        return value
+    raise RowError(f"{what} has unsupported weight unit {unit!r} (expected kg or lb)")
+
+
+def _check_observation_bounds(metric: str, value: float, what: str) -> None:
+    """One observation must already sit inside the metric's daily bounds: a
+    single reading beyond them is invalid whatever it is later aggregated into."""
+    if metric not in _BOUNDS:
+        return
+    low, high, label = _BOUNDS[metric]
+    if not (low <= value <= high):
+        raise RowError(f"{what}: {label} must be between {low} and {high}, got {value}")
 
 
 def _parse_apple_datetime(raw: str) -> datetime:
@@ -166,13 +208,27 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                     raise RowError(f"{rtype} record missing startDate or value")
                 when = _parse_apple_datetime(start_raw)
                 day = when.date().isoformat()
-                try:
-                    value = float(value_raw)
-                except ValueError as exc:
-                    raise RowError(f"{rtype} record has non-numeric value {value_raw!r}") from exc
+                what = f"{rtype} record"
+                value = _finite_float(value_raw, what)
                 unit = (elem.get("unit") or "").strip().lower()
                 col = APPLE_HEALTH_QUANTITY_IDENTIFIERS[rtype]
                 source_name = elem.get("sourceName")
+                # Normalise to the metric's canonical unit and validate BEFORE
+                # anything is accumulated, so the daily row and the raw
+                # observation (which is what daily_metrics is projected from)
+                # always agree and an invalid reading reaches neither.
+                stored_unit = elem.get("unit")
+                if col == "weight_kg":
+                    if unit in _LB_UNITS:
+                        stored_unit = "kg"
+                    value = _weight_to_kg(value, unit, what)
+                elif col == "water_ml":
+                    if unit in _LITER_UNITS:
+                        value *= 1000
+                        stored_unit = "ml"
+                    elif unit not in _ML_UNITS:
+                        raise RowError(f"{what} has unsupported volume unit {unit!r} (expected mL or L)")
+                _check_observation_bounds(col, value, what)
                 if col == "steps":
                     step_sum[day] += value
                 elif col == "resting_heart_rate":
@@ -182,20 +238,17 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                 elif col == "hrv_ms":
                     hrv_readings[day].append(value)
                 elif col == "weight_kg":
-                    if unit in _LB_UNITS:
-                        value *= 0.45359237
                     prior = weight_latest.get(day)
                     if prior is None or when > prior[0]:
                         weight_latest[day] = (when, value)
                 elif col == "workout_minutes":
                     exercise_sum[day] += value
                 elif col == "water_ml":
-                    if unit in _LITER_UNITS:
-                        value *= 1000
                     water_sum[day] += value
-                # Recorded pre-conversion, in the source's own unit — this
-                # is the provenance layer, not the daily_metrics aggregate
-                # above, so it keeps exactly what the device reported.
+                # Recorded in the metric's canonical unit (kg / ml), exactly as
+                # aggregated above: daily_metrics is projected from these rows,
+                # so a raw lb or L value stored under weight_kg / water_ml would
+                # be summed or reported as if it were already kg / ml.
                 #
                 # tzinfo is dropped here deliberately: `when` carries
                 # Apple's own UTC offset (from the "%z" in
@@ -217,8 +270,8 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                     {
                         "timestamp": when.replace(tzinfo=None).isoformat(),
                         "metric": col,
-                        "value": float(elem.get("value")),
-                        "unit": elem.get("unit"),
+                        "value": value,
+                        "unit": stored_unit,
                         "source": source_name,
                     }
                 )
@@ -360,24 +413,27 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
             rtype = record.get("recordType")
             if rtype == "StepsRecord":
                 when = _parse_hc_datetime(record["startTime"])
-                step_sum[when.date().isoformat()] += float(record["count"])
+                count = _finite_float(record["count"], "StepsRecord count")  # parse before touching the defaultdict
+                step_sum[when.date().isoformat()] += count
             elif rtype == "HeartRateRecord":
                 for sample in record.get("samples", []):
                     when = _parse_hc_datetime(sample["time"])
-                    heart_rate_readings[when.date().isoformat()].append(float(sample["beatsPerMinute"]))
+                    bpm = _finite_float(sample["beatsPerMinute"], "HeartRateRecord sample")
+                    heart_rate_readings[when.date().isoformat()].append(bpm)
             elif rtype == "RestingHeartRateRecord":
                 when = _parse_hc_datetime(record["time"])
-                resting_hr_readings[when.date().isoformat()].append(float(record["beatsPerMinute"]))
+                bpm = _finite_float(record["beatsPerMinute"], "RestingHeartRateRecord")
+                resting_hr_readings[when.date().isoformat()].append(bpm)
             elif rtype in ("HeartRateVariabilityRmssdRecord", "HeartRateVariabilityRecord"):
                 when = _parse_hc_datetime(record["time"])
                 ms = record.get("heartRateVariabilityMillis", record.get("heartRateVariabilityRmssd"))
-                hrv_readings[when.date().isoformat()].append(float(ms))
+                hrv = _finite_float(ms, "HeartRateVariability record")
+                hrv_readings[when.date().isoformat()].append(hrv)
             elif rtype == "WeightRecord":
                 when = _parse_hc_datetime(record["time"])
                 weight = record["weight"]
-                value, unit = float(weight["value"]), (weight.get("unit") or "").strip().lower()
-                if unit in _LB_UNITS:
-                    value *= 0.45359237
+                unit = (weight.get("unit") or "").strip().lower()
+                value = _weight_to_kg(_finite_float(weight["value"], "WeightRecord"), unit, "WeightRecord")
                 day = when.date().isoformat()
                 prior = weight_latest.get(day)
                 if prior is None or when > prior[0]:

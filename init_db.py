@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 import sys
 from datetime import datetime
@@ -141,10 +142,8 @@ def _to_int(raw: str) -> int | None:
     raw = _clean_number(raw)
     if not raw:
         return None
-    try:
-        return int(float(raw))
-    except ValueError as exc:
-        raise RowError(f"expected a number, got {raw!r}") from exc
+    value = _to_float(raw)
+    return None if value is None else int(value)
 
 
 def _to_float(raw: str) -> float | None:
@@ -152,9 +151,13 @@ def _to_float(raw: str) -> float | None:
     if not raw:
         return None
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError as exc:
         raise RowError(f"expected a number, got {raw!r}") from exc
+    if not math.isfinite(value):
+        # NaN/inf would otherwise crash int() or slip into a sum/mean.
+        raise RowError(f"expected a finite number, got {raw!r}")
+    return value
 
 
 def _read_csv(
@@ -360,6 +363,7 @@ def init_health_db(
             sys.exit(f"Error: unknown import source {adapter_name!r}. Available: csv, {', '.join(ADAPTERS)}")
         adapted = ADAPTERS[adapter_name](source_path)
         parsed_rows, skipped = [], adapted.skipped
+        skipped_days: set[str] = set()
         for row in adapted.rows:
             try:
                 validate_metrics({k: v for k, v in row.items() if k != "date"})
@@ -367,8 +371,13 @@ def init_health_db(
             except ValueError as exc:
                 print(f"Skipping {source_path} date {row.get('date')}: {exc}", file=sys.stderr)
                 skipped += 1
+                skipped_days.add(row["date"])
         present_columns = adapted.present_columns
-        raw_measurements = adapted.raw_measurements
+        # daily_metrics is projected from the raw observations, not from the
+        # day rows, so "skipping" a day must also drop its raw rows -- otherwise
+        # a day reported as skipped (e.g. a daily total out of bounds) is
+        # imported anyway.
+        raw_measurements = [m for m in adapted.raw_measurements if m["timestamp"][:10] not in skipped_days]
         unsupported_types = adapted.unsupported_types
 
     conn = connect_writable(db_path)

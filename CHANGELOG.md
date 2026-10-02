@@ -26,6 +26,24 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   fails if a registry dimension has no evaluator or an evaluator's output is not
   in the registry.
 
+### Fixed
+
+- **Apple Health raw observations are now stored in the metric's canonical unit
+  and validated per reading.** `daily_metrics` is projected from `measurements`,
+  but the Apple Health adapter wrote raw readings in the device's own unit under
+  the canonical metric name: a 154 lb weight became `weight_kg = 154` and
+  `water_ml` was summed in litres. It also never bounds-checked raw readings, and
+  a day reported as "Skipping date ..." for an out-of-bounds total was imported
+  anyway. Pound and litre readings are now converted before storage (the stored
+  `unit` is `kg` / `ml`), readings in other weight or volume units (stones, fluid
+  ounces) are skipped and counted instead of being read as kg / ml, out-of-bounds
+  readings are skipped, and a skipped day imports none of its raw rows.
+- **NaN / infinity no longer crash an import or reach an aggregate.** Apple
+  Health, Health Connect and CSV imports now skip and report non-finite values
+  like any other bad record (previously `int(round(nan))` / `int(inf)` aborted
+  the whole import with a traceback). A rejected Health Connect reading also no
+  longer leaves an empty per-day bucket behind.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added
