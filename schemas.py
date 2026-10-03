@@ -171,11 +171,61 @@ class MetricSeriesPoint(BaseModel):
     value: float
 
 
+class DataHealthFreshness(BaseModel):
+    latest_data: str | None = None
+    age_days: int | None = Field(
+        default=None, description="Days from the latest observation to the end of the requested window."
+    )
+    dataset_days_behind: int | None = Field(
+        default=None, description="Days from the dataset's latest data (any metric) to today."
+    )
+
+
+class DataHealthCoverage(BaseModel):
+    start: str | None = None
+    end: str | None = None
+    requested_start: str
+    requested_end: str
+
+
+class DataHealthCompleteness(BaseModel):
+    expected_days: int
+    observed_days: int
+    coverage_ratio: float
+    missing_days: int
+
+
+class DataHealthImport(BaseModel):
+    importer: str
+    status: str
+    finished_at: str | None = None
+    source_file: str | None = None
+
+
+class DataHealth(BaseModel):
+    """Data-quality state behind one result (not a medical or statistical confidence score). status is one of
+    VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE, IMPORT_INCOMPLETE; reasons lists every condition that
+    applies. See data_health.compose_data_health for how it is decided."""
+
+    status: str
+    reasons: list[str]
+    freshness: DataHealthFreshness
+    coverage: DataHealthCoverage
+    completeness: DataHealthCompleteness
+    gaps: list[Gap]
+    observations: int = Field(description="Number of daily values the result is computed from.")
+    last_import: DataHealthImport | None = None
+    last_successful_import: str | None = None
+
+
 class GetMetricHistoryResult(BaseModel):
     metric: str
     range: DateRange
     points: list[MetricSeriesPoint]
     evidence: Evidence
+    data_health: DataHealth | None = Field(
+        default=None, description="Whether this history is complete, current and trustworthy; see DataHealth."
+    )
 
 
 class ClaimDecisionOut(BaseModel):
@@ -258,6 +308,9 @@ class GetBaselineResult(BaseModel):
     evidence: Evidence = Field(
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
+    )
+    data_health: DataHealth | None = Field(
+        default=None, description="Whether the data behind this baseline is complete, current and trustworthy."
     )
 
 

@@ -69,6 +69,7 @@ from analytics import (
     find_correlations,
 )
 from analytics import baseline as compute_baseline
+from data_health import compose_data_health
 from errors import (
     ERR_DATABASE_ERROR,
     ERR_DATABASE_LOCKED,
@@ -81,6 +82,7 @@ from errors import (
 from evidence import build_evidence
 from logic import (
     METRIC_BOUNDS,
+    compute_data_status,
     connect_writable,
     count_source_conflicts,
     daily_metrics_wide,
@@ -121,6 +123,7 @@ from schemas import (
     ComparePeriodsResult,
     CorrelationResult,
     DailyMetricsRow,
+    DataHealth,
     DateRange,
     DetectAnomaliesResult,
     Evidence,
@@ -328,6 +331,27 @@ def _trend_stats(series: list[Point]) -> TrendStats:
     return TrendStats(**calculate_trend(series))
 
 
+def _data_health(evidence: Evidence, assessment: Assessment | None = None) -> DataHealth:
+    """Data-quality state behind one analytical result (see data_health.py): the window's evidence combined
+    with the dataset-level status. If the dataset status cannot be read, the result is still returned and
+    says so in its reasons."""
+    dataset = None
+    try:
+        with _readonly_connection(HEALTH_DB_PATH) as conn:
+            dataset = compute_data_status(conn, date_type.today(), exclude_metrics=PRIVATE_FIELDS)
+    except db_error_types() as exc:
+        logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
+    decision = assessment.decision.to_mcp() if assessment is not None else {}
+    return DataHealth(
+        **compose_data_health(
+            evidence.model_dump(),
+            dataset,
+            decision_tier=decision.get("tier"),
+            must_state=decision.get("must_state", ()),
+        )
+    )
+
+
 def _claim_evidence(assessment: Assessment, evidence: Evidence) -> ClaimEvidence:
     """Canonical ClaimEvidence envelope for one assessed claim."""
     return ClaimEvidence(
@@ -487,18 +511,24 @@ def get_metric_history(
 
     Returns:
         A GetMetricHistoryResult with "points" (date/value pairs; days with
-        no recorded value for this metric are simply absent).
+        no recorded value for this metric are simply absent) plus
+        "data_health": VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
+        IMPORT_INCOMPLETE, with the covered period, gaps and last import.
+        When status is not VALID, say why (see "reasons") before drawing
+        conclusions from the points.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
     except ValueError as exc:
         raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
     series = _fetch_metric_series(metric, start, end)
+    evidence = Evidence(**build_evidence(series, start, end))
     return GetMetricHistoryResult(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         points=[MetricSeriesPoint(date=p.day.isoformat(), value=p.value) for p in series],
-        evidence=Evidence(**build_evidence(series, start, end)),
+        evidence=evidence,
+        data_health=_data_health(evidence),
     )
 
 
@@ -553,7 +583,10 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
         60% of days") rather than stating mean/median as if they were
         computed from a complete series. All baseline fields are null and n
         is 0 if the metric has no data in range — not an error, since
-        "nothing logged yet" is an expected state.
+        "nothing logged yet" is an expected state. "data_health" adds the
+        data-quality state (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE
+        or IMPORT_INCOMPLETE) with its reasons; when it is not VALID, say why
+        before stating the baseline.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -569,6 +602,7 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
         baseline=stats,
         claim=_claim_evidence(assessment, evidence),
         evidence=evidence,
+        data_health=_data_health(evidence, assessment),
     )
 
 
