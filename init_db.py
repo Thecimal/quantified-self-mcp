@@ -80,6 +80,8 @@ from logic import (
     default_data_dir,
     ensure_schema,
     measurement_rows_from_daily,
+    record_import_finish,
+    record_import_start,
     validate_metrics,
 )
 
@@ -398,7 +400,23 @@ def init_health_db(
         # logic.measurement_rows_from_daily's skip_metrics param for why
         # daily_rows never duplicates a metric raw_measurements already
         # covers.
-        bulk_import_measurements(conn, adapter_name, daily_rows + raw_measurements, replace=replace)
+        import_id = record_import_start(conn, adapter_name, source_path)
+        try:
+            bulk_import_measurements(conn, adapter_name, daily_rows + raw_measurements, replace=replace)
+        except BaseException as exc:
+            try:
+                record_import_finish(conn, import_id, "failed", error=f"{type(exc).__name__}: {exc}")
+            except Exception:
+                print("Warning: could not record the failed import in the imports table.", file=sys.stderr)
+            raise
+        record_import_finish(
+            conn,
+            import_id,
+            "succeeded",
+            rows_loaded=len(parsed_rows),
+            rows_skipped=skipped,
+            measurements_written=len(daily_rows) + len(raw_measurements),
+        )
     finally:
         conn.close()
 

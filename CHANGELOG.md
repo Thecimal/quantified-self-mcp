@@ -7,6 +7,17 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Added
+
+- **Import history and data freshness.** Every `quantified-self-init-db` run now
+  records an `imports` row (importer, source file name and SHA-256, status
+  `running` / `succeeded` / `failed`, rows loaded and skipped, measurements
+  written, error). Two read-only MCP tools expose it: `get_data_status` reports
+  whether the database is `CURRENT`, `STALE`, `INCOMPLETE`, `NO_DATA` or
+  `IMPORT_FAILED` (latest data date, coverage, gaps, last successful import,
+  suggested action), and `get_import_status` lists recent import runs.
+  Metrics in `HEALTH_PRIVATE_FIELDS` are ignored when computing coverage.
+
 ### Changed
 
 - **The evidence registry now describes what is actually evaluated** — `trend`,

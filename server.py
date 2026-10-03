@@ -136,6 +136,7 @@ from schemas import (
 )
 from tools.health import register_health_tools
 from tools.measurements import register_measurement_tools
+from tools.status import register_status_tools
 from tools.workouts import register_workout_tools
 
 # The SQLite file never leaves this machine, but the *rows read out of it*
@@ -225,6 +226,10 @@ TOOL_ROUTING_INSTRUCTIONS = (
     "- why did one specific metric look like that on a given day -> explain_metric_change\n"
     "- broad scan of what changed lately across all metrics -> get_recent_changes\n"
     "- where a value came from, or whether sources agree -> get_metric_provenance\n"
+    "\n"
+    "For data currency (check before trusting any analysis):\n"
+    "- how current/complete the database is (CURRENT, STALE, INCOMPLETE, NO_DATA, IMPORT_FAILED) -> get_data_status\n"
+    "- which imports ran, and whether the last one failed -> get_import_status\n"
 )
 
 mcp = FastMCP("Quantified Self", instructions=TOOL_ROUTING_INSTRUCTIONS, mask_error_details=True)
@@ -415,6 +420,15 @@ log_workout_session, read_workout_sessions = register_workout_tools(
     mcp,
     db_path=HEALTH_DB_PATH,
     logger=logger,
+)
+
+
+get_data_status, get_import_status = register_status_tools(
+    mcp,
+    db_path=HEALTH_DB_PATH,
+    logger=logger,
+    readonly_connection=_readonly_connection,
+    private_fields=PRIVATE_FIELDS,
 )
 
 

@@ -466,6 +466,8 @@ EXPECTED_TOOL_NAMES = {
     "find_metric_correlation",
     "get_recent_changes",
     "explain_metric_change",
+    "get_data_status",
+    "get_import_status",
 }
 
 # Tools with real overlap risk (record vs. record, read vs. read), where the
@@ -498,7 +500,7 @@ ROUTED_TOOL_ALTERNATIVES = {
 }
 
 
-def test_all_eighteen_tools_still_exist_with_unchanged_names(health_db):
+def test_all_twenty_tools_still_exist_with_unchanged_names(health_db):
     """Guards P0 tool-routing work: names/count must not drift.
 
     Tool descriptions and MCP-level instructions should get easier for an
@@ -508,7 +510,7 @@ def test_all_eighteen_tools_still_exist_with_unchanged_names(health_db):
     tools = asyncio.run(health_db.mcp.list_tools())
     names = {tool.name for tool in tools}
     assert names == EXPECTED_TOOL_NAMES
-    assert len(tools) == 18
+    assert len(tools) == 20
 
 
 def test_every_tool_has_a_non_empty_description(health_db):

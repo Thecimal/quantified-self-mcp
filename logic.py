@@ -16,6 +16,7 @@ alternative of just using OS-level full-disk encryption instead.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sqlite3
@@ -788,6 +789,176 @@ def bulk_import_measurements(
     # so an invalid batch (or a failure mid-insert) leaves the importer's
     # previous rows and the projection untouched.
     return db_invariant.bulk_insert_measurements(conn, tagged, before_insert=purge_previous)
+
+
+# ---------------------------------------------------------------------------
+# Import history and data freshness
+# ---------------------------------------------------------------------------
+
+DEFAULT_STALE_AFTER_DAYS = 2
+MAX_GAPS_REPORTED = 10
+IMPORT_COLUMNS = (
+    "id",
+    "importer",
+    "source_file",
+    "source_sha256",
+    "status",
+    "started_at",
+    "finished_at",
+    "rows_loaded",
+    "rows_skipped",
+    "measurements_written",
+    "error",
+)
+
+
+def file_sha256(path: Any) -> str:
+    """SHA-256 of a file, read in 1 MiB chunks."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def record_import_start(conn: sqlite3.Connection, importer: str, source_path: Any) -> int:
+    """Insert a 'running' row in `imports` and commit it, so it survives a
+    crash mid-import and is visible as an interrupted run. Returns its id.
+    Stores the file's name and SHA-256, never its full path."""
+    try:
+        sha256 = file_sha256(source_path)
+    except OSError:
+        sha256 = None
+    cursor = conn.execute(
+        "INSERT INTO imports (importer, source_file, source_sha256, status, started_at) "
+        "VALUES (:importer, :source_file, :source_sha256, 'running', :started_at)",
+        {
+            "importer": importer,
+            "source_file": Path(source_path).name,
+            "source_sha256": sha256,
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+        },
+    )
+    conn.commit()
+    return int(cursor.lastrowid)
+
+
+def record_import_finish(
+    conn: sqlite3.Connection,
+    import_id: int,
+    status: str,
+    *,
+    rows_loaded: int | None = None,
+    rows_skipped: int | None = None,
+    measurements_written: int | None = None,
+    error: str | None = None,
+) -> None:
+    """Mark an import run 'succeeded' or 'failed' and commit."""
+    if status not in ("succeeded", "failed"):
+        raise ValueError(f"status must be 'succeeded' or 'failed', got {status!r}")
+    conn.execute(
+        "UPDATE imports SET status = :status, finished_at = :finished_at, rows_loaded = :rows_loaded, "
+        "rows_skipped = :rows_skipped, measurements_written = :measurements_written, error = :error "
+        "WHERE id = :id",
+        {
+            "id": import_id,
+            "status": status,
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+            "rows_loaded": rows_loaded,
+            "rows_skipped": rows_skipped,
+            "measurements_written": measurements_written,
+            "error": error[:300] if error else None,
+        },
+    )
+    conn.commit()
+
+
+def list_imports(conn: sqlite3.Connection, limit: int = 5) -> list[dict[str, Any]]:
+    """The most recent import runs, newest first, as plain dicts."""
+    rows = conn.execute(
+        f"SELECT {', '.join(IMPORT_COLUMNS)} FROM imports ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(zip(IMPORT_COLUMNS, tuple(row), strict=True)) for row in rows]
+
+
+def compute_data_status(
+    conn: sqlite3.Connection,
+    today: date,
+    stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
+    exclude_metrics: Any = (),
+) -> dict[str, Any]:
+    """Classify how current the database is, from daily_metrics and imports.
+
+    status is one of NO_DATA, IMPORT_FAILED, STALE, INCOMPLETE, CURRENT,
+    checked in that order. IMPORT_FAILED means the most recent import run
+    failed or never finished. STALE means the latest day with data trails
+    `today` by more than `stale_after_days`. INCOMPLETE means days with no
+    data at all lie inside the coverage window (see gap_count). A day counts
+    as covered if any metric not in `exclude_metrics` has a value that day.
+    Read-only.
+    """
+    excluded = sorted(exclude_metrics)
+    where = ""
+    if excluded:
+        where = " WHERE metric NOT IN (" + ", ".join("?" for _ in excluded) + ")"
+    query = f"SELECT DISTINCT date FROM daily_metrics{where} ORDER BY date"
+    observed = [row[0] for row in conn.execute(query, excluded)]
+
+    gaps: list[dict[str, Any]] = []
+    if observed:
+        previous = date.fromisoformat(observed[0])
+        for text in observed[1:]:
+            current = date.fromisoformat(text)
+            missing = (current - previous).days - 1
+            if missing > 0:
+                gaps.append(
+                    {
+                        "start": (previous + timedelta(days=1)).isoformat(),
+                        "end": (current - timedelta(days=1)).isoformat(),
+                        "days": missing,
+                    }
+                )
+            previous = current
+
+    latest_data = observed[-1] if observed else None
+    days_behind = max(0, (today - date.fromisoformat(latest_data)).days) if latest_data else None
+    recent = list_imports(conn, limit=1)
+    latest_import = recent[0] if recent else None
+    last_ok = conn.execute(
+        "SELECT importer, finished_at FROM imports WHERE status = 'succeeded' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+
+    reason: str | None
+    action: str | None
+    if latest_data is None:
+        status, reason, action = "NO_DATA", "no_data_imported", "import_source"
+    elif latest_import is not None and latest_import["status"] != "succeeded":
+        reason = "import_failed" if latest_import["status"] == "failed" else "import_interrupted"
+        status, action = "IMPORT_FAILED", "rerun_import"
+    elif days_behind is not None and days_behind > stale_after_days:
+        status, reason, action = "STALE", "latest_data_older_than_threshold", "import_latest_source"
+    elif gaps:
+        status, reason, action = "INCOMPLETE", "gaps_in_coverage", "review_gaps"
+    else:
+        status, reason, action = "CURRENT", None, None
+
+    return {
+        "status": status,
+        "reason": reason,
+        "action": action,
+        "as_of": today.isoformat(),
+        "latest_data": latest_data,
+        "days_behind": days_behind,
+        "stale_after_days": stale_after_days,
+        "coverage": {"start": observed[0] if observed else None, "end": latest_data},
+        "days_with_data": len(observed),
+        "gap_count": len(gaps),
+        "missing_days": sum(gap["days"] for gap in gaps),
+        "gaps": gaps[-MAX_GAPS_REPORTED:],
+        "source": last_ok[0] if last_ok else None,
+        "last_successful_import": last_ok[1] if last_ok else None,
+        "latest_import": latest_import,
+    }
 
 
 class InvalidTimestampError(ValueError):

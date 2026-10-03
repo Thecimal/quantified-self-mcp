@@ -49,6 +49,8 @@ PRIVACY_BOUNDARY = {
     "find_metric_correlation": REFUSES,
     "get_recent_changes": EXCLUDES,
     "explain_metric_change": EXCLUDES,
+    "get_data_status": EXCLUDES,
+    "get_import_status": NO_PRIVATE_DATA,
     "log_workout_session": KNOWN_GAP,
     "read_workout_sessions": KNOWN_GAP,
 }
@@ -160,6 +162,8 @@ async def test_private_value_never_appears_in_any_tool_resource_file_or_log(make
             ("explain_metric_change", {"metric": private, "date": today.isoformat()}),
             ("get_baseline", {"metric": "steps"}),
             ("clear_metric", {"date": today.isoformat(), "field": private}),
+            ("get_data_status", {}),
+            ("get_import_status", {}),
         ]:
             await call(name, args)
 

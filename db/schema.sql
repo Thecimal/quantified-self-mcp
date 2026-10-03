@@ -91,3 +91,22 @@ CREATE TABLE IF NOT EXISTS source_priority (
     PRIMARY KEY (metric, rank),
     UNIQUE (metric, source)
 );
+
+-- One row per import run (init_db.py), written around the transactional
+-- load: 'running' first, then 'succeeded' or 'failed'. A row still
+-- 'running' after the process is gone means the import was interrupted.
+-- Read by logic.compute_data_status / list_imports. source_file is the
+-- file's name only, never its full path.
+CREATE TABLE IF NOT EXISTS imports (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    importer             TEXT NOT NULL,
+    source_file          TEXT,
+    source_sha256        TEXT,
+    status               TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    started_at           TEXT NOT NULL,
+    finished_at          TEXT,
+    rows_loaded          INTEGER,
+    rows_skipped         INTEGER,
+    measurements_written INTEGER,
+    error                TEXT
+);

@@ -164,7 +164,7 @@ See the [import documentation](docs/).
 - Supporting evidence
 - Data provenance
 
-The MCP currently exposes **18 tools** across data access, measurements, workouts, analytics, and personal intelligence.
+The MCP currently exposes **20 tools** across data access, measurements, workouts, analytics, personal intelligence, and data freshness (`get_data_status`, `get_import_status`).
 
 See the [tool reference](docs/) for the complete list.
 

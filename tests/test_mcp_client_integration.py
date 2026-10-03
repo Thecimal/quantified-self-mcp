@@ -78,6 +78,9 @@ async def test_list_tools_exposes_all_expected_tools_with_schemas_and_annotation
         # Layer 3: personal intelligence
         "get_recent_changes",
         "explain_metric_change",
+        # Data freshness / import history
+        "get_data_status",
+        "get_import_status",
     }
 
     # Argument schemas come from the function signature via the protocol
@@ -144,6 +147,8 @@ EXPECTED_ANNOTATIONS = {
     "find_metric_correlation": _READ_ONLY,
     "get_recent_changes": _READ_ONLY,
     "explain_metric_change": _READ_ONLY,
+    "get_data_status": _READ_ONLY,
+    "get_import_status": _READ_ONLY,
 }
 
 
@@ -157,7 +162,7 @@ async def test_tool_annotations_complete(client):
     flips to the wrong boolean.
     """
     tools = await client.list_tools()
-    assert len(EXPECTED_ANNOTATIONS) == 18
+    assert len(EXPECTED_ANNOTATIONS) == 20
     assert {tool.name for tool in tools} == set(EXPECTED_ANNOTATIONS)
 
     for tool in tools:
