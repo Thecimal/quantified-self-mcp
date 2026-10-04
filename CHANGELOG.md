@@ -25,6 +25,13 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   existing evidence with the import history and dataset status, and is
   separate from `claim` (which is unchanged). The other analytics tools do
   not carry it yet.
+- **Agent-loop eval (`eval/agent`, Phase 1).** A real model, the real MCP
+  server and real tool results in a multi-turn loop, scored per layer (routing,
+  arguments, execution) with replayable traces, deterministic fixtures defined
+  relative to today, and a tool coverage matrix built from the live tool list
+  (`python -m eval.agent --coverage --strict`). The harness itself is covered
+  by offline tests that need no API key. Interpretation and final-answer
+  scoring are not built yet and are reported as not scored.
 
 ### Changed
 

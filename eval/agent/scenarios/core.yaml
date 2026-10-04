@@ -1,0 +1,177 @@
+# One should_use scenario per tool (Phase 1). Questions are written the way a
+# user would ask, never with tool names. `arguments` are checked against the
+# first must_call tool; omit any argument the question does not pin down.
+
+- id: read_health_data_overview
+  tool: read_health_data
+  kind: should_use
+  fixture: complete
+  question: "Give me an overview of all my health metrics for the last two weeks."
+  must_call: [read_health_data]
+  allowed_tools: [get_metric_history, get_recent_changes, get_data_status]
+
+- id: export_health_data_csv_last_30
+  tool: export_health_data_csv
+  kind: should_use
+  fixture: complete
+  question: "Export my last 30 days of health data to a CSV file."
+  must_call: [export_health_data_csv]
+  allowed_tools: [read_health_data]
+
+- id: log_daily_metric_steps
+  tool: log_daily_metric
+  kind: should_use
+  fixture: complete
+  question: "Log 8200 steps for today."
+  must_call: [log_daily_metric]
+  allowed_tools: [log_measurement]
+  arguments: {date: "{today}", steps: 8200}
+
+- id: clear_metric_mood_yesterday
+  tool: clear_metric
+  kind: should_use
+  fixture: complete
+  question: "Delete the mood value I logged for yesterday, it was wrong."
+  must_call: [clear_metric]
+  allowed_tools: [read_health_data, read_measurements]
+  arguments: {date: "{yesterday}", field: mood}
+
+- id: log_measurement_resting_hr
+  tool: log_measurement
+  kind: should_use
+  fixture: complete
+  question: "Record a resting heart rate reading of 61 bpm from my Garmin at 7am today."
+  must_call: [log_measurement]
+  allowed_tools: [log_daily_metric]
+  arguments: {metric: resting_heart_rate, value: 61}
+
+- id: read_measurements_hrv_week
+  tool: read_measurements
+  kind: should_use
+  fixture: complete
+  question: "Show me my individual HRV measurements with timestamps from the last 7 days."
+  must_call: [read_measurements]
+  allowed_tools: [get_metric_history, get_metric_provenance]
+  arguments: {metric: hrv_ms}
+
+- id: log_workout_session_run
+  tool: log_workout_session
+  kind: should_use
+  fixture: complete
+  question: "I went running for 40 minutes this morning."
+  must_call: [log_workout_session]
+  allowed_tools: [log_daily_metric]
+  arguments: {date: "{today}", duration_minutes: 40}
+
+- id: read_workout_sessions_two_weeks
+  tool: read_workout_sessions
+  kind: should_use
+  fixture: complete
+  question: "What workouts did I do in the last two weeks?"
+  must_call: [read_workout_sessions]
+  allowed_tools: [read_health_data]
+
+- id: aggregate_measurements_garmin_priority
+  tool: aggregate_measurements
+  kind: should_use
+  fixture: conflicting
+  question: "What would my steps for yesterday come out as if my Garmin took priority over my Apple Watch?"
+  must_call: [aggregate_measurements]
+  allowed_tools: [get_metric_provenance, read_measurements]
+  arguments: {date: "{yesterday}"}
+
+- id: get_metric_provenance_steps_yesterday
+  tool: get_metric_provenance
+  kind: should_use
+  fixture: conflicting
+  question: "Which devices reported my steps yesterday, and do they disagree?"
+  must_call: [get_metric_provenance]
+  allowed_tools: [read_measurements, aggregate_measurements]
+  arguments: {metric: steps, date: "{yesterday}"}
+
+- id: get_metric_history_weight
+  tool: get_metric_history
+  kind: should_use
+  fixture: complete
+  question: "Show me my weight over the last 30 days."
+  must_call: [get_metric_history]
+  allowed_tools: [read_health_data]
+  arguments: {metric: weight_kg}
+
+- id: get_baseline_resting_hr
+  tool: get_baseline
+  kind: should_use
+  fixture: complete
+  question: "What's normal for my resting heart rate?"
+  must_call: [get_baseline]
+  allowed_tools: [get_metric_history]
+  arguments: {metric: resting_heart_rate}
+
+- id: detect_metric_anomalies_hrv
+  tool: detect_metric_anomalies
+  kind: should_use
+  fixture: complete
+  question: "Was there anything unusual about my HRV in the last month?"
+  must_call: [detect_metric_anomalies]
+  allowed_tools: [get_metric_history, get_baseline, get_recent_changes]
+  arguments: {metric: hrv_ms}
+
+- id: calculate_metric_trend_sleep
+  tool: calculate_metric_trend
+  kind: should_use
+  fixture: complete
+  question: "Is my sleep trending down?"
+  must_call: [calculate_metric_trend]
+  allowed_tools: [get_metric_history, get_baseline]
+  arguments: {metric: sleep_hours}
+
+- id: compare_metric_periods_steps
+  tool: compare_metric_periods
+  kind: should_use
+  fixture: complete
+  question: "Compare my average steps over the last 30 days with the 30 days before that."
+  must_call: [compare_metric_periods]
+  allowed_tools: [get_baseline, get_metric_history]
+  arguments: {metric: steps}
+
+- id: find_metric_correlation_sleep_hrv
+  tool: find_metric_correlation
+  kind: should_use
+  fixture: complete
+  question: "Does my sleep affect my HRV?"
+  must_call: [find_metric_correlation]
+  allowed_tools: [get_metric_history, calculate_metric_trend, explain_metric_change]
+
+- id: get_recent_changes_week
+  tool: get_recent_changes
+  kind: should_use
+  fixture: complete
+  question: "What's changed in my health data over the last week?"
+  must_call: [get_recent_changes]
+  allowed_tools: [read_health_data, detect_metric_anomalies, calculate_metric_trend]
+  arguments: {days: 7}
+
+- id: explain_metric_change_hrv
+  tool: explain_metric_change
+  kind: should_use
+  fixture: complete
+  question: "Why was my HRV so low three days ago?"
+  must_call: [explain_metric_change]
+  allowed_tools: [get_metric_history, get_baseline, detect_metric_anomalies, get_recent_changes]
+  arguments: {metric: hrv_ms, date: "{d3}"}
+
+- id: get_data_status_stale
+  tool: get_data_status
+  kind: should_use
+  fixture: stale
+  question: "How up to date is my data?"
+  must_call: [get_data_status]
+  allowed_tools: [get_import_status, read_health_data]
+
+- id: get_import_status_last
+  tool: get_import_status
+  kind: should_use
+  fixture: complete
+  question: "When was my last import and did it succeed?"
+  must_call: [get_import_status]
+  allowed_tools: [get_data_status]
