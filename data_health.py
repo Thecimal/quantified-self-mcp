@@ -30,6 +30,9 @@ DEFAULT_STALE_AFTER_DAYS = 2
 
 STATUSES = ("VALID", "VALID_WITH_GAPS", "INSUFFICIENT_DATA", "STALE", "IMPORT_INCOMPLETE")
 
+# Most severe first: used to pick the weakest window when a result rests on several.
+SEVERITY_ORDER = ("IMPORT_INCOMPLETE", "INSUFFICIENT_DATA", "STALE", "VALID_WITH_GAPS", "VALID")
+
 
 def compose_data_health(
     evidence: dict[str, Any],
@@ -111,3 +114,16 @@ def compose_data_health(
         ),
         "last_successful_import": dataset["last_successful_import"] if dataset else None,
     }
+
+
+def merge_data_health(healths: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Combine the data health of several windows (two periods, two metrics, one metric over two windows)
+    into one result: the weakest window's dict, with every window's reasons listed (that window's first,
+    then the others', without repeats). Raises ValueError for an empty sequence."""
+    if not healths:
+        raise ValueError("merge_data_health needs at least one data-health dict")
+    weakest = min(healths, key=lambda health: SEVERITY_ORDER.index(health["status"]))
+    reasons = list(weakest["reasons"])
+    for health in healths:
+        reasons.extend(reason for reason in health["reasons"] if reason not in reasons)
+    return {**weakest, "reasons": reasons}

@@ -213,8 +213,17 @@ async def test_an_unfinished_import_makes_both_tools_report_import_incomplete(he
         assert health["last_import"]["status"] == "running"
 
 
-async def test_data_health_is_in_the_output_schema_of_exactly_the_two_wired_tools(health_db):
+async def test_data_health_is_in_the_output_schema_of_exactly_the_analytics_tools(health_db):
     async with Client(health_db.mcp) as client:
         tools = {t.name: t for t in await client.list_tools()}
     carrying = {name for name, tool in tools.items() if "data_health" in str(tool.output_schema)}
-    assert carrying == {"get_metric_history", "get_baseline"}
+    assert carrying == {
+        "get_metric_history",
+        "get_baseline",
+        "detect_metric_anomalies",
+        "calculate_metric_trend",
+        "compare_metric_periods",
+        "find_metric_correlation",
+        "get_recent_changes",
+        "explain_metric_change",
+    }

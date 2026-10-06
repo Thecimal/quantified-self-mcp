@@ -51,7 +51,7 @@ import logging
 import os
 import sqlite3
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import date as date_type
 from datetime import timedelta
@@ -69,7 +69,7 @@ from analytics import (
     find_correlations,
 )
 from analytics import baseline as compute_baseline
-from data_health import compose_data_health
+from data_health import compose_data_health, merge_data_health
 from errors import (
     ERR_DATABASE_ERROR,
     ERR_DATABASE_LOCKED,
@@ -105,6 +105,7 @@ from privacy import (
 )
 from qs_evidence import (
     Assessment,
+    ClaimDecision,
     assess_anomaly,
     assess_baseline,
     assess_correlation,
@@ -331,23 +332,26 @@ def _trend_stats(series: list[Point]) -> TrendStats:
     return TrendStats(**calculate_trend(series))
 
 
-def _data_health(evidence: Evidence, assessment: Assessment | None = None) -> DataHealth:
-    """Data-quality state behind one analytical result (see data_health.py): the window's evidence combined
-    with the dataset-level status. If the dataset status cannot be read, the result is still returned and
-    says so in its reasons."""
+def _data_health(evidence: Evidence | Sequence[Evidence], decision: ClaimDecision | None = None) -> DataHealth:
+    """Data-quality state behind one analytical result (see data_health.py): each window's evidence combined
+    with the dataset-level status, and the weakest window reported when a result rests on several. If the
+    dataset status cannot be read, the result is still returned and says so in its reasons."""
+    evidences = [evidence] if isinstance(evidence, Evidence) else list(evidence)
     dataset = None
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
             dataset = compute_data_status(conn, date_type.today(), exclude_metrics=PRIVATE_FIELDS)
     except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
-    decision = assessment.decision.to_mcp() if assessment is not None else {}
+    claim = decision.to_mcp() if decision is not None else {}
     return DataHealth(
-        **compose_data_health(
-            evidence.model_dump(),
-            dataset,
-            decision_tier=decision.get("tier"),
-            must_state=decision.get("must_state", ()),
+        **merge_data_health(
+            [
+                compose_data_health(
+                    e.model_dump(), dataset, decision_tier=claim.get("tier"), must_state=claim.get("must_state", ())
+                )
+                for e in evidences
+            ]
         )
     )
 
@@ -602,7 +606,7 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
         baseline=stats,
         claim=_claim_evidence(assessment, evidence),
         evidence=evidence,
-        data_health=_data_health(evidence, assessment),
+        data_health=_data_health(evidence, assessment.decision),
     )
 
 
@@ -665,6 +669,9 @@ def detect_metric_anomalies(
         baseline_mad_zero, baseline_zero_variance, baseline_too_short), the
         detector could not score the series reliably — say that explicitly
         rather than reporting a clean bill of health.
+        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
+        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
+        complete and current; when it is not VALID, say why.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -683,6 +690,7 @@ def detect_metric_anomalies(
         anomalies=[AnomalyPoint(**a) for a in anomalies],
         evidence=evidence,
         claim=_claim_evidence(assessment, evidence),
+        data_health=_data_health(evidence, assessment.decision),
     )
 
 
@@ -739,6 +747,9 @@ def calculate_metric_trend(
         line is fit through a sparse series — flag that when reporting the
         trend (e.g. "a decline, though the data only covers 60% of days")
         rather than stating the slope as a clean, complete measurement.
+        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
+        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
+        complete and current; when it is not VALID, say why.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -754,6 +765,7 @@ def calculate_metric_trend(
         trend=trend,
         evidence=evidence,
         claim=_claim_evidence(assessment, evidence),
+        data_health=_data_health(evidence, assessment.decision),
     )
 
 
@@ -810,6 +822,9 @@ def compare_metric_periods(
         (insufficient, suggestive, detectable_not_meaningful, or supported)
         says how strongly it may be stated, and every entry in
         "must_state" has to be mentioned if you report it.
+        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
+        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
+        complete and current; when it is not VALID, say why.
         claim.evidence_a/claim.evidence_b report each period's coverage
         separately — the two periods can have very different coverage
         (e.g. this month is 90% logged, last month only 40%), and that
@@ -848,6 +863,7 @@ def compare_metric_periods(
         claim=claim,
         period_a_evidence=claim.evidence_a,
         period_b_evidence=claim.evidence_b,
+        data_health=_data_health([claim.evidence_a, claim.evidence_b], assessment.decision),
     )
 
 
@@ -909,6 +925,9 @@ def find_metric_correlation(
         from a thin paired sample or a gappy series is reflected there,
         not in "r" itself — never judge the strength of a correlation
         from "r" alone.
+        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
+        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
+        complete and current; when it is not VALID, say why.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -927,15 +946,14 @@ def find_metric_correlation(
         lag_days=lag_days,
         effect={"r": result["r"], "n": result["n"], "lag_days": lag_days},
     )
+    evidence_a = Evidence(**build_evidence(series_a, start, end))
+    evidence_b = Evidence(**build_evidence(series_b, start, end))
     return CorrelationResult(
         metric_a=metric_a,
         metric_b=metric_b,
         **result,
-        **_migrated_claim_fields_comparative(
-            assessment,
-            Evidence(**build_evidence(series_a, start, end)),
-            Evidence(**build_evidence(series_b, start, end)),
-        ),
+        **_migrated_claim_fields_comparative(assessment, evidence_a, evidence_b),
+        data_health=_data_health([evidence_a, evidence_b], assessment.decision),
     )
 
 
@@ -1004,6 +1022,9 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
         "moderate" or "low"; say the finding is based on partial data
         (e.g. name the coverage_ratio or recent_gap_days) instead of
         stating it outright.
+        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
+        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
+        complete and current; when it is not VALID, say why.
     """
     if days < 2:
         raise _tool_error(ERR_INVALID_RANGE, "days must be at least 2.")
@@ -1013,6 +1034,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
     baseline_end = recent_start - timedelta(days=1)
 
     changes: list[ChangeNote] = []
+    metric_evidences: list[Evidence] = []
     for metric in METRIC_COLUMNS:
         if metric in PRIVATE_FIELDS:
             continue
@@ -1025,6 +1047,8 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
         # baseline period is exactly the kind of false-confidence claim this
         # tool exists to avoid.
         metric_evidence = Evidence(**build_evidence(baseline_series + recent_series, baseline_start, end))
+        if metric_evidence.observed_days:
+            metric_evidences.append(metric_evidence)
 
         comparison = compare_periods(recent_series, baseline_series)
         if comparison["pct_change"] is not None and abs(comparison["pct_change"]) >= 15:
@@ -1090,6 +1114,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
         recent_range=DateRange(start_date=recent_start.isoformat(), end_date=end.isoformat()),
         baseline_range=DateRange(start_date=baseline_start.isoformat(), end_date=baseline_end.isoformat()),
         changes=changes,
+        data_health=_data_health(metric_evidences or [Evidence(**build_evidence([], baseline_start, end))]),
     )
 
 
@@ -1148,6 +1173,9 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         every surfaced correlation, so its tier and must_state are what
         to report/caveat with — not something to re-derive yourself from
         the individual evidence/confidence fields.
+        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
+        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
+        complete and current; when it is not VALID, say why.
     """
     try:
         target_day = parse_date(date, "date")
@@ -1312,6 +1340,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         trend_claim=trend_claim,
         conflicting_days=conflicting_days,
         overall_decision=ClaimDecisionOut(**overall_decision.to_mcp()),
+        data_health=_data_health([baseline_claim.evidence, trend_claim.evidence], overall_decision),
     )
 
 

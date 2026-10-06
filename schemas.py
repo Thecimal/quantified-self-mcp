@@ -333,6 +333,9 @@ class DetectAnomaliesResult(BaseModel):
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
     )
+    data_health: DataHealth | None = Field(
+        default=None, description="Whether the data behind this result is complete, current and trustworthy."
+    )
 
 
 class TrendStats(BaseModel):
@@ -353,6 +356,9 @@ class CalculateTrendResult(BaseModel):
     evidence: Evidence = Field(
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence. Use claim.decision, not evidence.confidence.",
+    )
+    data_health: DataHealth | None = Field(
+        default=None, description="Whether the data behind this result is complete, current and trustworthy."
     )
 
 
@@ -375,6 +381,10 @@ class ComparePeriodsResult(BaseModel):
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence_b. Use claim.decision, not a standalone confidence field.",
     )
+    data_health: DataHealth | None = Field(
+        default=None,
+        description="Whether the data behind this result is complete and current (the weaker of the two periods).",
+    )
 
 
 class CorrelationResult(BaseModel):
@@ -395,6 +405,10 @@ class CorrelationResult(BaseModel):
         deprecated=True,
         description="DEPRECATED: identical to claim.evidence_b. Use claim.decision, not a standalone confidence field.",
     )
+    data_health: DataHealth | None = Field(
+        default=None,
+        description="Whether the data behind this result is complete and current (the weaker of the two metrics).",
+    )
 
 
 class ChangeNote(BaseModel):
@@ -414,6 +428,10 @@ class GetRecentChangesResult(BaseModel):
     recent_range: DateRange
     baseline_range: DateRange
     changes: list[ChangeNote]
+    data_health: DataHealth | None = Field(
+        default=None,
+        description="Whether the data behind these changes is complete and current (the weakest metric window).",
+    )
 
 
 class WorkoutSessionRow(BaseModel):
@@ -479,6 +497,10 @@ class ExplainMetricChangeResult(BaseModel):
             "is too — report overall_decision.tier and must_state rather than treating the headline "
             "claim as though the trend and correlations couldn't drag it down."
         ),
+    )
+    data_health: DataHealth | None = Field(
+        default=None,
+        description="Whether the data behind this result is complete and current (the weaker of the two windows).",
     )
 
     @model_validator(mode="after")

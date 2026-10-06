@@ -17,14 +17,15 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   `IMPORT_FAILED` (latest data date, coverage, gaps, last successful import,
   suggested action), and `get_import_status` lists recent import runs.
   Metrics in `HEALTH_PRIVATE_FIELDS` are ignored when computing coverage.
-- **`data_health` on `get_metric_history` and `get_baseline`.** A single
+- **`data_health` on every analytics tool.** A single
   data-quality state for the window behind the answer: `VALID`,
   `VALID_WITH_GAPS`, `INSUFFICIENT_DATA`, `STALE` or `IMPORT_INCOMPLETE`, with
   every applicable reason, the latest observation and its age, the covered
   period, gaps, observation count and the last import. It combines the window's
   existing evidence with the import history and dataset status, and is
-  separate from `claim` (which is unchanged). The other analytics tools do
-  not carry it yet.
+  separate from `claim` (which is unchanged). Results that rest on several
+  windows (period comparisons, correlations, recent changes, explanations)
+  report the weakest window and list every window's reasons.
 - **Agent-loop eval (`eval/agent`, Phase 1).** A real model, the real MCP
   server and real tool results in a multi-turn loop, scored per layer (routing,
   arguments, execution) with replayable traces, deterministic fixtures defined
