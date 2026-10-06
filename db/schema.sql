@@ -108,5 +108,18 @@ CREATE TABLE IF NOT EXISTS imports (
     rows_loaded          INTEGER,
     rows_skipped         INTEGER,
     measurements_written INTEGER,
+    -- Audit of what the run did to the database, in measurement rows: records_seen is what the source
+    -- supplied; records_added fell on a (metric, day) the importer had no rows for; records_updated
+    -- replaced a differing set for a (metric, day); records_unchanged matched what was already stored and
+    -- was left alone; records_removed were dropped by --replace because the source no longer has them.
+    records_seen         INTEGER,
+    records_added        INTEGER,
+    records_updated      INTEGER,
+    records_unchanged    INTEGER,
+    records_removed      INTEGER,
+    coverage_before_start TEXT,
+    coverage_before_end   TEXT,
+    coverage_after_start  TEXT,
+    coverage_after_end    TEXT,
     error                TEXT
 );

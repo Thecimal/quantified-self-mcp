@@ -45,6 +45,15 @@ class ImportRecord(BaseModel):
     rows_loaded: int | None = None
     rows_skipped: int | None = None
     measurements_written: int | None = None
+    records_seen: int | None = None
+    records_added: int | None = None
+    records_updated: int | None = None
+    records_unchanged: int | None = None
+    records_removed: int | None = None
+    coverage_before_start: str | None = None
+    coverage_before_end: str | None = None
+    coverage_after_start: str | None = None
+    coverage_after_end: str | None = None
     error: str | None = None
 
 

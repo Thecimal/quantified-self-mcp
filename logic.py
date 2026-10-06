@@ -22,6 +22,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
@@ -281,6 +282,32 @@ def _migrate_v8_resolve_sources_in_projection(conn: sqlite3.Connection) -> None:
     db_invariant.repair(conn)
 
 
+_V9_IMPORT_COLUMNS = {
+    "records_seen": "INTEGER",
+    "records_added": "INTEGER",
+    "records_updated": "INTEGER",
+    "records_unchanged": "INTEGER",
+    "records_removed": "INTEGER",
+    "coverage_before_start": "TEXT",
+    "coverage_before_end": "TEXT",
+    "coverage_after_start": "TEXT",
+    "coverage_after_end": "TEXT",
+}
+
+
+def _migrate_v9_add_import_audit_columns(conn: sqlite3.Connection) -> None:
+    """Give `imports` its audit columns (what each run added, updated, left unchanged and removed, and the
+    coverage before and after). Guarded like v2/v4/v5/v8: a database that already has the table from before
+    these columns existed gets them added, and one that has no table yet gets it, with the columns, from the
+    current db/schema.sql."""
+    db_invariant.bootstrap(conn)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(imports)")}
+    for name, declaration in _V9_IMPORT_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE imports ADD COLUMN {name} {declaration}")
+    conn.commit()
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "create daily_metrics table", _migrate_v1_create_table),
     (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
@@ -298,6 +325,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
         "resolve one source per (metric, day) in the daily_metrics projection; add source_priority",
         _migrate_v8_resolve_sources_in_projection,
     ),
+    (9, "add import audit columns to imports", _migrate_v9_add_import_audit_columns),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -764,31 +792,97 @@ def bulk_import_measurements(
     init_db.py's documented "safe to re-run" contract: any existing row
     for a (metric, date) this batch also touches is deleted first, so
     reloading an unchanged source file doesn't double-count into a "sum"
-    metric. replace=True goes further — wiping *every* row this importer
-    has ever written (not just dates present in this run) before
-    loading, for a source file that has since dropped some dates. Either
-    way, only rows tagged with this importer are ever touched — manually
-    logged measurements (log_measurement, upsert_daily_metric_measurements)
-    and other importers' rows are untouched. Requires a writable
-    connection. Returns the db_invariant.verify() result after rebuilding.
+    metric. It is also incremental: a (metric, day) whose rows already match
+    what this batch holds is left exactly as it is, so only new or changed
+    days are written (see import_measurements, which also reports the counts).
+    replace=True additionally drops this importer's rows for dates the batch
+    no longer has. Either way, only rows tagged with this importer are ever
+    touched — manually logged measurements (log_measurement,
+    upsert_daily_metric_measurements) and other importers' rows are
+    untouched. Requires a writable connection. Returns the
+    db_invariant.verify() result after rebuilding.
+    """
+    return import_measurements(conn, importer, rows, replace)["verify"]
+
+
+def import_measurements(
+    conn: sqlite3.Connection, importer: str, rows: list[dict[str, Any]], replace: bool = False
+) -> dict[str, Any]:
+    """Incrementally load `rows` as bulk_import_measurements does, and report what changed.
+
+    The unit of comparison is a (metric, day) for this importer. A key the importer has no rows for is
+    *added*. A key whose stored rows match the batch's rows for it (same timestamps, values, units,
+    sources) is *unchanged* and not touched, so ids and imported_at keep recording when it was first
+    imported. A key whose rows differ is *updated*: its stored rows are replaced by the batch's. With
+    replace=True, keys the importer has stored but the batch no longer has are *removed*. Counts are in
+    measurement rows; "updated" counts the batch's rows for the replaced keys. An unsupported metric
+    raises ValueError before anything is compared or changed, and the writes share one transaction, so a
+    failure leaves rows and projection exactly as they were.
+
+    Returns {"seen", "added", "updated", "unchanged", "removed", "verify"}; verify is the
+    db_invariant.verify() result after rebuilding.
     """
     imported_at = datetime.now().isoformat(timespec="seconds")
     tagged = [{**row, "importer": importer, "imported_at": row.get("imported_at", imported_at)} for row in rows]
+    db_invariant.assert_metrics_supported(conn, tagged)
 
-    def purge_previous(c: sqlite3.Connection) -> None:
-        if replace:
-            c.execute("DELETE FROM measurements WHERE importer = :importer", {"importer": importer})
-        elif tagged:
-            touched = {(row["metric"], row["timestamp"][:10]) for row in tagged}
-            c.executemany(
-                "DELETE FROM measurements WHERE importer = :importer AND metric = :metric AND date(timestamp) = :day",
-                [{"importer": importer, "metric": metric, "day": day} for metric, day in touched],
-            )
+    def fingerprint(timestamp: Any, value: Any, unit: Any, source: Any, source_type: Any) -> tuple:
+        return (timestamp, None if value is None else float(value), unit, source, source_type)
+
+    incoming: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in tagged:
+        incoming.setdefault((row["metric"], row["timestamp"][:10]), []).append(row)
+    stored: dict[tuple[str, str], list[tuple]] = {}
+    for metric, day, *rest in conn.execute(
+        "SELECT metric, substr(timestamp, 1, 10), timestamp, value, unit, source, source_type "
+        "FROM measurements WHERE importer = ?",
+        (importer,),
+    ):
+        stored.setdefault((metric, day), []).append(fingerprint(*rest))
+
+    added = updated = unchanged = 0
+    to_insert: list[dict[str, Any]] = []
+    replaced_keys: set[tuple[str, str]] = set()
+    for key, key_rows in incoming.items():
+        old = stored.get(key)
+        new = [
+            fingerprint(r["timestamp"], r["value"], r.get("unit"), r.get("source"), r.get("source_type"))
+            for r in key_rows
+        ]
+        if old is None:
+            added += len(key_rows)
+        elif Counter(old) == Counter(new):
+            unchanged += len(key_rows)
+            continue
+        else:
+            updated += len(key_rows)
+            replaced_keys.add(key)
+        to_insert.extend(key_rows)
+    dropped_keys = {key for key in stored if key not in incoming} if replace else set()
+    removed = sum(len(stored[key]) for key in dropped_keys)
+    stale_keys = replaced_keys | dropped_keys
+
+    def purge_stale(c: sqlite3.Connection) -> None:
+        c.executemany(
+            "DELETE FROM measurements "
+            "WHERE importer = :importer AND metric = :metric AND substr(timestamp, 1, 10) = :day",
+            [{"importer": importer, "metric": metric, "day": day} for metric, day in sorted(stale_keys)],
+        )
 
     # Deletes and inserts share one transaction inside bulk_insert_measurements,
     # so an invalid batch (or a failure mid-insert) leaves the importer's
     # previous rows and the projection untouched.
-    return db_invariant.bulk_insert_measurements(conn, tagged, before_insert=purge_previous)
+    verify = db_invariant.bulk_insert_measurements(
+        conn, to_insert, before_insert=purge_stale if stale_keys else None
+    )
+    return {
+        "seen": len(tagged),
+        "added": added,
+        "updated": updated,
+        "unchanged": unchanged,
+        "removed": removed,
+        "verify": verify,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -808,6 +902,15 @@ IMPORT_COLUMNS = (
     "rows_loaded",
     "rows_skipped",
     "measurements_written",
+    "records_seen",
+    "records_added",
+    "records_updated",
+    "records_unchanged",
+    "records_removed",
+    "coverage_before_start",
+    "coverage_before_end",
+    "coverage_after_start",
+    "coverage_after_end",
     "error",
 )
 
@@ -821,22 +924,39 @@ def file_sha256(path: Any) -> str:
     return digest.hexdigest()
 
 
-def record_import_start(conn: sqlite3.Connection, importer: str, source_path: Any) -> int:
+def dataset_coverage(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
+    """Earliest and latest day with data in daily_metrics, across all metrics; (None, None) when empty."""
+    row = conn.execute("SELECT MIN(date), MAX(date) FROM daily_metrics").fetchone()
+    return (row[0], row[1])
+
+
+def record_import_start(
+    conn: sqlite3.Connection,
+    importer: str,
+    source_path: Any,
+    coverage_before: tuple[str | None, str | None] | None = None,
+) -> int:
     """Insert a 'running' row in `imports` and commit it, so it survives a
     crash mid-import and is visible as an interrupted run. Returns its id.
-    Stores the file's name and SHA-256, never its full path."""
+    Stores the file's name and SHA-256, never its full path, and the dataset
+    coverage (earliest, latest day) from before the import when given."""
     try:
         sha256 = file_sha256(source_path)
     except OSError:
         sha256 = None
+    before_start, before_end = coverage_before or (None, None)
     cursor = conn.execute(
-        "INSERT INTO imports (importer, source_file, source_sha256, status, started_at) "
-        "VALUES (:importer, :source_file, :source_sha256, 'running', :started_at)",
+        "INSERT INTO imports (importer, source_file, source_sha256, status, started_at, "
+        "coverage_before_start, coverage_before_end) "
+        "VALUES (:importer, :source_file, :source_sha256, 'running', :started_at, "
+        ":coverage_before_start, :coverage_before_end)",
         {
             "importer": importer,
             "source_file": Path(source_path).name,
             "source_sha256": sha256,
             "started_at": datetime.now().isoformat(timespec="seconds"),
+            "coverage_before_start": before_start,
+            "coverage_before_end": before_end,
         },
     )
     conn.commit()
@@ -852,13 +972,23 @@ def record_import_finish(
     rows_skipped: int | None = None,
     measurements_written: int | None = None,
     error: str | None = None,
+    records_seen: int | None = None,
+    records_added: int | None = None,
+    records_updated: int | None = None,
+    records_unchanged: int | None = None,
+    records_removed: int | None = None,
+    coverage_after: tuple[str | None, str | None] | None = None,
 ) -> None:
     """Mark an import run 'succeeded' or 'failed' and commit."""
     if status not in ("succeeded", "failed"):
         raise ValueError(f"status must be 'succeeded' or 'failed', got {status!r}")
+    after_start, after_end = coverage_after or (None, None)
     conn.execute(
         "UPDATE imports SET status = :status, finished_at = :finished_at, rows_loaded = :rows_loaded, "
-        "rows_skipped = :rows_skipped, measurements_written = :measurements_written, error = :error "
+        "rows_skipped = :rows_skipped, measurements_written = :measurements_written, error = :error, "
+        "records_seen = :records_seen, records_added = :records_added, records_updated = :records_updated, "
+        "records_unchanged = :records_unchanged, records_removed = :records_removed, "
+        "coverage_after_start = :coverage_after_start, coverage_after_end = :coverage_after_end "
         "WHERE id = :id",
         {
             "id": import_id,
@@ -868,6 +998,13 @@ def record_import_finish(
             "rows_skipped": rows_skipped,
             "measurements_written": measurements_written,
             "error": error[:300] if error else None,
+            "records_seen": records_seen,
+            "records_added": records_added,
+            "records_updated": records_updated,
+            "records_unchanged": records_unchanged,
+            "records_removed": records_removed,
+            "coverage_after_start": after_start,
+            "coverage_after_end": after_end,
         },
     )
     conn.commit()

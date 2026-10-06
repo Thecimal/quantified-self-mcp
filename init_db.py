@@ -75,10 +75,11 @@ from pathlib import Path
 
 from import_adapters import ADAPTERS, RowError, detect_adapter
 from logic import (
-    bulk_import_measurements,
     connect_writable,
+    dataset_coverage,
     default_data_dir,
     ensure_schema,
+    import_measurements,
     measurement_rows_from_daily,
     record_import_finish,
     record_import_start,
@@ -392,7 +393,7 @@ def init_health_db(
         # so far is a wearable, so this stamps that in, same as the old
         # per-row insert_measurement call used to.
         raw_measurements = [{**m, "source_type": m.get("source_type", "wearable")} for m in raw_measurements]
-        # Merged into a single bulk_import_measurements call (rather than
+        # Merged into a single import_measurements call (rather than
         # one for daily_rows and one for raw_measurements) so --replace's
         # "wipe every row this importer has ever written first" only
         # happens once, against the full set -- two separate calls would
@@ -400,9 +401,9 @@ def init_health_db(
         # logic.measurement_rows_from_daily's skip_metrics param for why
         # daily_rows never duplicates a metric raw_measurements already
         # covers.
-        import_id = record_import_start(conn, adapter_name, source_path)
+        import_id = record_import_start(conn, adapter_name, source_path, coverage_before=dataset_coverage(conn))
         try:
-            bulk_import_measurements(conn, adapter_name, daily_rows + raw_measurements, replace=replace)
+            stats = import_measurements(conn, adapter_name, daily_rows + raw_measurements, replace=replace)
         except BaseException as exc:
             try:
                 record_import_finish(conn, import_id, "failed", error=f"{type(exc).__name__}: {exc}")
@@ -415,7 +416,13 @@ def init_health_db(
             "succeeded",
             rows_loaded=len(parsed_rows),
             rows_skipped=skipped,
-            measurements_written=len(daily_rows) + len(raw_measurements),
+            measurements_written=stats["added"] + stats["updated"],
+            records_seen=stats["seen"],
+            records_added=stats["added"],
+            records_updated=stats["updated"],
+            records_unchanged=stats["unchanged"],
+            records_removed=stats["removed"],
+            coverage_after=dataset_coverage(conn),
         )
     finally:
         conn.close()
@@ -430,6 +437,10 @@ def init_health_db(
     print(
         f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, "
         f"{skipped} skipped. (source: {adapter_name})"
+    )
+    print(
+        f"Import: {stats['added']} added, {stats['updated']} updated, "
+        f"{stats['unchanged']} unchanged, {stats['removed']} removed."
     )
 
 

@@ -9,6 +9,13 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Added
 
+- **Incremental imports with an audit trail.** Re-importing a source no longer deletes and rewrites
+  everything: each (metric, day) is compared with what the importer already stored, unchanged days are left
+  exactly as they were (ids and `imported_at` keep recording when they were first imported), and only new
+  or changed days are written. Each `imports` row now records `records_seen`, `records_added`,
+  `records_updated`, `records_unchanged` and `records_removed` (days dropped by `--replace`), plus the
+  dataset coverage before and after, and `get_import_status` returns them. `quantified-self-init-db` prints
+  the same counts. Schema migration 9 adds the columns to databases that already have the table.
 - **Import history and data freshness.** Every `quantified-self-init-db` run now
   records an `imports` row (importer, source file name and SHA-256, status
   `running` / `succeeded` / `failed`, rows loaded and skipped, measurements

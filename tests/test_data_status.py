@@ -154,7 +154,7 @@ def test_failed_load_is_recorded_and_leaves_existing_data_untouched(tmp_path, mo
     def explode(*args, **kwargs):
         raise RuntimeError("disk on fire")
 
-    monkeypatch.setattr(init_db, "bulk_import_measurements", explode)
+    monkeypatch.setattr(init_db, "import_measurements", explode)
     with pytest.raises(RuntimeError, match="disk on fire"):
         init_health_db(_csv(tmp_path, [("2026-01-02", 200)], "second.csv"), db, replace=True)
 
