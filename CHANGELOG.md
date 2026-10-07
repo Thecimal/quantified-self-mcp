@@ -9,6 +9,14 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Added
 
+- **Source coverage matrix.** `python -m source_coverage` (or `--json`) measures what the database
+  actually holds, per importer, source and metric: first and latest day, days covered, gaps, freshness,
+  the status of the import that produced it, provenance (units, source types, measurement counts) and
+  how many days analytics resolved to each source. Each entry is classified green, yellow or red with
+  its reasons listed, and a per-domain view (sleep, HRV, heart rate, activity, body measurements,
+  workouts) states explicitly that readiness, training load and routes are not modelled. Metrics in
+  `HEALTH_PRIVATE_FIELDS` are left out. HRV recorded as SDNN (Apple Health) and as RMSSD (Health
+  Connect) under one metric is flagged as `mixed_statistics`. Read-only; no new MCP tool.
 - **Incremental imports with an audit trail.** Re-importing a source no longer deletes and rewrites
   everything: each (metric, day) is compared with what the importer already stored, unchanged days are left
   exactly as they were (ids and `imported_at` keep recording when they were first imported), and only new
