@@ -314,3 +314,26 @@ def test_cli_prints_json_and_text_and_reports_a_missing_database(tmp_path, capsy
     text = capsys.readouterr().out
     assert "Domains" in text and "readiness" in text and "steps" in text
     assert source_coverage.main(["--db", str(tmp_path / "missing.db")]) == 1
+
+
+def test_database_without_an_imports_table_reports_no_import_record(tmp_path):
+    conn = _conn(tmp_path)
+    _add(conn, "steps", range(60), importer="csv")
+    conn.execute("DROP TABLE imports")
+    conn.commit()
+    report = _report(conn)
+    row = _row(report, "steps", importer="csv")
+    assert (row["import_status"], row["classification"]) == ("no_import_record", "green")
+
+
+def test_cli_reports_an_unreadable_schema_instead_of_a_traceback(tmp_path, capsys):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    bare = sqlite3.connect(db)
+    bare.execute("CREATE TABLE health (date TEXT PRIMARY KEY, steps INTEGER)")
+    bare.commit()
+    bare.close()
+    assert source_coverage.main(["--db", str(db)]) == 1
+    err = capsys.readouterr().err
+    assert "Could not read" in err and "never modifies the database" in err

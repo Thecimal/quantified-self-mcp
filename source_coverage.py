@@ -79,6 +79,11 @@ UNMODELLED_DOMAINS: dict[str, str] = {
 _IMPORT_SEVERITY = ("failed", "interrupted", "no_import_record", "succeeded", "manual")
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone()
+    return row is not None
+
+
 def _in_clause(excluded: list[str]) -> tuple[str, list[str]]:
     if not excluded:
         return "", []
@@ -229,13 +234,16 @@ def compute_source_coverage(
         if imported_at is not None and (entry["last_imported_at"] is None or imported_at > entry["last_imported_at"]):
             entry["last_imported_at"] = imported_at
 
+    # A database from before import history existed has no imports table: every importer's
+    # status is then "no_import_record" rather than an error.
     latest_import_status: dict[str, str] = {}
-    for importer, status in conn.execute(
-        "SELECT importer, status FROM imports WHERE id IN (SELECT MAX(id) FROM imports GROUP BY importer)"
-    ):
-        latest_import_status[importer] = "succeeded" if status == "succeeded" else (
-            "failed" if status == "failed" else "interrupted"
-        )
+    if _table_exists(conn, "imports"):
+        for importer, status in conn.execute(
+            "SELECT importer, status FROM imports WHERE id IN (SELECT MAX(id) FROM imports GROUP BY importer)"
+        ):
+            latest_import_status[importer] = "succeeded" if status == "succeeded" else (
+                "failed" if status == "failed" else "interrupted"
+            )
 
     # --- metric level: the daily_metrics projection analytics actually reads --------------------------------
     metric_days: dict[str, list[date]] = {}
@@ -472,10 +480,18 @@ def main(argv: list[str] | None = None) -> int:
     if not Path(db_path).exists():
         print(f"No database at {db_path}.", file=sys.stderr)
         return 1
-    with readonly_connection(db_path) as conn:
-        report = compute_source_coverage(
-            conn, date.today(), stale_after_days=args.stale_after_days, exclude_metrics=PRIVATE_FIELDS
+    try:
+        with readonly_connection(db_path) as conn:
+            report = compute_source_coverage(
+                conn, date.today(), stale_after_days=args.stale_after_days, exclude_metrics=PRIVATE_FIELDS
+            )
+    except sqlite3.Error as exc:
+        print(
+            f"Could not read {db_path}: {exc}. If this database was created by an older version, start the "
+            "server once so it migrates the schema; this report never modifies the database.",
+            file=sys.stderr,
         )
+        return 1
     print(json.dumps(report, indent=2) if args.json else _format_text(report))
     return 0
 
