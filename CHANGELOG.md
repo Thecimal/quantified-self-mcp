@@ -70,6 +70,14 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **Imports from different importers are no longer summed together.** Day totals an importer wrote
+  without a source (CSV, Health Connect, and Apple Health's sleep and other daily rows) all fell into one
+  unattributed group in the daily projection, so importing the same period through two paths doubled
+  sum metrics such as steps and sleep, and reported the day as a single source. An import now stamps
+  such rows with the importer's name as `source`, so the projection resolves between importers with
+  `source_priority` (or its documented fallback) and `resolution` says so. Schema migration 10 stamps
+  existing imported rows the same way and rebuilds `daily_metrics`, which corrects days that were
+  double-counted: those daily values will change. Manual measurements keep no source.
 - **Apple Health raw observations are now stored in the metric's canonical unit
   and validated per reading.** `daily_metrics` is projected from `measurements`,
   but the Apple Health adapter wrote raw readings in the device's own unit under

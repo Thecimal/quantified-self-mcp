@@ -308,6 +308,28 @@ def _migrate_v9_add_import_audit_columns(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_v10_stamp_imported_source(conn: sqlite3.Connection) -> None:
+    """Give every imported measurement an authoritative source. A row an importer wrote with no source of
+    its own takes the importer's name, so day totals from different importers are no longer one
+    unattributed group that the projection summed together; the projection is then rebuilt, which corrects
+    days that were double-counted. Rows with no importer (manual logs) are left alone. The rebuild runs
+    every time this migration does, so a run interrupted after the stamping still ends rebuilt.
+    """
+    db_invariant.bootstrap(conn)
+    unstamped = conn.execute(
+        "SELECT 1 FROM measurements WHERE source IS NULL AND importer IS NOT NULL LIMIT 1"
+    ).fetchone()
+    if unstamped:
+        # Triggers are down for the one bulk UPDATE; repair() below recomputes the whole projection.
+        db_invariant.drop_triggers(conn)
+        try:
+            conn.execute("UPDATE measurements SET source = importer WHERE source IS NULL AND importer IS NOT NULL")
+            conn.commit()
+        finally:
+            db_invariant.install_triggers(conn)
+    db_invariant.repair(conn)
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "create daily_metrics table", _migrate_v1_create_table),
     (2, "add weight_kg, workout_minutes, mood, water_ml columns", _migrate_v2_add_weight_workout_mood_water),
@@ -326,6 +348,11 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
         _migrate_v8_resolve_sources_in_projection,
     ),
     (9, "add import audit columns to imports", _migrate_v9_add_import_audit_columns),
+    (
+        10,
+        "stamp imported measurements with their importer as source; rebuild the projection",
+        _migrate_v10_stamp_imported_source,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -823,7 +850,18 @@ def import_measurements(
     db_invariant.verify() result after rebuilding.
     """
     imported_at = datetime.now().isoformat(timespec="seconds")
-    tagged = [{**row, "importer": importer, "imported_at": row.get("imported_at", imported_at)} for row in rows]
+    # A row with no source of its own is stamped with the importer's name, so day totals from two
+    # importers stay distinguishable and are resolved by source_priority, rather than being summed
+    # together as one unattributed group.
+    tagged = [
+        {
+            **row,
+            "source": row.get("source") or importer,
+            "importer": importer,
+            "imported_at": row.get("imported_at", imported_at),
+        }
+        for row in rows
+    ]
     db_invariant.assert_metrics_supported(conn, tagged)
 
     def fingerprint(timestamp: Any, value: Any, unit: Any, source: Any, source_type: Any) -> tuple:

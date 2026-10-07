@@ -40,8 +40,9 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
     -- (the highest-ranked present source in source_priority) or
     -- 'fallback' (several sources, none ranked: most distinct hours
     -- observed, then latest observation, then source name).
-    -- resolved_source is NULL when the winning rows carry no source
-    -- (e.g. a CSV day total).
+    -- resolved_source is NULL only when the winning rows carry no source
+    -- (a manual measurement logged without one): imported rows always
+    -- carry a source, their own or else the importer's name.
     resolved_source       TEXT,
     source_count          INTEGER NOT NULL DEFAULT 1,
     resolution            TEXT NOT NULL DEFAULT 'single'
