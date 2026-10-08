@@ -135,7 +135,7 @@ Supported imports include:
 - CSV
 - Apple Health exports
 
-See the [import documentation](docs/).
+See the [import documentation](docs/importing.md).
 
 ---
 
@@ -166,7 +166,7 @@ See the [import documentation](docs/).
 
 The MCP currently exposes **20 tools** across data access, measurements, workouts, analytics, personal intelligence, and data freshness (`get_data_status`, `get_import_status`).
 
-See the [tool reference](docs/) for the complete list.
+See the [tool reference](docs/tools.md) for the complete list.
 
 ---
 
@@ -208,6 +208,14 @@ Apple Health:
 
 ```bash
 quantified-self-init-db export.xml
+```
+
+### Verify your setup (optional)
+
+Run the built-in diagnostic tool to check Python, dependencies, and database readiness:
+
+```bash
+quantified-self-doctor
 ```
 
 ### Connect an MCP client
@@ -285,8 +293,8 @@ The MCP server is the bridge between your health history and your AI.
 Detailed documentation lives outside the README:
 
 - **[Client setup](docs/clients/)**
-- **[Importing health data](docs/)**
-- **[Tool reference](docs/)**
+- **[Importing health data](docs/importing.md)**
+- **[Tool reference](docs/tools.md)**
 - **[Security](SECURITY.md)**
 - **[Contributing](CONTRIBUTING.md)**
 - **[Changelog](CHANGELOG.md)**

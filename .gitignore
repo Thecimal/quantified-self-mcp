@@ -9,6 +9,7 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
 
 # Build artifacts — built by .github/workflows/publish.yml on release tags,
 # never meant to be committed (they'd immediately go stale)
@@ -23,18 +24,4 @@ build/
 # OS
 .DS_Store
 Thumbs.db
-__pycache__/
-*.pyc
-.pytest_cache/
-__pycache__/
-*.pyc
-.pytest_cache/
-__pycache__/
-*.pyc
-.pytest_cache/
-__pycache__/
-*.pyc
-.pytest_cache/
-.venv/
-__pycache__/
-.pytest_cache/
+

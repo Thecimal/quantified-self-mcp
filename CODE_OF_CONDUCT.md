@@ -47,6 +47,9 @@ representation of the project.
 ## Reporting Issues
 
 If you experience or witness unacceptable behavior, please report it privately
-to the project maintainers.
+to the project maintainer at `behnoud.mhm@gmail.com`.
 
-Please do not post sensitive reports, personal information, credentials, or
+Please do not post sensitive reports, personal information, or private disputes in
+public issue trackers. All reports will be reviewed promptly and handled with
+strict confidentiality.
+

@@ -35,7 +35,7 @@ http://localhost:8765
 
 ## 4. Restart / reconnect
 
-Open WebUI validates the OpenAPI schema on save — you should see `quantified-self` tools (`read_health_data`, `read_finance_data`) listed immediately, no app restart needed. Keep the `mcpo` process running in the background.
+Open WebUI validates the OpenAPI schema on save — you should see `quantified-self` tools (`read_health_data`, `read_measurements`, etc.) listed immediately, no app restart needed. Keep the `mcpo` process running in the background.
 
 ## 5. Ask this exact question
 

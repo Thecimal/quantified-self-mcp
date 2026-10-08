@@ -20,7 +20,7 @@ If you discover a security vulnerability, please use GitHub's private
 vulnerability reporting feature for this repository when available.
 
 If private reporting is not available, contact the project maintainer privately
-through the contact method listed in the repository profile.
+at `behnoud.mhm@gmail.com`.
 
 Please include:
 
@@ -65,6 +65,9 @@ Security issues may include:
 After receiving a valid vulnerability report, the maintainer will make a
 reasonable effort to:
 
-1. Confirm receipt of the report.
-2. Investigate the vulnerability.
-3. Determine the severity and affected versions.
+1. Confirm receipt of the report within 48 hours.
+2. Investigate the vulnerability and assess its impact.
+3. Determine severity and affected versions.
+4. Develop, review, and test a fix or workaround.
+5. Release a patch release and publish a security advisory.
+

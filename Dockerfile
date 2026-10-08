@@ -28,9 +28,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # import_adapters.py is required by init_db.py (it's not optional glue —
 # init_db.py imports from it directly) for any --source, not just
 # apple-health, so it has to ship alongside the other three .py files.
-COPY server.py init_db.py logic.py metric_registry.py analytics.py evidence.py import_adapters.py ./
+COPY server.py init_db.py logic.py metric_registry.py analytics.py evidence.py import_adapters.py data_health.py doctor.py errors.py ingest.py privacy.py schemas.py source_coverage.py ./
+COPY tools ./tools
+COPY db ./db
 COPY qs_evidence ./qs_evidence
+COPY integrations ./integrations
 COPY sample_data ./sample_data
+
+RUN mkdir -p /data
 
 # health.db lives here by default (see server.py). Point it at Glama's
 # persistent volume mount (/data) so a redeploy doesn't wipe your data;

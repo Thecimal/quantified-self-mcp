@@ -9,6 +9,13 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Added
 
+- **Canonical ingestion contract (`ingest.py`).** The one shape every source adapter's observations
+  must take: metric, naive local timestamp, value, canonical unit, source, source record id, original
+  timezone and quality, with a strict validator that normalises known unit spellings (`count/min` to
+  `bpm`), rejects timestamps with a UTC offset, values outside the registry bounds, units that need a
+  conversion, and unknown fields, and drops repeated record ids. A bad record is rejected on its own
+  with a reason and the rest of a batch still loads. Nothing uses it yet: adapters are moved onto it in
+  following changes.
 - **Source coverage matrix.** `python -m source_coverage` (or `--json`) measures what the database
   actually holds, per importer, source and metric: first and latest day, days covered, gaps, freshness,
   the status of the import that produced it, provenance (units, source types, measurement counts) and
@@ -70,6 +77,12 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **Wheel packaging and Dockerfile runtime dependencies.** The build wheel include list in
+  `pyproject.toml` and `COPY` in `Dockerfile` previously omitted `tools/`, `db/`, `data_health.py`,
+  `errors.py`, `privacy.py`, `schemas.py`, and `source_coverage.py`, causing `ModuleNotFoundError`
+  on package installs or container runs. All modules and database schema files are now included.
+- **GitHub Actions action versions.** Updated `.github/workflows/ci.yml` and `publish.yml` from
+  invalid `@v7` actions to official `actions/checkout@v4` and `actions/setup-python@v5`.
 - **Imports from different importers are no longer summed together.** Day totals an importer wrote
   without a source (CSV, Health Connect, and Apple Health's sleep and other daily rows) all fell into one
   unattributed group in the daily projection, so importing the same period through two paths doubled

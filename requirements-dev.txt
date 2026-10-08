@@ -6,3 +6,5 @@ ruff>=0.16.10,<0.17
 # real dependency for tests, so tests/test_logic.py's encryption tests
 # exercise the actual package rather than a mock.
 sqlcipher3-binary>=0.5,<1.0
+build>=1.0.0
+

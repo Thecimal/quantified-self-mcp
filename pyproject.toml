@@ -10,6 +10,19 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 
+authors = [
+    {name = "Behnoud", email = "behnoud.mhm@gmail.com"},
+]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "fastmcp",
+    "health",
+    "quantified-self",
+    "local-first",
+    "privacy",
+]
+
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -24,6 +37,12 @@ dependencies = [
     "pyyaml>=6.0,<7.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Thecimal/quantified-self-mcp"
+Repository = "https://github.com/Thecimal/quantified-self-mcp"
+Issues = "https://github.com/Thecimal/quantified-self-mcp/issues"
+Changelog = "https://github.com/Thecimal/quantified-self-mcp/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 # See logic.py's "Database encryption" section and README.md. Not needed
 # unless HEALTH_DB_PASSPHRASE is set — everything works exactly as before
@@ -33,6 +52,7 @@ encryption = ["sqlcipher3-binary>=0.5,<1.0"]
 [project.scripts]
 quantified-self-mcp = "server:main"
 quantified-self-init-db = "init_db:main"
+quantified-self-doctor = "doctor:main"
 
 [tool.hatch.build.targets.wheel]
 include = [
@@ -43,6 +63,16 @@ include = [
     "analytics.py",
     "evidence.py",
     "import_adapters.py",
+    "data_health.py",
+    "doctor.py",
+    "errors.py",
+    "ingest.py",
+    "privacy.py",
+    "schemas.py",
+    "source_coverage.py",
+    "tools/*.py",
+    "db/*.py",
+    "db/schema.sql",
     "qs_evidence/*.py",
     "qs_evidence/registry.yaml",
     "integrations/jev/*.py",

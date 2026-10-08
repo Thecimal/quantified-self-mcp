@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -58,15 +58,19 @@ jobs:
       - name: Verify wheel contains all required modules
         run: |
           pip install --force-reinstall dist/*.whl
-          python -c "import server, init_db, logic, metric_registry, analytics, evidence, import_adapters, qs_evidence; print('wheel contents OK')"
+          (cd /tmp && python -c "import server, init_db, doctor, logic, tools.health, db.invariant; print('isolated wheel import OK')")
           python - <<'PY'
           import glob, zipfile
           names = set(zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist())
           required = {
               'server.py', 'init_db.py', 'logic.py', 'metric_registry.py', 'analytics.py', 'evidence.py',
-              'import_adapters.py',
+              'import_adapters.py', 'data_health.py', 'doctor.py', 'errors.py', 'ingest.py', 'privacy.py',
+              'schemas.py', 'source_coverage.py',
+              'tools/__init__.py', 'tools/health.py', 'tools/measurements.py', 'tools/status.py', 'tools/workouts.py',
+              'db/__init__.py', 'db/schema.sql', 'db/invariant.py', 'db/aggregation.py',
               'qs_evidence/__init__.py', 'qs_evidence/models.py', 'qs_evidence/registry.py',
               'qs_evidence/registry.yaml', 'qs_evidence/resolver.py', 'qs_evidence/sample.py',
+              'integrations/jev/__init__.py', 'integrations/jev/adapter.py', 'integrations/jev/schemas.py',
           }
           assert not required - names, sorted(required - names)
           assert not [n for n in names if n.startswith('qs_evidence/tests')], 'tests leaked into wheel'

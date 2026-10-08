@@ -16,7 +16,6 @@ It allows AI assistants and MCP-compatible clients to query personal health stor
 ## Features
 
 - Local health data analysis
-- Personal finance analysis
 - Privacy-first architecture
 - Local SQLite storage
 - MCP-compatible AI integration
@@ -31,4 +30,4 @@ https://github.com/Thecimal/quantified-self-mcp
 
 ## Keywords
 
-MCP, Model Context Protocol, FastMCP, AI agents, personal data, quantified self, health data, personal finance, privacy-first, local-first.
+MCP, Model Context Protocol, FastMCP, AI agents, personal data, quantified self, health data, privacy-first, local-first.
