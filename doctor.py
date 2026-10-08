@@ -3,6 +3,7 @@
 Run after install to check every prerequisite before connecting an MCP
 client, and to get a concrete "next step" instead of a wall of setup docs.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -42,7 +43,7 @@ def check_python() -> bool:
     # check exists to catch.
     if sys.version_info >= (3, 10):  # noqa: UP036
         _ok(f"Python {sys.version_info.major}.{sys.version_info.minor} installed")
-        return True
+        return True  # type: ignore
     _fail(f"Python {sys.version_info.major}.{sys.version_info.minor} found, 3.10+ required")
     return False
 
@@ -84,9 +85,7 @@ def check_metrics(conn: sqlite3.Connection) -> int:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(health)").fetchall()}
     populated = set()
     for col in (REQUIRED_HEALTH_COLUMNS | OPTIONAL_HEALTH_COLUMNS) & cols:
-        (non_null,) = conn.execute(
-            f"SELECT COUNT(*) FROM health WHERE {col} IS NOT NULL"
-        ).fetchone()
+        (non_null,) = conn.execute(f"SELECT COUNT(*) FROM health WHERE {col} IS NOT NULL").fetchone()
         if non_null > 0:
             populated.add(col)
     if populated:

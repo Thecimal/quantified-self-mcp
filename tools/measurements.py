@@ -93,13 +93,14 @@ def register_measurement_tools(
     how server.py restores server.log_measurement and friends to exactly
     what they were.
     """
+
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Log a raw measurement",
-            readOnlyHint=False,
-            destructiveHint=False,  # always inserts a new row, never overwrites one
-            idempotentHint=False,  # calling it twice logs two measurements, not one
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=False,  # always inserts a new row, never overwrites one
+            idempotent_hint=False,  # calling it twice logs two measurements, not one
+            open_world_hint=False,
         )
     )
     def log_measurement(
@@ -211,10 +212,10 @@ def register_measurement_tools(
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Read raw measurements",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def read_measurements(
@@ -279,10 +280,10 @@ def register_measurement_tools(
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Preview a source-priority resolution of a day's measurements",
-            readOnlyHint=True,  # never writes daily_metrics -- see docstring
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,  # never writes daily_metrics -- see docstring
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def aggregate_measurements(date: str, source_priority: list[str] | None = None) -> AggregateMeasurementsResult:
@@ -361,10 +362,10 @@ def register_measurement_tools(
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Break a metric down by source",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_metric_provenance(metric: str, date: str) -> GetMetricProvenanceResult:

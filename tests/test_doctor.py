@@ -16,8 +16,7 @@ def _make_db(tmp_path: Path, with_data: bool) -> Path:
     )
     if with_data:
         conn.execute(
-            "INSERT INTO health (date, steps, sleep_hours, resting_heart_rate) "
-            "VALUES ('2026-01-01', 8000, 7.5, 60)"
+            "INSERT INTO health (date, steps, sleep_hours, resting_heart_rate) VALUES ('2026-01-01', 8000, 7.5, 60)"
         )
     conn.commit()
     conn.close()

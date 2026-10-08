@@ -28,9 +28,7 @@ NOT_CLAIM_BEARING: set[str] = {
 EVIDENCE_MODELS = [
     m
     for m in _all_subclasses(BaseModel)
-    if m.__module__ in (server.__name__, schemas.__name__)
-    and _claim_fields(m)
-    and m.__name__ not in NOT_CLAIM_BEARING
+    if m.__module__ in (server.__name__, schemas.__name__) and _claim_fields(m) and m.__name__ not in NOT_CLAIM_BEARING
 ]
 
 # Result models now live in schemas.py, imported into server.py; without checking
@@ -92,9 +90,7 @@ def test_trend_result_without_claim_fields_is_rejected():
         server.CalculateTrendResult(
             metric="steps",
             range=server.DateRange(start_date="2026-01-01", end_date="2026-01-30"),
-            trend=server.TrendStats(
-                direction="increasing", slope_per_day=10.0, r_squared=0.8, n=30, span_days=29
-            ),
+            trend=server.TrendStats(direction="increasing", slope_per_day=10.0, r_squared=0.8, n=30, span_days=29),
             evidence=server.Evidence(
                 requested_start="2026-01-01",
                 requested_end="2026-01-30",

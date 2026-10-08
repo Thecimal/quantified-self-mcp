@@ -9,14 +9,17 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
@@ -24,8 +27,11 @@ jobs:
       - name: Lint with ruff
         run: ruff check .
 
-      - name: Run test suite
-        run: pytest tests/ qs_evidence/tests -v
+      - name: Type check with mypy
+        run: mypy .
+
+      - name: Run test suite with coverage
+        run: pytest --cov=. --cov-report=xml tests/ qs_evidence/tests -v
 
       - name: Check server.py syntax
         run: python -m py_compile server.py && echo "server.py OK"

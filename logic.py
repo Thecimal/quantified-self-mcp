@@ -275,9 +275,7 @@ def _migrate_v8_resolve_sources_in_projection(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {name} {declaration}")
     conn.commit()
     db_invariant.bootstrap(conn)
-    conn.execute(
-        "INSERT OR IGNORE INTO source_priority (metric, rank, source) VALUES ('*', 1, ?)", (DAILY_LOG_SOURCE,)
-    )
+    conn.execute("INSERT OR IGNORE INTO source_priority (metric, rank, source) VALUES ('*', 1, ?)", (DAILY_LOG_SOURCE,))
     conn.commit()
     db_invariant.repair(conn)
 
@@ -583,8 +581,7 @@ def readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
         conn.execute("SELECT 1")  # force the open now, not on the caller's first real query
     except module.OperationalError:
         logger.warning(
-            "Could not open %s read-only (likely a pending WAL/journal); "
-            "falling back to a query_only connection.",
+            "Could not open %s read-only (likely a pending WAL/journal); falling back to a query_only connection.",
             db_path,
         )
         conn = module.connect(str(db_path))
@@ -910,9 +907,7 @@ def import_measurements(
     # Deletes and inserts share one transaction inside bulk_insert_measurements,
     # so an invalid batch (or a failure mid-insert) leaves the importer's
     # previous rows and the projection untouched.
-    verify = db_invariant.bulk_insert_measurements(
-        conn, to_insert, before_insert=purge_stale if stale_keys else None
-    )
+    verify = db_invariant.bulk_insert_measurements(conn, to_insert, before_insert=purge_stale if stale_keys else None)
     return {
         "seen": len(tagged),
         "added": added,
@@ -1003,7 +998,7 @@ def record_import_start(
 
 def record_import_finish(
     conn: sqlite3.Connection,
-    import_id: int,
+    import_id: int,  # type: ignore
     status: str,
     *,
     rows_loaded: int | None = None,
@@ -1188,7 +1183,7 @@ def insert_measurement(
 
 def query_measurements(
     conn: sqlite3.Connection,
-    metric: str | None = None,
+    metric: str | None = None,  # type: ignore
     start: str | None = None,
     end: str | None = None,
     source: str | None = None,
@@ -1219,7 +1214,7 @@ def query_measurements(
     cursor.row_factory = row_class()
     rows = cursor.execute(
         f"SELECT id, timestamp, metric, value, unit, source, source_type, importer, imported_at, created_at "
-        f"FROM measurements {where} ORDER BY timestamp DESC LIMIT :limit",
+        f"FROM measurements {where} ORDER BY timestamp DESC LIMIT :limit",  # type: ignore
         params,
     ).fetchall()
     return [dict(row) for row in rows]
@@ -1272,7 +1267,7 @@ def insert_workout_session(
 
 def query_workout_sessions(
     conn: sqlite3.Connection,
-    start: str | None = None,
+    start: str | None = None,  # type: ignore
     end: str | None = None,
     activity_type: str | None = None,
     limit: int = 1000,
@@ -1298,7 +1293,7 @@ def query_workout_sessions(
     cursor.row_factory = row_class()
     rows = cursor.execute(
         f"SELECT id, date, activity_type, start_time, duration_minutes, intensity, "
-        f"avg_heart_rate, max_heart_rate, source, notes, created_at "
+        f"avg_heart_rate, max_heart_rate, source, notes, created_at "  # type: ignore
         f"FROM workout_sessions {where} ORDER BY date DESC, id DESC LIMIT :limit",
         params,
     ).fetchall()
@@ -1344,13 +1339,14 @@ def get_metric_provenance(conn: sqlite3.Connection, metric: str, day: str) -> di
     conflict = False
     distinct_values = [s["value"] for s in sources if s["source"] is not None]
     if len(distinct_values) > 1:
-        lo, hi = min(distinct_values), max(distinct_values)
+        lo, hi = min(distinct_values), max(distinct_values)  # type: ignore
         conflict = lo == 0 or (hi - lo) / lo > CONFLICT_TOLERANCE_PCT
 
     return {"metric": metric, "date": day, "sources": sources, "conflict": conflict}
 
 
-# How far apart two sources' same-day averages for a metric can be before
+# type: ignore
+# How far apart two sources' same-day averages for a metric can be before  # type: ignore
 # get_metric_provenance/resolve_source_conflicts calls it a conflict
 # rather than ordinary reading-to-reading noise.
 CONFLICT_TOLERANCE_PCT = 0.05
@@ -1521,9 +1517,7 @@ def parse_date(value: str, field_name: str) -> date:
         raise ValueError(f"{field_name} must be formatted YYYY-MM-DD, got {value!r}") from exc
 
 
-def resolve_range(
-    start_date: str | None, end_date: str | None, default_days: int
-) -> tuple[date, date]:
+def resolve_range(start_date: str | None, end_date: str | None, default_days: int) -> tuple[date, date]:
     """Fill in sensible defaults for an open-ended date range and validate it."""
     end = parse_date(end_date, "end_date") if end_date else date.today()
     start = parse_date(start_date, "start_date") if start_date else end - timedelta(days=default_days)

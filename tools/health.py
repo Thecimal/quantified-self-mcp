@@ -79,13 +79,14 @@ def register_health_tools(
     how server.py restores server.read_health_data and friends to exactly
     what they were.
     """
+
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Read health data",
-            readOnlyHint=True,  # opened via readonly_connection; cannot write
-            destructiveHint=False,
-            idempotentHint=True,  # same args -> same result, no side effects
-            openWorldHint=False,  # only ever touches the local SQLite file
+            read_only_hint=True,  # opened via readonly_connection; cannot write
+            destructive_hint=False,
+            idempotent_hint=True,  # same args -> same result, no side effects
+            open_world_hint=False,  # only ever touches the local SQLite file
         )
     )
     def read_health_data(start_date: str | None = None, end_date: str | None = None) -> ReadHealthDataResult:
@@ -188,14 +189,13 @@ def register_health_tools(
             coverage=CoverageSummary(**build_coverage_summary(rows, start, end, public_metrics)),
         )
 
-
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Export health data to CSV",
-            readOnlyHint=False,  # writes a CSV file to the local exports/ directory
-            destructiveHint=True,  # opens the file with mode "w": an existing export for the same range is overwritten
-            idempotentHint=True,  # deterministic filename per date range -> repeat calls rewrite the same content
-            openWorldHint=False,  # only ever touches the local SQLite file and local disk
+            read_only_hint=False,  # writes a CSV file to the local exports/ directory
+            destructive_hint=True,  # opens the file with mode "w": an existing export for the same range is overwritten
+            idempotent_hint=True,  # deterministic filename per date range -> repeat calls rewrite the same content
+            open_world_hint=False,  # only ever touches the local SQLite file and local disk
         )
     )
     def export_health_data_csv(start_date: str | None = None, end_date: str | None = None) -> ExportCsvResult:
@@ -273,17 +273,16 @@ def register_health_tools(
             range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         )
 
-
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Log a daily metric",
-            readOnlyHint=False,
+            read_only_hint=False,
             # upsert_daily_metric_measurements DELETEs the previous daily-log
             # measurement for each (metric, day) and inserts the new one, so a
             # previously logged value is replaced, not just added to.
-            destructiveHint=True,
-            idempotentHint=True,  # re-sending the same values leaves the same state
-            openWorldHint=False,
+            destructive_hint=True,
+            idempotent_hint=True,  # re-sending the same values leaves the same state
+            open_world_hint=False,
         )
     )
     def log_daily_metric(
@@ -390,14 +389,14 @@ def register_health_tools(
 
         return LogDailyMetricResult(logged=provided, row=DailyMetricsRow(**_redact_private_fields(row)))
 
-
+    # type: ignore
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Clear a single metric",
-            readOnlyHint=False,
-            destructiveHint=True,  # blanks out a previously logged value
-            idempotentHint=True,  # clearing an already-null field is a no-op
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,  # blanks out a previously logged value
+            idempotent_hint=True,  # clearing an already-null field is a no-op
+            open_world_hint=False,
         )
     )
     def clear_metric(date: str, field: str) -> ClearMetricResult:

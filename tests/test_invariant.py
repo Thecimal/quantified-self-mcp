@@ -308,8 +308,7 @@ def test_repair_failure_restores_the_previous_projection(conn):
     insert(conn, "steps", 1000, "2026-09-17T08:00:00")
     conn.execute("UPDATE daily_metrics SET value = 9999 WHERE metric = 'steps'")
     conn.execute(
-        "CREATE TRIGGER trg_test_block BEFORE INSERT ON daily_metrics "
-        "BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+        "CREATE TRIGGER trg_test_block BEFORE INSERT ON daily_metrics BEGIN SELECT RAISE(ABORT, 'blocked'); END"
     )
     conn.commit()
     before = _snapshot(conn)

@@ -147,9 +147,7 @@ def write_apple_health_xml(rows: list[dict], path: Path) -> None:
         morning = datetime.combine(day, datetime.min.time()).replace(hour=8)
         root.append(_apple_record("HKQuantityTypeIdentifierStepCount", "count", row["steps"], morning))
         root.append(
-            _apple_record(
-                "HKQuantityTypeIdentifierRestingHeartRate", "count/min", row["resting_heart_rate"], morning
-            )
+            _apple_record("HKQuantityTypeIdentifierRestingHeartRate", "count/min", row["resting_heart_rate"], morning)
         )
         if "weight_kg" in row:
             root.append(_apple_record("HKQuantityTypeIdentifierBodyMass", "kg", row["weight_kg"], morning))

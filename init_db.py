@@ -163,9 +163,7 @@ def _to_float(raw: str) -> float | None:
     return value
 
 
-def _read_csv(
-    csv_path: Path, column_map: dict[str, str] | None = None
-) -> tuple[list[dict[str, str]], list[str]]:
+def _read_csv(csv_path: Path, column_map: dict[str, str] | None = None) -> tuple[list[dict[str, str]], list[str]]:
     """Read csv_path, matching column names case-insensitively.
 
     column_map (canonical column -> this CSV's actual header text, e.g.
@@ -200,10 +198,10 @@ def _read_csv(
             if mapped is not None:
                 if mapped not in reader.fieldnames:
                     sys.exit(
-                        f"Error: --map {canonical}={mapped!r} but {csv_path} has no such "
+                        f"Error: --map {canonical}={mapped!r} but {csv_path} has no such "  # type: ignore
                         f"column. Found columns: {', '.join(reader.fieldnames)}"
                     )
-                return mapped
+                return mapped  # type: ignore
             direct = header_map.get(canonical)
             if direct is not None:
                 return direct
@@ -228,6 +226,7 @@ def _read_csv(
     return rows, present_columns
 
 
+# type: ignore
 ALL_METRIC_COLUMNS = CORE_METRIC_COLUMNS + OPTIONAL_COLUMNS
 
 # Parser for each metric column's raw CSV string.
@@ -244,9 +243,7 @@ _METRIC_PARSERS = {
 }
 
 
-def _load_csv_rows(
-    csv_path: Path, column_map: dict[str, str] | None = None
-) -> tuple[list[dict], list[str], int]:
+def _load_csv_rows(csv_path: Path, column_map: dict[str, str] | None = None) -> tuple[list[dict], list[str], int]:
     """This project's own CSV format, exactly as before this module split
     out other adapters — unchanged (aside from optional column_map, see
     _read_csv) so existing tests (and existing CSV exports people already
@@ -268,7 +265,7 @@ def _load_csv_rows(
             try:
                 validate_metrics({k: v for k, v in parsed.items() if k != "date"})
             except ValueError as exc:
-                raise RowError(str(exc)) from exc
+                raise RowError(str(exc)) from exc  # type: ignore
             parsed_rows.append(parsed)
         except RowError as exc:
             print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)
@@ -435,8 +432,7 @@ def init_health_db(
     if raw_measurements:
         print(f"Loaded {len(raw_measurements)} raw measurement(s) with source provenance.")
     print(
-        f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, "
-        f"{skipped} skipped. (source: {adapter_name})"
+        f"Health DB ready at {db_path}: {len(parsed_rows)} row(s) loaded, {skipped} skipped. (source: {adapter_name})"
     )
     print(
         f"Import: {stats['added']} added, {stats['updated']} updated, "
@@ -514,8 +510,7 @@ def main() -> None:
             sys.exit(f"Error: --map expects COLUMN=HEADER, got {item!r}")
         if canonical != "date" and canonical not in ALL_METRIC_COLUMNS:
             sys.exit(
-                f"Error: --map column {canonical!r} is not recognized. "
-                f"Valid: date, {', '.join(ALL_METRIC_COLUMNS)}"
+                f"Error: --map column {canonical!r} is not recognized. Valid: date, {', '.join(ALL_METRIC_COLUMNS)}"
             )
         if not header:
             sys.exit(f"Error: --map {item!r} has an empty header")

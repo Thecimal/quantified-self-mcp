@@ -491,7 +491,12 @@ def test_insert_measurement_returns_id_and_persists_row(tmp_path):
     try:
         ensure_schema(conn)
         row_id = insert_measurement(
-            conn, "2026-06-01T08:00:00", "resting_heart_rate", 58, unit="bpm", source="Apple Watch",
+            conn,
+            "2026-06-01T08:00:00",
+            "resting_heart_rate",
+            58,
+            unit="bpm",
+            source="Apple Watch",
             source_type="wearable",
         )
         conn.row_factory = row_class()
@@ -619,8 +624,13 @@ def test_insert_measurement_stores_provenance_fields(tmp_path):
     try:
         ensure_schema(conn)
         row_id = insert_measurement(
-            conn, "2026-06-01T08:00:00", "steps", 1000, source="Apple Watch",
-            importer="apple-health", imported_at="2026-06-02T09:00:00",
+            conn,
+            "2026-06-01T08:00:00",
+            "steps",
+            1000,
+            source="Apple Watch",
+            importer="apple-health",
+            imported_at="2026-06-02T09:00:00",
         )
         conn.row_factory = row_class()
         row = dict(conn.execute("SELECT * FROM measurements WHERE id = ?", (row_id,)).fetchone())
@@ -685,12 +695,16 @@ def test_resolve_source_conflicts_fallback_ignores_when_a_source_was_imported():
     # harmless re-run could flip which source won. Observation times decide now.
     rows = [
         {
-            "source": "Garmin", "value": 67,
-            "timestamp": "2026-06-01T08:00:00", "imported_at": "2026-06-02T09:00:00",
+            "source": "Garmin",
+            "value": 67,
+            "timestamp": "2026-06-01T08:00:00",
+            "imported_at": "2026-06-02T09:00:00",
         },
         {
-            "source": "Apple Watch", "value": 62,
-            "timestamp": "2026-06-01T08:30:00", "imported_at": "2026-06-01T09:00:00",
+            "source": "Apple Watch",
+            "value": 62,
+            "timestamp": "2026-06-01T08:30:00",
+            "imported_at": "2026-06-01T09:00:00",
         },
     ]
     kept, conflict = resolve_source_conflicts(rows)
@@ -958,8 +972,7 @@ def test_busy_timeout_lets_a_blocked_writer_wait_for_a_concurrent_write(tmp_path
     # Genuinely waited for the first writer (proving busy_timeout works) —
     # neither failed instantly nor slipped in before the lock was held.
     assert elapsed >= hold_seconds * 0.6, (
-        f"second write returned in {elapsed:.2f}s — too fast to have "
-        "actually waited on the concurrent writer's lock"
+        f"second write returned in {elapsed:.2f}s — too fast to have actually waited on the concurrent writer's lock"
     )
     assert elapsed < BUSY_TIMEOUT_MS / 1000, "second write took suspiciously close to the busy_timeout ceiling"
 

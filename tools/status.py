@@ -116,10 +116,10 @@ def register_status_tools(
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Check how current the data is",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_data_status(stale_after_days: int = DEFAULT_STALE_AFTER_DAYS) -> DataStatusResult:
@@ -168,10 +168,10 @@ def register_status_tools(
     @mcp.tool(
         annotations=ToolAnnotations(
             title="List recent imports",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_import_status(limit: int = 5) -> GetImportStatusResult:

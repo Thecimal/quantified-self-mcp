@@ -179,9 +179,7 @@ async def test_call_tool_round_trip_through_the_protocol(client):
     logged = await client.call_tool("log_daily_metric", {"date": "2026-02-01", "steps": 6000, "mood": 7})
     assert logged.structured_content["logged"] == {"steps": 6000, "mood": 7}
 
-    read_back = await client.call_tool(
-        "read_health_data", {"start_date": "2026-02-01", "end_date": "2026-02-01"}
-    )
+    read_back = await client.call_tool("read_health_data", {"start_date": "2026-02-01", "end_date": "2026-02-01"})
     assert read_back.structured_content["rows"][0]["steps"] == 6000
     assert read_back.structured_content["summary"]["days_with_data"] == 1
 
@@ -244,9 +242,7 @@ async def test_multi_step_session_stays_consistent_end_to_end(client):
     await client.call_tool("clear_metric", {"date": "2026-03-02", "field": "sleep_hours"})
     await client.call_tool("log_daily_metric", {"date": "2026-03-02", "sleep_hours": 8.0})
 
-    read_back = await client.call_tool(
-        "read_health_data", {"start_date": "2026-03-01", "end_date": "2026-03-02"}
-    )
+    read_back = await client.call_tool("read_health_data", {"start_date": "2026-03-01", "end_date": "2026-03-02"})
     rows = {row["date"]: row for row in read_back.structured_content["rows"]}
     assert rows["2026-03-01"]["steps"] == 4000
     assert rows["2026-03-02"]["steps"] == 9000  # untouched by the sleep_hours fix
@@ -378,9 +374,7 @@ async def test_log_and_read_workout_sessions_round_trip(client):
     assert session["activity_type"] == "running"
     assert session["intensity"] == "high"
 
-    read_back = await client.call_tool(
-        "read_workout_sessions", {"start_date": "2026-09-12", "end_date": "2026-09-12"}
-    )
+    read_back = await client.call_tool("read_workout_sessions", {"start_date": "2026-09-12", "end_date": "2026-09-12"})
     assert read_back.structured_content["count"] == 1
     assert read_back.structured_content["sessions"][0]["avg_heart_rate"] == 150
 
@@ -406,9 +400,7 @@ async def test_explain_metric_change_includes_workout_sessions_for_workout_minut
         },
     )
 
-    explanation = await client.call_tool(
-        "explain_metric_change", {"metric": "workout_minutes", "date": "2026-09-12"}
-    )
+    explanation = await client.call_tool("explain_metric_change", {"metric": "workout_minutes", "date": "2026-09-12"})
     result = explanation.structured_content
     assert result["sessions"][0]["activity_type"] == "running"
     assert any("running" in fact for fact in result["narrative_facts"])

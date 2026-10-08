@@ -133,9 +133,7 @@ async def test_high_correlation_with_very_few_pairs_is_not_overstated(client, he
     _seed(health_db, "steps", [1000, 2000, 3000, 4000, 5000])
     _seed(health_db, "water_ml", [1500, 2000, 2500, 3000, 3500])
     sc = (
-        await client.call_tool(
-            "find_metric_correlation", {"metric_a": "steps", "metric_b": "water_ml", **_window(5)}
-        )
+        await client.call_tool("find_metric_correlation", {"metric_a": "steps", "metric_b": "water_ml", **_window(5)})
     ).structured_content
     assert sc["r"] == 1.0 and sc["n"] == 5
     assert sc["claim"]["decision"]["tier"] == "insufficient"
@@ -146,9 +144,7 @@ async def test_correlation_with_a_constant_series_reports_no_relationship_estima
     _seed(health_db, "steps", _noisy(30))
     _seed(health_db, "water_ml", [2000] * 30)
     sc = (
-        await client.call_tool(
-            "find_metric_correlation", {"metric_a": "steps", "metric_b": "water_ml", **_window(30)}
-        )
+        await client.call_tool("find_metric_correlation", {"metric_a": "steps", "metric_b": "water_ml", **_window(30)})
     ).structured_content
     assert sc["r"] is None
     assert sc["claim"]["decision"]["tier"] == "insufficient"

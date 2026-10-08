@@ -238,9 +238,7 @@ def test_read_csv_canonical_name_wins_over_alias_when_both_present(tmp_path):
     """If a CSV happens to have both the canonical column and an alias
     column, the canonical one is used — aliases only fill in when the
     canonical name isn't present at all."""
-    csv_path = _write_csv(
-        tmp_path, ["date", "steps", "step_count"], [["2026-01-01", "8000", "9999"]]
-    )
+    csv_path = _write_csv(tmp_path, ["date", "steps", "step_count"], [["2026-01-01", "8000", "9999"]])
     rows, present_columns = _read_csv(csv_path)
     assert present_columns == ["steps"]
     assert rows[0]["steps"] == "8000"
@@ -249,9 +247,7 @@ def test_read_csv_canonical_name_wins_over_alias_when_both_present(tmp_path):
 def test_read_csv_column_map_overrides_alias(tmp_path):
     """An explicit --map for a column still wins even if the CSV also
     has a header that would otherwise match that column's alias list."""
-    csv_path = _write_csv(
-        tmp_path, ["date", "step_count", "Really Daily Steps"], [["2026-01-01", "1111", "8000"]]
-    )
+    csv_path = _write_csv(tmp_path, ["date", "step_count", "Really Daily Steps"], [["2026-01-01", "1111", "8000"]])
     rows, present_columns = _read_csv(csv_path, column_map={"steps": "Really Daily Steps"})
     assert present_columns == ["steps"]
     assert rows[0]["steps"] == "8000"
@@ -506,8 +502,17 @@ def test_cli_map_flag_imports_csv_with_custom_headers(tmp_path):
     db_path = tmp_path / "health.db"
     result = subprocess.run(
         [
-            sys.executable, str(REPO_ROOT / "init_db.py"), str(csv_path), "--db-path", str(db_path),
-            "--map", "date=Date", "--map", "steps=Daily Steps", "--map", "sleep_hours=Sleep Duration",
+            sys.executable,
+            str(REPO_ROOT / "init_db.py"),
+            str(csv_path),
+            "--db-path",
+            str(db_path),
+            "--map",
+            "date=Date",
+            "--map",
+            "steps=Daily Steps",
+            "--map",
+            "sleep_hours=Sleep Duration",
         ],
         capture_output=True,
         text=True,

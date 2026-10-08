@@ -41,7 +41,7 @@ class Gap(BaseModel):
 class Evidence(BaseModel):
     """Coverage/quality of the data a single-metric analytical result is
     based on. See evidence.build_evidence for how each field is computed.
-"""
+    """
 
     requested_start: str
     requested_end: str
@@ -303,7 +303,7 @@ class GetBaselineResult(BaseModel):
     range: DateRange
     baseline: BaselineStats
     claim: ClaimEvidence = Field(
-        description="Evidence and decision for the \"what's normal\" claim; read claim.decision before reporting it."
+        description='Evidence and decision for the "what\'s normal" claim; read claim.decision before reporting it.'
     )
     evidence: Evidence = Field(
         deprecated=True,
@@ -471,7 +471,7 @@ class ExplainMetricChangeResult(BaseModel):
     narrative_facts: list[str]
     baseline_claim: ClaimEvidence = Field(
         description=(
-            "Evidence and decision for the 90-day baseline statistics reported in \"baseline\" (and quoted in "
+            'Evidence and decision for the 90-day baseline statistics reported in "baseline" (and quoted in '
             "narrative_facts). Read baseline_claim.decision before stating what is typical for this metric; "
             "it is one of the components overall_decision is the weakest of."
         )

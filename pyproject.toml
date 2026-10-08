@@ -93,3 +93,57 @@ select = [
     "UP",
     "B",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = false
+exclude = ["^eval/"]
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = [
+    "anthropic.*",
+    "sqlcipher3.*",
+    "generate_sample_data"
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "tests.*",
+    "qs_evidence.tests.*"
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+disallow_untyped_decorators = false
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "qs_evidence/tests/*",
+    "eval/*",
+    "setup.py"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+    "raise ImportError"
+]

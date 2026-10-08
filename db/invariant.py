@@ -184,8 +184,7 @@ def set_source_priority(conn: sqlite3.Connection, metric: str, sources: list[str
     known = {r[0] for r in conn.execute("SELECT metric FROM aggregation_rules")}
     if metric != aggregation.GLOBAL_PRIORITY_SCOPE and metric not in known:
         raise ValueError(
-            f"unknown metric {metric!r}: use '{aggregation.GLOBAL_PRIORITY_SCOPE}' or one of "
-            f"{', '.join(sorted(known))}"
+            f"unknown metric {metric!r}: use '{aggregation.GLOBAL_PRIORITY_SCOPE}' or one of {', '.join(sorted(known))}"
         )
     if any(not isinstance(s, str) or not s for s in sources):
         raise ValueError("source names must be non-empty strings")

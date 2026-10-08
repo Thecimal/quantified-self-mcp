@@ -88,7 +88,7 @@ def _baseline_drift(baseline: Sequence[float | None], t: dict[str, Any]) -> floa
 
     Assumes `baseline` is in chronological order.
     """
-    vals = [float(v) for v in baseline if _finite(v)]
+    vals = [float(v) for v in baseline if _finite(v)]  # type: ignore
     if len(vals) < max(t["min_baseline_for_stability"], 4):
         return None
     h = len(vals) // 2
@@ -161,7 +161,7 @@ def evaluate_correlation(
     if len(x) != len(y):
         raise ValueError("x and y must be the same length")
     t = _merge(thresholds)
-    paired = [(float(a), float(b)) for a, b in zip(x, y, strict=True) if _finite(a) and _finite(b)]
+    paired = [(float(a), float(b)) for a, b in zip(x, y, strict=True) if _finite(a) and _finite(b)]  # type: ignore
     n_paired = len(paired)
     checks = [_at_least("n_paired", "n_paired_below_minimum", n_paired, t["min_n_paired"], True)]
     if n_paired >= 2:
@@ -202,7 +202,7 @@ def evaluate_anomaly(
     """
     t = _merge(thresholds)
     observed = [i for i, v in enumerate(baseline) if _finite(v)]
-    vals = [float(baseline[i]) for i in observed]
+    vals = [float(baseline[i]) for i in observed]  # type: ignore
     span = observed[-1] - observed[0] + 1 if observed else 0
     checks = [
         _at_least("baseline_days", "baseline_too_short", span, t["min_baseline_days"], True),
@@ -250,7 +250,7 @@ def evaluate_baseline(
     """
     t = _merge(thresholds)
     observed = [i for i, v in enumerate(values) if _finite(v)]
-    vals = [float(values[i]) for i in observed]
+    vals = [float(values[i]) for i in observed]  # type: ignore
     span = observed[-1] - observed[0] + 1 if observed else 0
     checks = [
         _at_least("baseline_days", "baseline_too_short", span, t["min_baseline_days"], True),

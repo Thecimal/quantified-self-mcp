@@ -241,8 +241,8 @@ def compute_source_coverage(
         for importer, status in conn.execute(
             "SELECT importer, status FROM imports WHERE id IN (SELECT MAX(id) FROM imports GROUP BY importer)"
         ):
-            latest_import_status[importer] = "succeeded" if status == "succeeded" else (
-                "failed" if status == "failed" else "interrupted"
+            latest_import_status[importer] = (
+                "succeeded" if status == "succeeded" else ("failed" if status == "failed" else "interrupted")
             )
 
     # --- metric level: the daily_metrics projection analytics actually reads --------------------------------

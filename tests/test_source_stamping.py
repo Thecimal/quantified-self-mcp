@@ -128,9 +128,7 @@ def _legacy_database(tmp_path):
             "INSERT INTO measurements (timestamp, metric, value, importer, imported_at) VALUES (?, ?, ?, ?, ?)",
             (f"{DAY}T12:00:00", metric, value, importer, "2026-09-01T08:00:00"),
         )
-    conn.execute(
-        "INSERT INTO measurements (timestamp, metric, value) VALUES (?, 'mood', 7)", (f"{DAY}T09:00:00",)
-    )
+    conn.execute("INSERT INTO measurements (timestamp, metric, value) VALUES (?, 'mood', 7)", (f"{DAY}T09:00:00",))
     conn.commit()
     invariant.install_triggers(conn)
     invariant.repair(conn)

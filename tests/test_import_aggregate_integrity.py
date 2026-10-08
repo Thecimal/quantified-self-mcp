@@ -72,10 +72,10 @@ def _assert_projection_clean(db: Path):
 
 def test_pound_body_mass_is_projected_as_kilograms(tmp_path):
     db = _load(_apple(tmp_path, _rec("BodyMass", "154", "lb", "2026-01-06 08:00:00")), tmp_path)
-    (metric, value, unit), = _rows(db, "SELECT metric, value, unit FROM measurements")
+    ((metric, value, unit),) = _rows(db, "SELECT metric, value, unit FROM measurements")
     assert (metric, unit) == ("weight_kg", "kg")
     assert value == pytest.approx(154 * 0.45359237)
-    (_, daily), = _rows(db, "SELECT date, value FROM daily_metrics WHERE metric = 'weight_kg'")
+    ((_, daily),) = _rows(db, "SELECT date, value FROM daily_metrics WHERE metric = 'weight_kg'")
     assert daily == pytest.approx(69.85, abs=0.01)
     _assert_projection_clean(db)
 

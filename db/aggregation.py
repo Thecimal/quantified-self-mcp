@@ -93,9 +93,7 @@ def _winner_sql(metric_sql: str, date_sql: str) -> str:
     data for the key, and the winner's priority rank (NULL when unranked). Yields
     no row at all when the key has no measurements."""
     rank = _priority_rank_sql(metric_sql, "m.source")
-    order_by = _winner_order_by(
-        rank, "COUNT(DISTINCT strftime('%H', m.timestamp))", "MAX(m.timestamp)", "m.source"
-    )
+    order_by = _winner_order_by(rank, "COUNT(DISTINCT strftime('%H', m.timestamp))", "MAX(m.timestamp)", "m.source")
     return f"""SELECT m.source AS src, COUNT(*) OVER () AS n_sources, {rank} AS rnk
         FROM measurements m
         WHERE m.metric = {metric_sql} AND date(m.timestamp) = {date_sql}
@@ -107,8 +105,7 @@ def _winner_sql(metric_sql: str, date_sql: str) -> str:
 def _resolution_case_sql(n_sources_sql: str, rank_sql: str) -> str:
     """daily_metrics.resolution for a resolved key."""
     return (
-        f"CASE WHEN {n_sources_sql} = 1 THEN 'single' "
-        f"WHEN {rank_sql} IS NOT NULL THEN 'priority' ELSE 'fallback' END"
+        f"CASE WHEN {n_sources_sql} = 1 THEN 'single' WHEN {rank_sql} IS NOT NULL THEN 'priority' ELSE 'fallback' END"
     )
 
 

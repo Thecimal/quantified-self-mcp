@@ -172,7 +172,6 @@ def test_episodic_metrics_are_not_penalised_for_expected_gaps(tmp_path):
     assert _domain(report, "body_measurements")["classification"] == "green"
 
 
-
 def test_episodic_metric_goes_stale_after_its_own_threshold(tmp_path):
     conn = _conn(tmp_path)
     _add(conn, "weight_kg", [40, 47, 54, 61, 68], importer="csv")

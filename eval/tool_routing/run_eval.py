@@ -45,8 +45,7 @@ try:
     from mcp.client.stdio import stdio_client
 except ImportError:
     print(
-        "Missing dependency 'mcp'. Install with:\n"
-        "  pip install -r eval/tool_routing/requirements-eval.txt",
+        "Missing dependency 'mcp'. Install with:\n  pip install -r eval/tool_routing/requirements-eval.txt",
         file=sys.stderr,
     )
     raise
@@ -55,8 +54,7 @@ try:
     import anthropic
 except ImportError:
     print(
-        "Missing dependency 'anthropic'. Install with:\n"
-        "  pip install -r eval/tool_routing/requirements-eval.txt",
+        "Missing dependency 'anthropic'. Install with:\n  pip install -r eval/tool_routing/requirements-eval.txt",
         file=sys.stderr,
     )
     raise
@@ -211,10 +209,7 @@ def print_report(verdicts: list[Verdict]) -> None:
         total_pass += p
         print(f"{cat:<24}{n:>4}{p:>6}{p / n * 100:>7.0f}%")
     print("-" * len(header))
-    print(
-        f"{'TOTAL':<24}{total_n:>4}{total_pass:>6}"
-        f"{(total_pass / total_n * 100 if total_n else 0):>7.0f}%"
-    )
+    print(f"{'TOTAL':<24}{total_n:>4}{total_pass:>6}{(total_pass / total_n * 100 if total_n else 0):>7.0f}%")
 
     print("\n--- Failures (wrong / no_tool / multi_tool_wrong) ---")
     failures = [v for v in verdicts if v.verdict not in good]
@@ -253,8 +248,7 @@ def main() -> None:
     ap.add_argument(
         "--server-cmd",
         required=True,
-        help="Command to launch the MCP server over stdio, "
-        'e.g. "quantified-self-mcp" (the console-script entry point)',
+        help='Command to launch the MCP server over stdio, e.g. "quantified-self-mcp" (the console-script entry point)',
     )
     ap.add_argument(
         "--prompts",
@@ -263,17 +257,12 @@ def main() -> None:
     )
     ap.add_argument("--out", default="results.json", help="Where to write JSON results")
     ap.add_argument("--model", default=DEFAULT_MODEL, help="Anthropic model id to test")
-    ap.add_argument(
-        "--limit", type=int, default=None, help="Only run the first N prompts"
-    )
-    ap.add_argument(
-        "--category", default=None, help="Only run prompts in this category"
-    )
+    ap.add_argument("--limit", type=int, default=None, help="Only run the first N prompts")
+    ap.add_argument("--category", default=None, help="Only run prompts in this category")
     ap.add_argument(
         "--dump-tools",
         action="store_true",
-        help="List the live server's tools (name + description) and exit. "
-        "Use this to fix tool names in prompts.yaml.",
+        help="List the live server's tools (name + description) and exit. Use this to fix tool names in prompts.yaml.",
     )
     args = ap.parse_args()
 

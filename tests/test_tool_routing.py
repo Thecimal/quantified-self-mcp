@@ -68,7 +68,6 @@ ROUTING_CASES = [
     ("Does my sleep affect my mood?", "find_metric_correlation", "clean"),
     ("What's changed in my health data over the last week?", "get_recent_changes", "clean"),
     ("Why was my HRV so low on March 3rd?", "explain_metric_change", "clean"),
-
     # --- boundary: read_health_data vs read_measurements vs get_metric_history ---
     ("Show me my HRV.", "get_metric_history", "boundary"),
     ("What health data do I have recorded?", "read_health_data", "boundary"),
@@ -77,22 +76,18 @@ ROUTING_CASES = [
         "get_metric_provenance",
         "boundary",
     ),
-
     # --- boundary: read_workout_sessions vs read_health_data (workout_minutes) ---
     ("How many total workout minutes did I log this week?", "read_health_data", "boundary"),
     ("What kind of workouts have I been doing — running, cycling, strength?", "read_workout_sessions", "boundary"),
-
     # --- boundary: the five Layer-2 analytics tools vs each other ---
     ("What's normal for my resting heart rate?", "get_baseline", "boundary"),
     ("Is my weight trending down?", "calculate_metric_trend", "boundary"),
     ("Was there anything unusual about my sleep last month?", "detect_metric_anomalies", "boundary"),
     ("Compare my average steps this month to last month.", "compare_metric_periods", "boundary"),
     ("Did my HRV change after I increased my workouts?", "find_metric_correlation", "boundary"),
-
     # --- boundary: analytics vs the composite intelligence tools ---
     ("Give me everything relevant to why my sleep tanked on the 5th.", "explain_metric_change", "boundary"),
     ("How have I been doing overall lately?", "get_recent_changes", "boundary"),
-
     # --- write vs read, same metric ---
     ("What's my current logged weight?", "get_metric_history", "write"),
     ("Set today's water intake to 2000 ml.", "log_daily_metric", "write"),
@@ -157,7 +152,7 @@ def _call_anthropic(prompt: str, tools: list[dict]) -> str:
         },
         method="POST",
     )
-    try:
+    try:  # type: ignore
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
@@ -172,6 +167,4 @@ def _call_anthropic(prompt: str, tools: list[dict]) -> str:
 @pytest.mark.parametrize("prompt,expected_tool,tier", ROUTING_CASES, ids=[c[0] for c in ROUTING_CASES])
 async def test_prompt_routes_to_expected_tool(anthropic_tool_schemas, prompt, expected_tool, tier):
     selected = _call_anthropic(prompt, anthropic_tool_schemas)
-    assert selected == expected_tool, (
-        f"[{tier}] {prompt!r} -> expected {expected_tool!r}, model picked {selected!r}"
-    )
+    assert selected == expected_tool, f"[{tier}] {prompt!r} -> expected {expected_tool!r}, model picked {selected!r}"

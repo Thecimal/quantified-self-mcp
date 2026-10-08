@@ -8,7 +8,7 @@ global/helper each referenced is now a closure-bound parameter of
 register_workout_tools instead of a module-level name: HEALTH_DB_PATH
 -> db_path. logger is passed through under its original name.
 read_workout_sessions uses connect_writable, not a readonly_connection
-helper, despite its readOnlyHint=True annotation — pre-existing
+helper, despite its read_only_hint=True annotation — pre-existing
 behavior, unchanged by this move. See server.py for the call that
 wires these back in.
 """
@@ -66,10 +66,10 @@ def register_workout_tools(
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Log a workout session",
-            readOnlyHint=False,
-            destructiveHint=False,  # always inserts a new row, never overwrites one
-            idempotentHint=False,  # calling it twice logs two sessions, not one
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=False,  # always inserts a new row, never overwrites one
+            idempotent_hint=False,  # calling it twice logs two sessions, not one
+            open_world_hint=False,
         )
     )
     def log_workout_session(
@@ -169,10 +169,10 @@ def register_workout_tools(
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Read workout sessions",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def read_workout_sessions(

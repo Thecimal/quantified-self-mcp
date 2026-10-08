@@ -325,11 +325,11 @@ def _fetch_metric_series(metric: str, start: date_type, end: date_type) -> list[
 
 
 def _baseline_stats(series: list[Point]) -> BaselineStats:
-    return BaselineStats(**compute_baseline(series))
+    return BaselineStats.model_validate(compute_baseline(series))
 
 
 def _trend_stats(series: list[Point]) -> TrendStats:
-    return TrendStats(**calculate_trend(series))
+    return TrendStats.model_validate(calculate_trend(series))
 
 
 def _data_health(evidence: Evidence | Sequence[Evidence], decision: ClaimDecision | None = None) -> DataHealth:
@@ -396,11 +396,11 @@ def _migrated_claim_fields_comparative(assessment: Assessment, evidence_a: Evide
 #
 # Annotation conventions (all four hints are set explicitly on every tool;
 # tests/test_mcp_client_integration.py pins the exact values over the wire):
-#   - readOnlyHint: True only if the tool never writes health data or files.
-#   - destructiveHint: True if a call can overwrite or remove existing state
+#   - read_only_hint: True only if the tool never writes health data or files.
+#   - destructive_hint: True if a call can overwrite or remove existing state
 #     (a replaced value or file counts, not only a deleted row).
-#   - idempotentHint: True if repeating the same call leaves the same state.
-#   - openWorldHint: always False; everything is local SQLite + local disk.
+#   - idempotent_hint: True if repeating the same call leaves the same state.
+#   - open_world_hint: always False; everything is local SQLite + local disk.
 # Read-only tools may still trigger _ensure_db / ensure_schema first (creating
 # an empty database on first run, applying pending migrations, reinstalling
 # triggers). That is idempotent schema housekeeping that never changes
@@ -475,10 +475,10 @@ get_data_status, get_import_status = register_status_tools(
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Get metric history",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 )
 def get_metric_history(
@@ -539,10 +539,10 @@ def get_metric_history(
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Get metric baseline",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 )
 def get_baseline(metric: str, start_date: str | None = None, end_date: str | None = None) -> GetBaselineResult:
@@ -613,10 +613,10 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Detect metric anomalies",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 )
 def detect_metric_anomalies(
@@ -697,10 +697,10 @@ def detect_metric_anomalies(
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Calculate metric trend",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 )
 def calculate_metric_trend(
@@ -772,10 +772,10 @@ def calculate_metric_trend(
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Compare two periods",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 )
 def compare_metric_periods(
@@ -870,10 +870,10 @@ def compare_metric_periods(
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Find correlation between two metrics",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 )
 def find_metric_correlation(
@@ -977,10 +977,10 @@ def find_metric_correlation(
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Get recent changes",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 )
 def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
@@ -1092,7 +1092,7 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                         f"modified z-score {anomaly['modified_z_score']})."
                     ),
                     evidence=metric_evidence,
-                    claim=_claim_evidence(anomaly_claim, metric_evidence),
+                    claim=_claim_evidence(anomaly_claim, metric_evidence),  # type: ignore
                 )
             )
 
@@ -1121,10 +1121,10 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Explain a metric change",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 )
 def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
@@ -1247,8 +1247,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         facts.append(f"{metric} on {date} was {value}.")
     if stats["mean"] is not None:
         facts.append(
-            f"Over the preceding 90 days, {metric} averaged {stats['mean']} "
-            f"(median {stats['median']}, n={stats['n']})."
+            f"Over the preceding 90 days, {metric} averaged {stats['mean']} (median {stats['median']}, n={stats['n']})."
         )
     if matching_anomaly:
         facts.append(
@@ -1257,8 +1256,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         )
     if trend["direction"] not in ("flat", "insufficient_data"):
         facts.append(
-            f"{metric} had been {trend['direction']} over the 30 days leading up to {date} "
-            f"(r²={trend['r_squared']})."
+            f"{metric} had been {trend['direction']} over the 30 days leading up to {date} (r²={trend['r_squared']})."
         )
     for c in correlated:
         facts.append(f"{c.metric_b} correlates with {metric} over this window (r={c.r}, n={c.n}).")
@@ -1317,12 +1315,8 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     baseline_claim = _claim_evidence(
         baseline_assessment, Evidence(**build_evidence(series, baseline_start, target_day))
     )
-    headline_claim = _claim_evidence(
-        anomaly_assessment, Evidence(**build_evidence(series, baseline_start, target_day))
-    )
-    trend_claim = _claim_evidence(
-        trend_assessment, Evidence(**build_evidence(trend_series, trend_start, target_day))
-    )
+    headline_claim = _claim_evidence(anomaly_assessment, Evidence(**build_evidence(series, baseline_start, target_day)))
+    trend_claim = _claim_evidence(trend_assessment, Evidence(**build_evidence(trend_series, trend_start, target_day)))
     return ExplainMetricChangeResult(
         metric=metric,
         date=date,
@@ -1334,7 +1328,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         trend=_trend_stats(trend_series),
         correlated_metrics=correlated,
         sessions=sessions,
-        narrative_facts=facts,
+        narrative_facts=facts,  # type: ignore
         baseline_claim=baseline_claim,
         headline_claim=headline_claim,
         trend_claim=trend_claim,
