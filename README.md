@@ -1,8 +1,12 @@
 
 # Quantified Self MCP
 [![CI](https://github.com/Thecimal/quantified-self-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Thecimal/quantified-self-mcp/actions)
+[![CodeQL](https://github.com/Thecimal/quantified-self-mcp/actions/workflows/codeql.yml/badge.svg)](https://github.com/Thecimal/quantified-self-mcp/actions/workflows/codeql.yml)
 [![PyPI](https://img.shields.io/pypi/v/quantified-self-mcp.svg)](https://pypi.org/project/quantified-self-mcp/)
+[![Python Versions](https://img.shields.io/pypi/pyversions/quantified-self-mcp.svg)](https://pypi.org/project/quantified-self-mcp/)
 [![License](https://img.shields.io/github/license/Thecimal/quantified-self-mcp)](https://github.com/Thecimal/quantified-self-mcp/blob/main/LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 [![M8ven Score](https://m8ven.ai/badge/mcp/thecimal-quantified-self-mcp-v6tlvp)](https://m8ven.ai/mcp/thecimal-quantified-self-mcp-v6tlvp)
 [![Quantified Self MCP Server MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/score.svg)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
 
