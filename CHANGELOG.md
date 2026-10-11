@@ -77,6 +77,14 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **Analytics no longer present a source change as a health change.** `daily_metrics` keeps one source
+  per (metric, day), but a baseline, trend, anomaly scan, comparison or correlation read it as one
+  anonymous series, so a device switch inside a window, a different device in each compared window,
+  or two devices disagreeing with no `source_priority` all came back `data_health: VALID`. They now
+  report the new status `MIXED_SOURCES` with the reasons `source_changed_within_window`,
+  `source_changed_between_windows` or `unranked_source_conflict_in_window`. A day settled by an
+  explicit `source_priority` entry is a documented rule and is not flagged. The numbers themselves
+  are unchanged.
 - **Wheel packaging and Dockerfile runtime dependencies.** The build wheel include list in
   `pyproject.toml` and `COPY` in `Dockerfile` previously omitted `tools/`, `db/`, `data_health.py`,
   `errors.py`, `privacy.py`, `schemas.py`, and `source_coverage.py`, causing `ModuleNotFoundError`

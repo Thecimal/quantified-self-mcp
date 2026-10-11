@@ -137,6 +137,7 @@ def test_every_status_the_function_can_return_is_in_the_documented_vocabulary():
         compose_data_health(_evidence(observed_days=0), _dataset())["status"],
         compose_data_health(_evidence(freshness_days=9), _dataset())["status"],
         compose_data_health(_evidence(), _dataset("IMPORT_FAILED", "import_failed"))["status"],
+        compose_data_health(_evidence(), _dataset(), source_issues=["source_changed_within_window"])["status"],
     }
     assert outcomes == set(STATUSES)
 

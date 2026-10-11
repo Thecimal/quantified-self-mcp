@@ -17,6 +17,9 @@ status is the first match):
                      already rates the data tier "insufficient"
   STALE              the latest observation trails the end of the window by
                      more than stale_after_days
+  MIXED_SOURCES      the number rests on more than one source: the winning source changes
+                     inside the window or between the windows compared, or several sources
+                     disagreed on a day with no source_priority to settle it
   VALID_WITH_GAPS    days inside the window have no observation
   VALID              none of the above
 """
@@ -28,10 +31,10 @@ from typing import Any
 
 DEFAULT_STALE_AFTER_DAYS = 2
 
-STATUSES = ("VALID", "VALID_WITH_GAPS", "INSUFFICIENT_DATA", "STALE", "IMPORT_INCOMPLETE")
+STATUSES = ("VALID", "VALID_WITH_GAPS", "MIXED_SOURCES", "INSUFFICIENT_DATA", "STALE", "IMPORT_INCOMPLETE")
 
 # Most severe first: used to pick the weakest window when a result rests on several.
-SEVERITY_ORDER = ("IMPORT_INCOMPLETE", "INSUFFICIENT_DATA", "STALE", "VALID_WITH_GAPS", "VALID")
+SEVERITY_ORDER = ("IMPORT_INCOMPLETE", "INSUFFICIENT_DATA", "STALE", "MIXED_SOURCES", "VALID_WITH_GAPS", "VALID")
 
 
 def compose_data_health(
@@ -40,6 +43,7 @@ def compose_data_health(
     *,
     decision_tier: str | None = None,
     must_state: Sequence[str] = (),
+    source_issues: Sequence[str] = (),
     stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
 ) -> dict[str, Any]:
     """Build the data-health dict for one result.
@@ -48,7 +52,9 @@ def compose_data_health(
     `dataset` is a logic.compute_data_status dict, or None if it could not be
     read (reported as the reason dataset_status_unavailable; the status is
     then decided from the evidence alone). `decision_tier` and `must_state`
-    come from the claim decision when the result carries one.
+    come from the claim decision when the result carries one. `source_issues` are reason codes for a
+    window that mixes sources (see server._data_health); any of them makes the status MIXED_SOURCES
+    unless a more severe status applies.
     """
     latest_import = dataset.get("latest_import") if dataset else None
 
@@ -64,6 +70,7 @@ def compose_data_health(
     freshness_days = evidence["freshness_days"]
     if freshness_days is not None and freshness_days > stale_after_days:
         reasons.append("latest_observation_older_than_threshold")
+    reasons.extend(issue for issue in source_issues if issue not in reasons)
     if evidence["gaps"]:
         reasons.append("gaps_in_window")
     if dataset is None:
@@ -75,6 +82,8 @@ def compose_data_health(
         status = "INSUFFICIENT_DATA"
     elif freshness_days is not None and freshness_days > stale_after_days:
         status = "STALE"
+    elif source_issues:
+        status = "MIXED_SOURCES"
     elif evidence["gaps"]:
         status = "VALID_WITH_GAPS"
     else:

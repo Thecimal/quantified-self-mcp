@@ -1483,6 +1483,20 @@ def count_source_conflicts(conn: sqlite3.Connection, metric: str, start: date, e
     return conflicting_days
 
 
+def projected_source_summary(conn: sqlite3.Connection, metric: str, start: date, end: date) -> dict[str, Any]:
+    """Which sources the daily_metrics projection used for `metric` over [start, end], read from the
+    projection itself: `sources` is the sorted distinct resolved_source (None shown as "(unattributed)"),
+    and `unranked_conflict_days` counts days where several sources had data and none was ranked in
+    source_priority, so the winner was an arbitrary tie-break ('fallback'). A day settled by an explicit
+    source_priority entry is a documented rule and is not counted. Read-only."""
+    rows = conn.execute(
+        "SELECT resolved_source, resolution FROM daily_metrics WHERE metric = ? AND date >= ? AND date <= ?",
+        (metric, start.isoformat(), end.isoformat()),
+    ).fetchall()
+    sources = sorted({row[0] if row[0] is not None else "(unattributed)" for row in rows})
+    return {"sources": sources, "unranked_conflict_days": sum(1 for row in rows if row[1] == "fallback")}
+
+
 # Sanity bounds for each metric: (min, max, human label used in error messages).
 # Deliberately generous — meant to catch obvious mistakes (unit confusion,
 # a slipped decimal point, a fat-fingered extra digit) rather than to police

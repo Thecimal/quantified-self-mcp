@@ -90,6 +90,7 @@ from logic import (
     default_data_dir,
     ensure_schema,
     parse_date,
+    projected_source_summary,
     query_workout_sessions,
     resolve_range,
     row_class,
@@ -332,25 +333,56 @@ def _trend_stats(series: list[Point]) -> TrendStats:
     return TrendStats.model_validate(calculate_trend(series))
 
 
-def _data_health(evidence: Evidence | Sequence[Evidence], decision: ClaimDecision | None = None) -> DataHealth:
+def _data_health(
+    evidence: Evidence | Sequence[Evidence],
+    decision: ClaimDecision | None = None,
+    metric: str | Sequence[str] | None = None,
+) -> DataHealth:
     """Data-quality state behind one analytical result (see data_health.py): each window's evidence combined
     with the dataset-level status, and the weakest window reported when a result rests on several. If the
-    dataset status cannot be read, the result is still returned and says so in its reasons."""
+    dataset status cannot be read, the result is still returned and says so in its reasons.
+
+    `metric` (one name for every window, or one per window) turns on the source check: a window whose
+    projected source changes inside it, whose winner was an unranked tie-break, or (for one metric over
+    several windows) whose source differs from another window's, is reported as MIXED_SOURCES rather
+    than presented as one anonymous series."""
     evidences = [evidence] if isinstance(evidence, Evidence) else list(evidence)
     dataset = None
+    summaries: list[dict] = []
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
             dataset = compute_data_status(conn, date_type.today(), exclude_metrics=PRIVATE_FIELDS)
+            if metric is not None:
+                names = [metric] * len(evidences) if isinstance(metric, str) else list(metric)
+                summaries = [
+                    projected_source_summary(
+                        conn, name, date_type.fromisoformat(e.requested_start), date_type.fromisoformat(e.requested_end)
+                    )
+                    for e, name in zip(evidences, names, strict=True)
+                ]
     except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
     claim = decision.to_mcp() if decision is not None else {}
+    issues: list[list[str]] = [[] for _ in evidences]
+    for found, summary in zip(issues, summaries, strict=False):  # summaries is empty when the check is off
+        if summary["unranked_conflict_days"]:
+            found.append("unranked_source_conflict_in_window")
+        if len(summary["sources"]) > 1:
+            found.append("source_changed_within_window")
+    if isinstance(metric, str) and len({tuple(s["sources"]) for s in summaries if s["sources"]}) > 1:
+        for found in issues:
+            found.append("source_changed_between_windows")
     return DataHealth(
         **merge_data_health(
             [
                 compose_data_health(
-                    e.model_dump(), dataset, decision_tier=claim.get("tier"), must_state=claim.get("must_state", ())
+                    e.model_dump(),
+                    dataset,
+                    decision_tier=claim.get("tier"),
+                    must_state=claim.get("must_state", ()),
+                    source_issues=found,
                 )
-                for e in evidences
+                for e, found in zip(evidences, issues, strict=True)
             ]
         )
     )
@@ -532,7 +564,7 @@ def get_metric_history(
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
         points=[MetricSeriesPoint(date=p.day.isoformat(), value=p.value) for p in series],
         evidence=evidence,
-        data_health=_data_health(evidence),
+        data_health=_data_health(evidence, metric=metric),
     )
 
 
@@ -606,7 +638,7 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
         baseline=stats,
         claim=_claim_evidence(assessment, evidence),
         evidence=evidence,
-        data_health=_data_health(evidence, assessment.decision),
+        data_health=_data_health(evidence, assessment.decision, metric=metric),
     )
 
 
@@ -690,7 +722,7 @@ def detect_metric_anomalies(
         anomalies=[AnomalyPoint(**a) for a in anomalies],
         evidence=evidence,
         claim=_claim_evidence(assessment, evidence),
-        data_health=_data_health(evidence, assessment.decision),
+        data_health=_data_health(evidence, assessment.decision, metric=metric),
     )
 
 
@@ -765,7 +797,7 @@ def calculate_metric_trend(
         trend=trend,
         evidence=evidence,
         claim=_claim_evidence(assessment, evidence),
-        data_health=_data_health(evidence, assessment.decision),
+        data_health=_data_health(evidence, assessment.decision, metric=metric),
     )
 
 
@@ -863,7 +895,7 @@ def compare_metric_periods(
         claim=claim,
         period_a_evidence=claim.evidence_a,
         period_b_evidence=claim.evidence_b,
-        data_health=_data_health([claim.evidence_a, claim.evidence_b], assessment.decision),
+        data_health=_data_health([claim.evidence_a, claim.evidence_b], assessment.decision, metric=metric),
     )
 
 
@@ -953,7 +985,7 @@ def find_metric_correlation(
         metric_b=metric_b,
         **result,
         **_migrated_claim_fields_comparative(assessment, evidence_a, evidence_b),
-        data_health=_data_health([evidence_a, evidence_b], assessment.decision),
+        data_health=_data_health([evidence_a, evidence_b], assessment.decision, metric=[metric_a, metric_b]),
     )
 
 
@@ -1334,7 +1366,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         trend_claim=trend_claim,
         conflicting_days=conflicting_days,
         overall_decision=ClaimDecisionOut(**overall_decision.to_mcp()),
-        data_health=_data_health([baseline_claim.evidence, trend_claim.evidence], overall_decision),
+        data_health=_data_health([baseline_claim.evidence, trend_claim.evidence], overall_decision, metric=metric),
     )
 
 

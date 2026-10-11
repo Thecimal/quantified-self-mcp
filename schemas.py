@@ -204,7 +204,8 @@ class DataHealthImport(BaseModel):
 
 class DataHealth(BaseModel):
     """Data-quality state behind one result (not a medical or statistical confidence score). status is one of
-    VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE, IMPORT_INCOMPLETE; reasons lists every condition that
+    VALID, VALID_WITH_GAPS, MIXED_SOURCES, INSUFFICIENT_DATA, STALE, IMPORT_INCOMPLETE; reasons lists every
+    condition that
     applies. See data_health.compose_data_health for how it is decided."""
 
     status: str
