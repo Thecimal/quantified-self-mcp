@@ -1181,6 +1181,17 @@ def insert_measurement(
     return cursor.lastrowid
 
 
+def _day_after(end: str) -> str | None:
+    """The day after `end` as YYYY-MM-DD when `end` is a plain date, else None (a full timestamp, or text that
+    is not a date, is left for the caller to compare as it always has)."""
+    if len(end) != 10:
+        return None
+    try:
+        return (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+    except (ValueError, OverflowError):
+        return None
+
+
 def query_measurements(
     conn: sqlite3.Connection,
     metric: str | None = None,  # type: ignore
@@ -1191,7 +1202,9 @@ def query_measurements(
 ) -> list[dict[str, Any]]:
     """Return raw measurement rows matching the given filters, most recent
     first. start/end compare against `timestamp` lexicographically, so
-    both plain dates (YYYY-MM-DD) and full ISO timestamps work. All
+    both plain dates (YYYY-MM-DD) and full ISO timestamps work; a plain-date
+    end includes every reading on that day (a bare date sorts before any
+    timestamp on it, so it is compared as the start of the next day). All
     filters are optional; omitting them all returns the most recent
     `limit` measurements across every metric.
     """
@@ -1203,8 +1216,13 @@ def query_measurements(
         clauses.append("timestamp >= :start")
         params["start"] = start
     if end is not None:
-        clauses.append("timestamp <= :end")
-        params["end"] = end
+        next_day = _day_after(end)
+        if next_day is None:
+            clauses.append("timestamp <= :end")
+            params["end"] = end
+        else:
+            clauses.append("timestamp < :end")
+            params["end"] = next_day
     if source is not None:
         clauses.append("source = :source")
         params["source"] = source

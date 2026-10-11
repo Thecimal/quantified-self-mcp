@@ -8,12 +8,9 @@ the whole body of get_metric_provenance). Each test pins down observable
 behavior -- stored data, returned values, error codes -- rather than just
 executing lines.
 
-One test is a strict xfail. It asserts the behavior the docs and the
-sibling tools promise, and it currently fails because of a real defect found
-during the audit (end_date excluding same-day timestamped rows). strict=True
-means the suite goes red the moment a fix lands, forcing the marker to be
-removed deliberately. (The private-field leakage and value-validation xfails
-were promoted to regular regression tests once fixed.)
+Every defect the audit found (private-field leakage, value validation, and end_date
+excluding same-day timestamped rows) has been fixed and its test promoted to a
+regular regression test.
 """
 
 import sqlite3
@@ -234,12 +231,6 @@ def test_read_measurements_read_failure_reports_database_error(srv, monkeypatch)
     assert log.errors
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DEFECT: end_date compares lexicographically against full ISO timestamps, so "
-    "'2026-01-10T08:00:00' > '2026-01-10' and rows on end_date itself are dropped, "
-    "contradicting the docstring ('on/before this date').",
-)
 def test_read_measurements_end_date_includes_that_whole_day(seeded):
     got = [m.value for m in seeded.read_measurements(metric="steps", end_date="2026-01-11").measurements]
     assert got == [200, 100]
@@ -316,11 +307,6 @@ def test_provenance_read_failure_reports_database_error(srv, monkeypatch):
     with pytest.raises(ToolError, match=r"\[database_error\]"):
         get_metric_provenance(metric="steps", date="2026-01-10")
     assert log.errors
-
-
-# --------------------------------------------------------------------------
-# Known defects found by the audit (strict xfail -- see module docstring)
-# --------------------------------------------------------------------------
 
 
 # --------------------------------------------------------------------------
