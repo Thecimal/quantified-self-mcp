@@ -22,6 +22,7 @@ from errors import (
     ERR_INVALID_DATE,
     ERR_INVALID_DURATION,
     ERR_INVALID_INTENSITY,
+    ERR_INVALID_RANGE,
     _is_locked_error,
     _tool_error,
 )
@@ -34,6 +35,7 @@ from logic import (
     parse_date,
     query_workout_sessions,
     row_class,
+    validate_read_window,
 )
 from schemas import (
     LogWorkoutSessionResult,
@@ -205,11 +207,15 @@ def register_workout_tools(
             start_date: Only return sessions on/after this date (YYYY-MM-DD). Omit for no lower bound.
             end_date: Only return sessions on/before this date (YYYY-MM-DD). Omit for no upper bound.
             activity_type: Only return sessions of this activity type. Omit for all types.
-            limit: Maximum rows to return (default 200).
+            limit: Maximum rows to return, 1 to 1000 (default 200).
 
         Returns:
             A ReadWorkoutSessionsResult with the matching rows and a count.
         """
+        try:
+            start_date, end_date = validate_read_window(start_date, end_date, limit)
+        except ValueError as exc:
+            raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
         try:
             conn = connect_writable(db_path)
             try:

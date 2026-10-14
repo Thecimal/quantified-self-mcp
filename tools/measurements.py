@@ -21,6 +21,7 @@ from errors import (
     ERR_INVALID_FIELD,
     ERR_INVALID_METRIC,
     ERR_INVALID_METRIC_VALUE,
+    ERR_INVALID_RANGE,
     ERR_INVALID_TIMESTAMP,
     _is_locked_error,
     _tool_error,
@@ -37,6 +38,7 @@ from logic import (
     query_measurements,
     row_class,
     validate_metrics,
+    validate_read_window,
 )
 from logic import (
     get_metric_provenance as _get_metric_provenance,
@@ -252,13 +254,17 @@ def register_measurement_tools(
             start_date: Only return rows on/after this date (YYYY-MM-DD). Omit for no lower bound.
             end_date: Only return rows on/before this date (YYYY-MM-DD). Omit for no upper bound.
             source: Only return rows from this source, e.g. "Apple Watch". Omit for all sources.
-            limit: Maximum rows to return (default 200).
+            limit: Maximum rows to return, 1 to 1000 (default 200).
 
         Returns:
             A ReadMeasurementsResult with the matching rows and a count.
         """
         if metric is not None:
             _refuse_private_metric(metric)
+        try:
+            start_date, end_date = validate_read_window(start_date, end_date, limit, allow_timestamps=True)
+        except ValueError as exc:
+            raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
         try:
             conn = connect_writable(db_path)
             try:

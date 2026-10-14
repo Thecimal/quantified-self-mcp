@@ -829,6 +829,29 @@ def bulk_import_measurements(
     return import_measurements(conn, importer, rows, replace)["verify"]
 
 
+# Deleting one importer's rows for one (metric, day). `substr(timestamp, 1, 10) = :day` alone matches no index, so
+# SQLite scanned every row of the metric once per stale key: a re-import that changed a few hundred days of a
+# million-row database spent over 70% of its time here. The timestamp range lets idx_measurements_metric_timestamp
+# seek straight to the day; the original predicate stays as an exact filter, so the rows deleted are unchanged.
+_PURGE_STALE_DAY_SQL = (
+    "DELETE FROM measurements "
+    "WHERE importer = :importer AND metric = :metric "
+    "AND timestamp >= :day AND timestamp < :upper AND substr(timestamp, 1, 10) = :day"
+)
+_PURGE_STALE_DAY_UNBOUNDED_SQL = (
+    "DELETE FROM measurements WHERE importer = :importer AND metric = :metric AND substr(timestamp, 1, 10) = :day"
+)
+
+
+def _prefix_upper_bound(day: str) -> str | None:
+    """The smallest string above every string that starts with `day`: `day` with its last character incremented.
+    None when there is no safe one (an empty key, or a last character too high to increment as UTF-8 text);
+    the caller then uses the unbounded statement."""
+    if not day or ord(day[-1]) >= 0xD000:
+        return None
+    return day[:-1] + chr(ord(day[-1]) + 1)
+
+
 def import_measurements(
     conn: sqlite3.Connection, importer: str, rows: list[dict[str, Any]], replace: bool = False
 ) -> dict[str, Any]:
@@ -898,10 +921,14 @@ def import_measurements(
     stale_keys = replaced_keys | dropped_keys
 
     def purge_stale(c: sqlite3.Connection) -> None:
+        keys = [(metric, day, _prefix_upper_bound(day)) for metric, day in sorted(stale_keys)]
         c.executemany(
-            "DELETE FROM measurements "
-            "WHERE importer = :importer AND metric = :metric AND substr(timestamp, 1, 10) = :day",
-            [{"importer": importer, "metric": metric, "day": day} for metric, day in sorted(stale_keys)],
+            _PURGE_STALE_DAY_SQL,
+            [{"importer": importer, "metric": m, "day": d, "upper": hi} for m, d, hi in keys if hi is not None],
+        )
+        c.executemany(
+            _PURGE_STALE_DAY_UNBOUNDED_SQL,
+            [{"importer": importer, "metric": m, "day": d} for m, d, hi in keys if hi is None],
         )
 
     # Deletes and inserts share one transaction inside bulk_insert_measurements,
@@ -1562,6 +1589,42 @@ def resolve_range(start_date: str | None, end_date: str | None, default_days: in
             "Narrow start_date/end_date and try again."
         )
     return start, end
+
+
+MAX_READ_ROWS = 1000  # ceiling on `limit` for the raw-row read tools; keeps one reply a sane size
+
+
+def validate_read_window(
+    start: str | None, end: str | None, limit: int, *, allow_timestamps: bool = False
+) -> tuple[str | None, str | None]:
+    """Validate the optional bounds and row limit of a raw-row read, raising a client-facing ValueError.
+
+    A bound that is not a real YYYY-MM-DD date (or, with allow_timestamps, an ISO timestamp), a window that ends
+    before it starts, or a limit outside 1..MAX_READ_ROWS used to be accepted and silently produce an empty or
+    unbounded result, which a caller reads as "no data". An empty string means "not given", as in resolve_range.
+    Returns (start, end) with empty strings turned into None.
+    """
+    if not 1 <= limit <= MAX_READ_ROWS:
+        raise ValueError(f"limit must be between 1 and {MAX_READ_ROWS}, got {limit}")
+    days: dict[str, str] = {}
+    bounds: list[str | None] = []
+    for name, value in (("start_date", start), ("end_date", end)):
+        value = value or None
+        bounds.append(value)
+        if value is None:
+            continue
+        head = value[:10] if allow_timestamps else value
+        if parse_date(head, name).isoformat() != head:  # strptime accepts '2026-3-5'; string comparison would not
+            raise ValueError(f"{name} must be formatted YYYY-MM-DD, got {value!r}")
+        if allow_timestamps and len(value) > 10:
+            try:
+                datetime.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(f"{name} must be YYYY-MM-DD or an ISO timestamp, got {value!r}") from exc
+        days[name] = head
+    if "start_date" in days and "end_date" in days and days["start_date"] > days["end_date"]:
+        raise ValueError(f"start_date ({days['start_date']}) is after end_date ({days['end_date']})")
+    return bounds[0], bounds[1]
 
 
 def numeric_stats(rows: list[dict[str, Any]], key: str) -> dict[str, float | None]:

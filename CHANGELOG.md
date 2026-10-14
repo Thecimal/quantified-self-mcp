@@ -77,6 +77,20 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **`read_measurements` and `read_workout_sessions` validate their inputs.** A start/end that was not a
+  real `YYYY-MM-DD` date (`last week`, `2026-3-5`), a window ending before it starts, or a `limit`
+  outside 1-1000 used to return a successful empty list (or, for `limit=-1` and an unparseable
+  `end_date`, an unbounded one), which reads as "no data". They now return the same structured
+  `[invalid_range]` error as `read_health_data`. ISO timestamps are still accepted as bounds by
+  `read_measurements`; empty strings still mean "not given".
+
+- **Re-importing changed days no longer scans the whole metric once per day.** Replacing a changed
+  (metric, day) deleted the importer's old rows with a filter no index could serve, so each changed
+  day read every row of that metric. The delete now seeks the day through the existing
+  `(metric, timestamp)` index and keeps the original filter as an exact check, so the same rows are
+  deleted. On a 1M-row database with 5% of days changed, the re-import went from about 83s to
+  about 24s (measured with a throwaway benchmark, not part of the repo).
+
 - **Analytics no longer present a source change as a health change.** `daily_metrics` keeps one source
   per (metric, day), but a baseline, trend, anomaly scan, comparison or correlation read it as one
   anonymous series, so a device switch inside a window, a different device in each compared window,
