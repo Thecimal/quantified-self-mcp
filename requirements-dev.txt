@@ -2,7 +2,7 @@
 pytest>=9.1.1,<10.0
 pytest-asyncio>=1.4.0,<2.0
 pytest-cov>=6.0.0
-ruff>=0.16.10,<0.17
+ruff>=0.17.0,<0.18
 mypy>=1.15.0
 pre-commit>=4.0.0
 types-PyYAML>=6.0.0
