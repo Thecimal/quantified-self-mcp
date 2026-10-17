@@ -91,6 +91,15 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
   deleted. On a 1M-row database with 5% of days changed, the re-import went from about 83s to
   about 24s (measured with a throwaway benchmark, not part of the repo).
 
+- **A failed import is now visible to `get_data_status` and `get_import_status` even when it fails
+  while reading the file.** Only failures after parsing were recorded in `imports`, so a truncated or
+  unreadable export left no trace and the status stayed `CURRENT`. A read failure is now recorded as a
+  failed run (status `IMPORT_FAILED`, action `rerun_import`). The recorded reason is the error class
+  plus its file position for XML/JSON/CSV/encoding errors and the OS reason for I/O errors; a file the
+  importer rejects with its own message (e.g. a CSV with no date column) is recorded as rejected, and any
+  other error by class name only, so a record value or the file's full path never reaches the
+  model. The importer still raises exactly as before.
+
 - **Analytics no longer present a source change as a health change.** `daily_metrics` keeps one source
   per (metric, day), but a baseline, trend, anomaly scan, comparison or correlation read it as one
   anonymous series, so a device switch inside a window, a different device in each compared window,
