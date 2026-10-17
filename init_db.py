@@ -67,9 +67,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import os
 import sys
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
@@ -332,6 +334,45 @@ def _print_import_report(
     print()
 
 
+# Errors whose message only describes a position in the file (line, column, byte offset), so it is safe to keep as
+# the recorded reason. Any other exception is recorded by class name alone: its message can quote a raw record
+# value or the file's full path, and `imports.error` is read back by get_import_status.
+_POSITIONAL_ERRORS = (ET.ParseError, json.JSONDecodeError, UnicodeDecodeError, csv.Error)
+
+
+def _failure_reason(exc: BaseException, source_path: Path) -> str:
+    if isinstance(exc, SystemExit):  # an adapter's own message, which quotes the file's full path
+        return "the importer rejected the source file; its message was printed where the import was run"
+    name = type(exc).__name__
+    if isinstance(exc, _POSITIONAL_ERRORS):
+        return f"{name}: {exc}".replace(str(source_path), Path(source_path).name)
+    if isinstance(exc, OSError):
+        return f"{name}: {exc.strerror or 'I/O error'}"
+    return f"{name} while reading the source file; re-run the importer in a terminal for the details"
+
+
+def _read_source_or_record_failure(db_path: Path, adapter_name: str, source_path: Path, read, *args):
+    """Call read(*args), the step that parses the source file. If it raises, record the run as failed in `imports`
+    before re-raising, so get_data_status reports IMPORT_FAILED instead of CURRENT. Before this, only a failure
+    after parsing was recorded, so a truncated or unreadable export left no trace for the diagnostic tools. The
+    exception (or SystemExit) still propagates unchanged; failing to record it only prints a warning, as for the
+    load step."""
+    try:
+        return read(*args)
+    except (Exception, SystemExit) as exc:
+        try:
+            conn = connect_writable(db_path)
+            try:
+                ensure_schema(conn)
+                import_id = record_import_start(conn, adapter_name, source_path, coverage_before=dataset_coverage(conn))
+                record_import_finish(conn, import_id, "failed", error=_failure_reason(exc, source_path))
+            finally:
+                conn.close()
+        except Exception:
+            print("Warning: could not record the failed import in the imports table.", file=sys.stderr)
+        raise
+
+
 def init_health_db(
     source_path: Path,
     db_path: Path,
@@ -357,11 +398,15 @@ def init_health_db(
     unsupported_types: dict[str, int] = {}
 
     if adapter_name == "csv":
-        parsed_rows, present_columns, skipped = _load_csv_rows(source_path, column_map)
+        parsed_rows, present_columns, skipped = _read_source_or_record_failure(
+            db_path, adapter_name, source_path, _load_csv_rows, source_path, column_map
+        )
     else:
         if adapter_name not in ADAPTERS:
             sys.exit(f"Error: unknown import source {adapter_name!r}. Available: csv, {', '.join(ADAPTERS)}")
-        adapted = ADAPTERS[adapter_name](source_path)
+        adapted = _read_source_or_record_failure(
+            db_path, adapter_name, source_path, ADAPTERS[adapter_name], source_path
+        )
         parsed_rows, skipped = [], adapted.skipped
         skipped_days: set[str] = set()
         for row in adapted.rows:
