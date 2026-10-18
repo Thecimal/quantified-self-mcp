@@ -7,19 +7,22 @@ client, and to get a concrete "next step" instead of a wall of setup docs.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sqlite3
 import sys
 from pathlib import Path
+
+from logic import default_data_dir
 
 CHECK = "\u2713"
 CROSS = "\u2717"
 WARN = "!"
 
-REQUIRED_HEALTH_COLUMNS = {"date", "steps", "sleep_hours", "resting_heart_rate"}
-OPTIONAL_HEALTH_COLUMNS = {"weight_kg", "workout_minutes", "mood", "water_ml"}
-
-DATA_DIR = Path("data")
-HEALTH_DB = DATA_DIR / "health.db"
+# Same resolution as server.py and init_db.py: HEALTH_DB_PATH if set, otherwise the default data
+# directory. A bare relative Path("data") only matched a source checkout run from its root.
+HEALTH_DB = Path(
+    os.environ.get("HEALTH_DB_PATH", default_data_dir(Path(__file__).resolve().parent) / "health.db")
+).expanduser()
 
 
 def _ok(msg: str) -> None:
@@ -70,9 +73,9 @@ def check_database() -> sqlite3.Connection | None:
 
 def check_days(conn: sqlite3.Connection) -> int:
     try:
-        (count,) = conn.execute("SELECT COUNT(*) FROM health").fetchone()
+        (count,) = conn.execute("SELECT COUNT(DISTINCT date) FROM daily_metrics").fetchone()
     except sqlite3.Error:
-        _fail("Database found, but has no 'health' table — re-run quantified-self-init-db")
+        _fail("Database found, but has no 'daily_metrics' table — re-run quantified-self-init-db")
         return 0
     if count == 0:
         _warn("Database contains 0 days — import a CSV or Apple Health export")
@@ -82,12 +85,10 @@ def check_days(conn: sqlite3.Connection) -> int:
 
 
 def check_metrics(conn: sqlite3.Connection) -> int:
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(health)").fetchall()}
-    populated = set()
-    for col in (REQUIRED_HEALTH_COLUMNS | OPTIONAL_HEALTH_COLUMNS) & cols:
-        (non_null,) = conn.execute(f"SELECT COUNT(*) FROM health WHERE {col} IS NOT NULL").fetchone()
-        if non_null > 0:
-            populated.add(col)
+    try:
+        populated = {row[0] for row in conn.execute("SELECT DISTINCT metric FROM daily_metrics")}
+    except sqlite3.Error:
+        populated = set()
     if populated:
         _ok(f"{len(populated)} metrics available ({', '.join(sorted(populated))})")
     else:
