@@ -77,6 +77,12 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **The HTTP transport no longer listens on every network interface.** Setting `PORT` (the cloud-deploy
+  mode) used to bind `0.0.0.0` with no authentication, so anyone who could reach the machine could call
+  every tool, including the ones that write, clear and export data. It now binds loopback (FastMCP's
+  default). A deployment that must be reached from outside, such as a container behind a platform
+  router, now has to opt in with `FASTMCP_HOST=0.0.0.0`; that is still allowed but logs a warning that
+  nothing authenticates callers. Stdio use (no `PORT`) is unchanged.
 - **`read_measurements` and `read_workout_sessions` validate their inputs.** A start/end that was not a
   real `YYYY-MM-DD` date (`last week`, `2026-3-5`), a window ending before it starts, or a `limit`
   outside 1-1000 used to return a successful empty list (or, for `limit=-1` and an unparseable

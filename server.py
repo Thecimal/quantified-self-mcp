@@ -58,6 +58,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from fastmcp import FastMCP
+from fastmcp import settings as fastmcp_settings
 from fastmcp.exceptions import ResourceError
 from mcp.types import ToolAnnotations
 
@@ -1432,13 +1433,29 @@ def day_snapshot(date: str) -> dict:
     return DailyMetricsRow(**_redact_private_fields(row)).model_dump()
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
 def main():
     # Cloud platforms (e.g. Manufact) set PORT and expect an HTTP server
     # listening on it; Claude Desktop and other local stdio clients don't
     # set PORT at all, in which case we fall back to stdio as before.
+    #
+    # The HTTP transport has no authentication and every tool, including the ones that write and
+    # export, is reachable by whoever can reach the port. So it listens on FastMCP's own default
+    # (loopback) unless the operator sets FASTMCP_HOST, e.g. FASTMCP_HOST=0.0.0.0 for a container
+    # that must be reached from outside; that choice is allowed but logged.
     port = os.environ.get("PORT")
     if port is not None:
-        mcp.run(transport="http", host="0.0.0.0", port=int(port))
+        if fastmcp_settings.host not in _LOOPBACK_HOSTS:
+            logger.warning(
+                "HTTP transport is listening on %s:%s with no authentication: anyone who can reach "
+                "this address can read and change your health data. Set FASTMCP_HOST=127.0.0.1 "
+                "unless a trusted proxy in front of this server enforces access control.",
+                fastmcp_settings.host,
+                port,
+            )
+        mcp.run(transport="http", port=int(port))
     else:
         mcp.run()
 
