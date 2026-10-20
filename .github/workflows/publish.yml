@@ -6,7 +6,27 @@ on:
       - "v*"
 
 jobs:
+  # Fail fast, before anything is built: the tag must be v<version from pyproject.toml>.
+  verify-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tag must match the package version
+        run: python .github/scripts/check_tag_matches_version.py "$GITHUB_REF_NAME"
+
+  # The whole CI workflow (lint, tests on every supported Python, build, wheel contents) must pass
+  # on the tagged commit before anything is uploaded.
+  ci:
+    needs: verify-tag
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -17,11 +37,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build tool
-        run: pip install build
+      - name: Install build and test tools
+        run: pip install -r requirements-dev.txt
 
       - name: Build package
         run: python -m build
+
+      - name: Smoke-test the exact wheel that will be uploaded
+        run: |
+          QS_SMOKE_WHEEL="$(ls dist/*.whl)" QS_SMOKE_ISOLATED=1 python -m pytest -q tests/test_clean_install_smoke.py
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

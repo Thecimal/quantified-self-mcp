@@ -12,6 +12,9 @@ By default the venv reuses the test runner's already-installed third-party packa
 (so the test needs no network beyond building the wheel). Set QS_SMOKE_ISOLATED=1 to
 install the wheel's declared dependencies from the package index instead, which is what
 catches a missing or wrong runtime dependency declaration.
+
+Set QS_SMOKE_WHEEL=<path to a .whl> to test an already-built wheel instead of building one; the
+publish workflow uses this so the file that is uploaded to PyPI is the file that was smoke-tested.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from fastmcp.client.transports import StdioTransport
 REPO = Path(__file__).resolve().parent.parent
 SAMPLE_CSV = REPO / "sample_data" / "health_sample.csv"
 ISOLATED = os.environ.get("QS_SMOKE_ISOLATED") == "1"
+PREBUILT_WHEEL = os.environ.get("QS_SMOKE_WHEEL")
 
 
 def _run(cmd, **kwargs):
@@ -47,12 +51,9 @@ def _clean_env(db_path: Path) -> dict[str, str]:
     return env
 
 
-@pytest.fixture(scope="module")
-def installed(tmp_path_factory):
+def _build_wheel(work: Path) -> Path:
     if importlib.util.find_spec("build") is None:
         pytest.skip("the 'build' package is not installed (pip install -r requirements-dev.txt)")
-    work = tmp_path_factory.mktemp("clean_install")
-
     # Build from a copy so the checkout never gains build/ or *.egg-info side effects.
     src = work / "src"
     shutil.copytree(
@@ -65,7 +66,17 @@ def installed(tmp_path_factory):
     if importlib.util.find_spec("hatchling") is not None:
         build_cmd.insert(4, "--no-isolation")
     _run(build_cmd)
-    wheel = next(dist.glob("*.whl"))
+    return next(dist.glob("*.whl"))
+
+
+@pytest.fixture(scope="module")
+def installed(tmp_path_factory):
+    work = tmp_path_factory.mktemp("clean_install")
+    if PREBUILT_WHEEL:
+        wheel = Path(PREBUILT_WHEEL).resolve()
+        assert wheel.is_file(), f"QS_SMOKE_WHEEL does not point at a wheel file: {wheel}"
+    else:
+        wheel = _build_wheel(work)
 
     env_dir = work / "venv"
     venv.EnvBuilder(with_pip=True, clear=True).create(env_dir)
