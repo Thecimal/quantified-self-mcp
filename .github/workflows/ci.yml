@@ -74,7 +74,7 @@ jobs:
               'import_adapters.py', 'data_health.py', 'doctor.py', 'errors.py', 'ingest.py', 'privacy.py',
               'schemas.py', 'source_coverage.py',
               'tools/__init__.py', 'tools/health.py', 'tools/measurements.py', 'tools/status.py', 'tools/workouts.py',
-              'db/__init__.py', 'db/schema.sql', 'db/invariant.py', 'db/aggregation.py',
+              'db/__init__.py', 'db/schema.sql', 'db/invariant.py', 'db/aggregation.py', 'db/backup.py',
               'qs_evidence/__init__.py', 'qs_evidence/models.py', 'qs_evidence/registry.py',
               'qs_evidence/registry.yaml', 'qs_evidence/resolver.py', 'qs_evidence/sample.py',
               'integrations/jev/__init__.py', 'integrations/jev/adapter.py', 'integrations/jev/schemas.py',

@@ -9,6 +9,14 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Added
 
+- **Consistent backups and safe restores (`quantified-self-backup`).** Copying `health.db` is not a backup:
+  the database runs in WAL mode, so with anything holding it open a copy of the file alone can be empty or
+  miss recent writes. `quantified-self-backup create FILE` uses SQLite's online-backup API for a consistent
+  single-file snapshot, integrity-checks it, owner-only permissions, and never overwrites an existing file.
+  `quantified-self-backup restore FILE` validates the backup first (integrity, health database, schema not
+  newer than this release), stages and re-checks a copy, refuses while another program has the database open,
+  and moves the current database aside as `<name>.pre-restore-<time>` instead of deleting it. It is a
+  command-line tool only, not an MCP tool.
 - **Canonical ingestion contract (`ingest.py`).** The one shape every source adapter's observations
   must take: metric, naive local timestamp, value, canonical unit, source, source record id, original
   timezone and quality, with a strict validator that normalises known unit spellings (`count/min` to

@@ -22,10 +22,12 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import venv
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -136,6 +138,22 @@ async def test_install_init_import_doctor_and_mcp_query(installed):
     assert "Database found" in doctor.stdout, doctor.stdout
     assert "✗" not in doctor.stdout, doctor.stdout
     assert "Database contains 30 days" in doctor.stdout, doctor.stdout
+
+    # Back up and restore through their documented entry point, into a second location.
+    backup_file = work / "state" / "backup.db"
+    _run([str(bindir / f"quantified-self-backup{exe}"), "create", str(backup_file)], cwd=run_dir, env=env)
+    restored_db = work / "restored" / "health.db"
+    _run(
+        [str(bindir / f"quantified-self-backup{exe}"), "restore", str(backup_file), "--db-path", str(restored_db)],
+        cwd=run_dir,
+        env=env,
+    )
+    counts = []
+    for path in (db_path, restored_db):
+        with closing(sqlite3.connect(path)) as conn:
+            assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            counts.append(conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0])
+    assert counts[0] == counts[1] > 0
 
     # Start the server through its documented entry point and make real MCP requests.
     transport = StdioTransport(command=str(bindir / f"quantified-self-mcp{exe}"), args=[], env=env, cwd=str(run_dir))

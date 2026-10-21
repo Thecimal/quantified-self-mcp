@@ -222,6 +222,27 @@ Run the built-in diagnostic tool to check Python, dependencies, and database rea
 quantified-self-doctor
 ```
 
+### Back up and restore your data
+
+Do not back up by copying `health.db`: the database runs in WAL mode, so recent changes can still be in
+`health.db-wal`, and a copy of `health.db` alone can be empty or out of date. Use the backup command, which
+takes a consistent snapshot even while your MCP client is running:
+
+```bash
+quantified-self-backup create ~/backups/health-2026-10-21.db
+```
+
+It never overwrites an existing backup. To restore (close your MCP client first), run:
+
+```bash
+quantified-self-backup restore ~/backups/health-2026-10-21.db
+```
+
+The backup is checked before anything is touched (it must pass SQLite's integrity check, be a health database,
+and not come from a newer release). Your current database is moved aside as `health.db.pre-restore-<time>`
+rather than deleted. If the database is encrypted (`HEALTH_DB_PASSPHRASE`), the backup is encrypted with the
+same passphrase. Use `--db-path` to point at a database other than the default.
+
 ### Connect an MCP client
 
 Configure your preferred MCP-compatible client to run:

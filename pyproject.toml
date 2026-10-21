@@ -53,6 +53,7 @@ encryption = ["sqlcipher3-binary>=0.5,<1.0"]
 quantified-self-mcp = "server:main"
 quantified-self-init-db = "init_db:main"
 quantified-self-doctor = "doctor:main"
+quantified-self-backup = "db.backup:main"
 
 [tool.hatch.build.targets.wheel]
 include = [
