@@ -85,6 +85,13 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **A mistyped or unsupported metric is no longer reported as "no data".** `read_measurements` and
+  `get_metric_provenance` answered a name nothing is stored under (for example `sleep` instead of
+  `sleep_hours`) with a successful empty result, so a client would tell the user they had no such data.
+  They now return the same `[invalid_metric]` error `log_measurement` already used, listing the supported
+  metrics and suggesting the closest one. A supported metric with no readings in the window still returns
+  an empty result, and a metric that has stored readings stays readable even if its aggregation rule was
+  removed.
 - **The HTTP transport no longer listens on every network interface.** Setting `PORT` (the cloud-deploy
   mode) used to bind `0.0.0.0` with no authentication, so anyone who could reach the machine could call
   every tool, including the ones that write, clear and export data. It now binds loopback (FastMCP's

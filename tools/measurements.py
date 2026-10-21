@@ -12,6 +12,8 @@ through under its original name. See server.py for the call that wires
 these back in.
 """
 
+import difflib
+
 from mcp.types import ToolAnnotations
 
 from errors import (
@@ -69,6 +71,33 @@ def _refuse_private_metric(metric: str) -> None:
             ERR_INVALID_FIELD,
             f"{metric!r} is configured as private (HEALTH_PRIVATE_FIELDS); its measurements can't be returned.",
         )
+
+
+def _require_known_metric(conn, metric: str) -> None:
+    """Reject a metric nothing can be stored or read under, instead of answering it with an empty result.
+
+    A mistyped or unsupported name ("sleep" for "sleep_hours") otherwise looks exactly like a supported metric
+    with no readings in the window, and a client would tell the user they have no such data. Known means it has
+    an aggregation rule (what log_measurement accepts) or already has stored readings (a rule can be removed
+    after the fact, and those readings are real). Same error code and wording as log_measurement's, so a client
+    handles one failure shape for "unsupported metric"."""
+    probe = (
+        "SELECT 1 FROM aggregation_rules WHERE metric = ? UNION ALL SELECT 1 FROM measurements WHERE metric = ? LIMIT 1"
+    )
+    if conn.execute(probe, (metric, metric)).fetchone() is not None:
+        return
+    known = [
+        r[0]
+        for r in conn.execute("SELECT metric FROM aggregation_rules UNION SELECT metric FROM measurements ORDER BY 1")
+    ]
+    hint = difflib.get_close_matches(metric, known, n=1, cutoff=0.6)
+    raise _tool_error(
+        ERR_INVALID_METRIC,
+        f"{metric!r} is not a supported metric, so there is nothing stored under that name (that is different "
+        "from having no data for a supported metric)."
+        + (f" Did you mean {hint[0]!r}?" if hint else "")
+        + (f" Supported metrics: {', '.join(known)}." if known else ""),
+    )
 
 
 def register_measurement_tools(
@@ -269,6 +298,8 @@ def register_measurement_tools(
             conn = connect_writable(db_path)
             try:
                 ensure_schema(conn)
+                if metric is not None:
+                    _require_known_metric(conn, metric)
                 conn.row_factory = row_class()
                 rows = query_measurements(
                     conn, metric=metric, start=start_date, end=end_date, source=source, limit=limit
@@ -411,6 +442,7 @@ def register_measurement_tools(
             conn = connect_writable(db_path)
             try:
                 ensure_schema(conn)
+                _require_known_metric(conn, metric)
                 result = _get_metric_provenance(conn, metric, day.isoformat())
             finally:
                 conn.close()
