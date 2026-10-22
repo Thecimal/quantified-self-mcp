@@ -138,6 +138,7 @@ Supported imports include:
 
 - CSV
 - Apple Health exports
+- WHOOP Developer API JSON (v2)
 
 See the [import documentation](docs/importing.md).
 

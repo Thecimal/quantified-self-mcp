@@ -37,17 +37,22 @@ Currently supported:
   export, which is an undocumented raw SQLite snapshot and isn't
   parsed here. See adapt_health_connect for exactly which record types
   are mapped.
+- "whoop" — JSON saved from the WHOOP Developer API (v2): sleep, recovery and workout records,
+  each kept as its own observation with source "WHOOP". This is NOT the CSV that WHOOP's app
+  exports, whose column headers are not documented and aren't parsed here. See adapt_whoop
+  for exactly what is read.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -517,6 +522,196 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
     )
 
 
+# WHOOP Developer API (v2) sample shapes this adapter reads. Only the fields named here are used; every
+# other field (strain, kilojoule, spo2_percentage, skin_temp_celsius, respiratory_rate, sleep_performance_*,
+# heart-rate zones, ...) is ignored.
+_WHOOP_SOURCE = "WHOOP"
+_WHOOP_ASLEEP_KEYS = (
+    "total_light_sleep_time_milli",
+    "total_slow_wave_sleep_time_milli",
+    "total_rem_sleep_time_milli",
+)
+_WHOOP_OFFSET = re.compile(r"^[+-](0\d|1[0-4]):[0-5]\d$")
+_MS_PER_HOUR = 3_600_000
+
+
+def _whoop_need(mapping: Any, key: str, what: str) -> Any:
+    if not isinstance(mapping, dict) or key not in mapping:
+        raise RowError(f"{what} is missing {key!r}")
+    return mapping[key]
+
+
+def _whoop_local(raw: Any, offset: Any, what: str) -> datetime:
+    """A WHOOP UTC timestamp ("2022-04-24T02:25:44.774Z") plus the record's timezone_offset ("-05:00"), as
+    the naive local wall-clock time the user's device showed. Naive because the projection buckets days with
+    SQLite date(timestamp), which would shift an evening reading to the next day if an offset were kept."""
+    if not isinstance(raw, str):
+        raise RowError(f"{what} has no timestamp")
+    try:
+        when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RowError(f"{what} has unparseable timestamp {raw!r}") from exc
+    if when.tzinfo is None:
+        raise RowError(f"{what} timestamp {raw!r} does not say it is UTC")
+    if not isinstance(offset, str) or not _WHOOP_OFFSET.match(offset):
+        raise RowError(f"{what} has timezone_offset {offset!r}, expected a value like '-05:00'")
+    shift = timedelta(hours=int(offset[1:3]), minutes=int(offset[4:6]))
+    local = when.astimezone(timezone.utc) + (-shift if offset[0] == "-" else shift)
+    return local.replace(tzinfo=None)
+
+
+def adapt_whoop(path: Path) -> AdaptedImport:
+    """Parse JSON saved from the WHOOP Developer API (v2): a JSON array of records, or one
+    {"records": [...]} collection response, holding any mix of the three record kinds below (for example
+    the records of /v2/recovery, /v2/activity/sleep and /v2/activity/workout concatenated into one array).
+    Each record is recognised by its own shape, and each becomes one observation with source "WHOOP":
+
+    - sleep (has "nap", "start", "end"): sleep_hours = light + slow-wave + REM sleep from score.stage_summary,
+      in hours; awake and in-bed time are not counted. Naps are included, like every other adapter. Needs
+      score_state "SCORED"; the observation is stamped with the local time of waking, so the night counts
+      toward the day it ended on.
+    - recovery (has "cycle_id", "sleep_id"): resting_heart_rate (score.resting_heart_rate) and hrv_ms
+      (score.hrv_rmssd_milli, an RMSSD, not Apple Health's SDNN). A recovery record carries no local time of
+      its own, so it takes the local waking time of the sleep it points to; that sleep must be in the same
+      file, otherwise the record is skipped. Needs score_state "SCORED".
+    - workout (has "sport_id" or "sport_name"): workout_minutes = end minus start, stamped with the local
+      start time. Duration does not depend on scoring, so unscored workouts count.
+
+    Local time is the record's UTC time plus its timezone_offset (recovery uses its sleep's). A record whose
+    score_state is not "SCORED" is reported as unsupported ("sleep (not scored)", ...), not as an error.
+    A record repeated in the file (same id; for recovery, same cycle_id and sleep_id) is imported once.
+    Anything else in the file is reported as unsupported. The output does not depend on record order.
+
+    Written against the sample responses in WHOOP's v2 API documentation, and tested only on synthetic
+    data built from them; other API versions are not covered.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sys.exit(f"Error: couldn't read {path} as WHOOP API JSON: {exc}")
+    records = data.get("records") if isinstance(data, dict) else data
+    if not isinstance(records, list):
+        sys.exit(
+            f"Error: {path} doesn't look like WHOOP API JSON "
+            '(expected a JSON array of records, or {"records": [...]} from one collection response).'
+        )
+
+    observations: list[dict[str, Any]] = []
+    sleep_wake: dict[Any, datetime] = {}  # sleep id -> local time of waking, for dating recovery records
+    seen: set[tuple] = set()
+    recoveries: list[dict] = []
+    unsupported_types: defaultdict[str, int] = defaultdict(int)
+    skipped = 0
+
+    def skip(exc: Exception) -> None:
+        nonlocal skipped
+        print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+        skipped += 1
+
+    def observe(when: datetime, metric: str, value: float, unit: str, what: str) -> None:
+        _check_observation_bounds(metric, value, what)
+        observations.append(
+            {"timestamp": when.isoformat(), "metric": metric, "value": value, "unit": unit, "source": _WHOOP_SOURCE}
+        )
+
+    for record in records:
+        try:
+            if not isinstance(record, dict):
+                raise RowError("record is not a JSON object")
+            if "nap" in record and "start" in record:
+                what = "WHOOP sleep record"
+                key = ("sleep", _whoop_need(record, "id", what))
+                if key in seen:
+                    continue
+                score = record.get("score")
+                if record.get("score_state") != "SCORED" or not isinstance(score, dict):
+                    unsupported_types["sleep (not scored)"] += 1
+                    seen.add(key)
+                    continue
+                summary = _whoop_need(score, "stage_summary", what)
+                parts = [_finite_float(_whoop_need(summary, k, what), f"{what} {k}") for k in _WHOOP_ASLEEP_KEYS]
+                if min(parts) < 0:
+                    raise RowError(f"{what} has a negative sleep duration")
+                asleep_ms = sum(parts)
+                woke = _whoop_local(record.get("end"), record.get("timezone_offset"), what)
+                observe(woke, "sleep_hours", asleep_ms / _MS_PER_HOUR, "h", what)
+                sleep_wake[key[1]] = woke
+                seen.add(key)
+            elif "sport_id" in record or "sport_name" in record:
+                what = "WHOOP workout record"
+                key = ("workout", _whoop_need(record, "id", what))
+                if key in seen:
+                    continue
+                offset = record.get("timezone_offset")
+                start = _whoop_local(record.get("start"), offset, what)
+                end = _whoop_local(record.get("end"), offset, what)
+                observe(start, "workout_minutes", (end - start).total_seconds() / 60, "min", what)
+                seen.add(key)
+            elif "cycle_id" in record and "sleep_id" in record:
+                recoveries.append(record)  # dated from its sleep, which may appear later in the file
+            else:
+                unsupported_types["unrecognised WHOOP record"] += 1
+        except (RowError, TypeError) as exc:  # TypeError: an id or field of an unusable type
+            skip(exc)
+
+    for record in recoveries:
+        try:
+            what = "WHOOP recovery record"
+            key = ("recovery", record["cycle_id"], record["sleep_id"])
+            if key in seen:
+                continue
+            score = record.get("score")
+            if record.get("score_state") != "SCORED" or not isinstance(score, dict):
+                unsupported_types["recovery (not scored)"] += 1
+                seen.add(key)
+                continue
+            woke = sleep_wake.get(record["sleep_id"])
+            if woke is None:
+                raise RowError(
+                    f"{what} points to sleep {record['sleep_id']!r}, which is not a scored sleep in this file"
+                )
+            rhr = _finite_float(_whoop_need(score, "resting_heart_rate", what), f"{what} resting_heart_rate")
+            hrv = _finite_float(_whoop_need(score, "hrv_rmssd_milli", what), f"{what} hrv_rmssd_milli")
+            _check_observation_bounds("resting_heart_rate", rhr, what)  # both valid before either is kept
+            _check_observation_bounds("hrv_ms", hrv, what)
+            observe(woke, "resting_heart_rate", rhr, "bpm", what)
+            observe(woke, "hrv_ms", hrv, "ms", what)
+            seen.add(key)
+        except (RowError, TypeError) as exc:  # TypeError: an id or field of an unusable type
+            skip(exc)
+
+    observations.sort(key=lambda o: (o["timestamp"], o["metric"], o["value"]))
+    by_day: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for o in observations:
+        by_day[o["timestamp"][:10]][o["metric"]].append(o["value"])
+
+    rows: list[dict[str, Any]] = []
+    for day in sorted(by_day):
+        metrics = by_day[day]
+        row: dict[str, Any] = {"date": day}
+        if "sleep_hours" in metrics:
+            row["sleep_hours"] = round(sum(metrics["sleep_hours"]), 2)
+        if "resting_heart_rate" in metrics:
+            row["resting_heart_rate"] = int(
+                round(sum(metrics["resting_heart_rate"]) / len(metrics["resting_heart_rate"]))
+            )
+        if "hrv_ms" in metrics:
+            row["hrv_ms"] = round(sum(metrics["hrv_ms"]) / len(metrics["hrv_ms"]), 1)
+        if "workout_minutes" in metrics:
+            row["workout_minutes"] = int(round(sum(metrics["workout_minutes"])))
+        rows.append(row)
+
+    present = {o["metric"] for o in observations}
+    present_columns = [c for c in ("sleep_hours", "resting_heart_rate", "hrv_ms", "workout_minutes") if c in present]
+    return AdaptedImport(
+        rows=rows,
+        present_columns=present_columns,
+        skipped=skipped,
+        raw_measurements=observations,
+        unsupported_types=dict(unsupported_types),
+    )
+
+
 def detect_adapter(path: Path) -> str:
     """Best-effort guess at which adapter a source file needs, by file
     extension. Only used for --source auto (the CLI default) — an
@@ -528,4 +723,5 @@ def detect_adapter(path: Path) -> str:
 ADAPTERS: dict[str, Callable[[Path], AdaptedImport]] = {
     "apple-health": adapt_apple_health,
     "health-connect": adapt_health_connect,
+    "whoop": adapt_whoop,
 }

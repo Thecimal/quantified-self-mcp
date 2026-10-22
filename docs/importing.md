@@ -1,7 +1,7 @@
 # Importing Health Data
 
 Quantified Self MCP stores your health history in a local SQLite database (`data/health.db`).
-You can import data from CSV exports, Apple Health, or Android Health Connect using the `quantified-self-init-db` command-line utility (or `python init_db.py`).
+You can import data from CSV exports, Apple Health, Android Health Connect, or WHOOP API JSON using the `quantified-self-init-db` command-line utility (or `python init_db.py`).
 
 ## Quick Start
 
@@ -14,6 +14,9 @@ quantified-self-init-db export.xml
 
 # From Android Health Connect JSON
 quantified-self-init-db health-connect.json --source health-connect
+
+# From WHOOP Developer API JSON
+quantified-self-init-db whoop.json --source whoop
 ```
 
 ## Supported Import Formats
@@ -66,13 +69,43 @@ quantified-self-init-db health-connect.json --source health-connect --report
 
 See [Android Health Connect Setup Guide](clients/android-health-connect.md) for step-by-step instructions.
 
+### 4. WHOOP Developer API JSON (`--source whoop`)
+
+JSON saved from the [WHOOP Developer API](https://developer.whoop.com/api) (v2): a JSON array of records, or one
+`{"records": [...]}` collection response. Records from `/v2/recovery`, `/v2/activity/sleep` and
+`/v2/activity/workout` can be concatenated into one array; each record is recognised by its own shape.
+`--source whoop` is required (a `.json` file is never auto-detected).
+
+```bash
+quantified-self-init-db whoop.json --source whoop --report
+```
+
+This is **not** the CSV export in the WHOOP app, whose column headers are not documented and are not parsed.
+The adapter was written against the sample responses in WHOOP's v2 API documentation and tested only on
+synthetic data built from them (`sample_data/whoop_sample.json`); it has not been tried against a real
+account, and other API versions are not covered.
+
+| Metric | Read from | Rule |
+| --- | --- | --- |
+| `sleep_hours` | sleep `score.stage_summary` | light + slow-wave + REM time, in hours (awake and in-bed time not counted); naps are included; needs `score_state` `SCORED`; counted toward the local day you woke up |
+| `resting_heart_rate` | recovery `score.resting_heart_rate` | needs `SCORED`; dated by the sleep it points to, which must be in the same file |
+| `hrv_ms` | recovery `score.hrv_rmssd_milli` | an **RMSSD**, not Apple Health's SDNN, so the two are not directly comparable |
+| `workout_minutes` | workout `end` minus `start` | counted toward the local start day; needs no score |
+
+Each value is kept as its own observation with the source `WHOOP`, so it can be told apart from other devices.
+Local time is the record's UTC time plus its `timezone_offset`. A record repeated in the file is imported once,
+and the result does not depend on record order. A record that cannot be read (bad timestamp, missing field, value
+out of range, recovery whose sleep is absent) is skipped and counted, and the rest still import. Records that are
+not `SCORED` and anything else in the file (cycles, strain, SpO2, skin temperature, respiratory rate, heart-rate
+zones, sport type, energy) are listed under "Unsupported" by `--report` and are not stored.
+
 ---
 
 ## Import Options & CLI Flags
 
 | Flag | Description |
 | --- | --- |
-| `--source {auto,csv,apple-health,health-connect}` | Explicitly declare format. Defaults to auto-detection from file extension (`.xml` -> `apple-health`, otherwise `csv`). |
+| `--source {auto,csv,apple-health,health-connect,whoop}` | Explicitly declare format. Defaults to auto-detection from file extension (`.xml` -> `apple-health`, otherwise `csv`). |
 | `--replace` | Wipe existing tables before importing instead of incrementally appending/upserting. |
 | `--report` | Print detailed import metrics: date range, records imported, skipped records, and unmapped types. |
 | `--map COLUMN=HEADER` | Rename CSV columns to standard schema names (repeatable). |

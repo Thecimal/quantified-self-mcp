@@ -1,0 +1,206 @@
+{
+  "records": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "cycle_id": 93845,
+      "v1_id": 93845,
+      "user_id": 10129,
+      "created_at": "2026-03-02T12:25:00.000Z",
+      "updated_at": "2026-03-02T12:25:00.000Z",
+      "start": "2026-03-02T04:10:00.000Z",
+      "end": "2026-03-02T12:25:00.000Z",
+      "timezone_offset": "-05:00",
+      "nap": false,
+      "score_state": "SCORED",
+      "score": {
+        "stage_summary": {
+          "total_in_bed_time_milli": 29700000,
+          "total_awake_time_milli": 2400000,
+          "total_no_data_time_milli": 0,
+          "total_light_sleep_time_milli": 14400000,
+          "total_slow_wave_sleep_time_milli": 6300000,
+          "total_rem_sleep_time_milli": 6600000,
+          "sleep_cycle_count": 3,
+          "disturbance_count": 12
+        },
+        "respiratory_rate": 15.5,
+        "sleep_performance_percentage": 90,
+        "sleep_efficiency_percentage": 91.5
+      }
+    },
+    {
+      "cycle_id": 1001,
+      "sleep_id": "11111111-1111-4111-8111-111111111111",
+      "user_id": 10129,
+      "created_at": "2026-03-02T12:30:00.000Z",
+      "updated_at": "2026-03-02T12:30:00.000Z",
+      "score_state": "SCORED",
+      "score": {
+        "user_calibrating": false,
+        "recovery_score": 70,
+        "resting_heart_rate": 52,
+        "hrv_rmssd_milli": 61.4,
+        "spo2_percentage": 96.0,
+        "skin_temp_celsius": 33.5
+      }
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555555",
+      "v1_id": 1043,
+      "user_id": 10129,
+      "created_at": "2026-03-03T00:20:00.000Z",
+      "updated_at": "2026-03-03T00:20:00.000Z",
+      "start": "2026-03-02T23:30:00.000Z",
+      "end": "2026-03-03T00:15:00.000Z",
+      "timezone_offset": "-05:00",
+      "sport_id": 1,
+      "sport_name": "running",
+      "score_state": "SCORED",
+      "score": {
+        "strain": 8.2,
+        "average_heart_rate": 123,
+        "max_heart_rate": 146,
+        "kilojoule": 1569.3,
+        "percent_recorded": 100,
+        "distance_meter": 1772.8
+      }
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "cycle_id": 93845,
+      "v1_id": 93845,
+      "user_id": 10129,
+      "created_at": "2026-03-03T11:30:00.000Z",
+      "updated_at": "2026-03-03T11:30:00.000Z",
+      "start": "2026-03-03T03:50:00.000Z",
+      "end": "2026-03-03T11:30:00.000Z",
+      "timezone_offset": "-05:00",
+      "nap": false,
+      "score_state": "SCORED",
+      "score": {
+        "stage_summary": {
+          "total_in_bed_time_milli": 26400000,
+          "total_awake_time_milli": 2400000,
+          "total_no_data_time_milli": 0,
+          "total_light_sleep_time_milli": 13200000,
+          "total_slow_wave_sleep_time_milli": 5400000,
+          "total_rem_sleep_time_milli": 5400000,
+          "sleep_cycle_count": 3,
+          "disturbance_count": 12
+        },
+        "respiratory_rate": 15.5,
+        "sleep_performance_percentage": 90,
+        "sleep_efficiency_percentage": 91.5
+      }
+    },
+    {
+      "cycle_id": 1002,
+      "sleep_id": "22222222-2222-4222-8222-222222222222",
+      "user_id": 10129,
+      "created_at": "2026-03-03T11:35:00.000Z",
+      "updated_at": "2026-03-03T11:35:00.000Z",
+      "score_state": "SCORED",
+      "score": {
+        "user_calibrating": false,
+        "recovery_score": 70,
+        "resting_heart_rate": 54,
+        "hrv_rmssd_milli": 58.0,
+        "spo2_percentage": 96.0,
+        "skin_temp_celsius": 33.5
+      }
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "cycle_id": 93845,
+      "v1_id": 93845,
+      "user_id": 10129,
+      "created_at": "2026-03-03T18:30:00.000Z",
+      "updated_at": "2026-03-03T18:30:00.000Z",
+      "start": "2026-03-03T18:00:00.000Z",
+      "end": "2026-03-03T18:30:00.000Z",
+      "timezone_offset": "-05:00",
+      "nap": true,
+      "score_state": "SCORED",
+      "score": {
+        "stage_summary": {
+          "total_in_bed_time_milli": 3600000,
+          "total_awake_time_milli": 2400000,
+          "total_no_data_time_milli": 0,
+          "total_light_sleep_time_milli": 1200000,
+          "total_slow_wave_sleep_time_milli": 0,
+          "total_rem_sleep_time_milli": 0,
+          "sleep_cycle_count": 3,
+          "disturbance_count": 12
+        },
+        "respiratory_rate": 15.5,
+        "sleep_performance_percentage": 90,
+        "sleep_efficiency_percentage": 91.5
+      }
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "cycle_id": 93845,
+      "v1_id": 93845,
+      "user_id": 10129,
+      "created_at": "2026-03-05T05:10:00.000Z",
+      "updated_at": "2026-03-05T05:10:00.000Z",
+      "start": "2026-03-04T21:40:00.000Z",
+      "end": "2026-03-05T05:10:00.000Z",
+      "timezone_offset": "+02:00",
+      "nap": false,
+      "score_state": "SCORED",
+      "score": {
+        "stage_summary": {
+          "total_in_bed_time_milli": 26400000,
+          "total_awake_time_milli": 2400000,
+          "total_no_data_time_milli": 0,
+          "total_light_sleep_time_milli": 12600000,
+          "total_slow_wave_sleep_time_milli": 6000000,
+          "total_rem_sleep_time_milli": 5400000,
+          "sleep_cycle_count": 3,
+          "disturbance_count": 12
+        },
+        "respiratory_rate": 15.5,
+        "sleep_performance_percentage": 90,
+        "sleep_efficiency_percentage": 91.5
+      }
+    },
+    {
+      "cycle_id": 1003,
+      "sleep_id": "44444444-4444-4444-8444-444444444444",
+      "user_id": 10129,
+      "created_at": "2026-03-05T05:15:00.000Z",
+      "updated_at": "2026-03-05T05:15:00.000Z",
+      "score_state": "SCORED",
+      "score": {
+        "user_calibrating": false,
+        "recovery_score": 70,
+        "resting_heart_rate": 50,
+        "hrv_rmssd_milli": 66.2,
+        "spo2_percentage": 96.0,
+        "skin_temp_celsius": 33.5
+      }
+    },
+    {
+      "cycle_id": 1004,
+      "sleep_id": "66666666-6666-4666-8666-666666666666",
+      "user_id": 10129,
+      "created_at": "2026-03-06T05:15:00.000Z",
+      "updated_at": "2026-03-06T05:15:00.000Z",
+      "score_state": "PENDING_SCORE"
+    },
+    {
+      "id": 93845,
+      "user_id": 10129,
+      "start": "2026-03-02T10:00:00.000Z",
+      "end": "2026-03-03T10:00:00.000Z",
+      "timezone_offset": "-05:00",
+      "score_state": "SCORED",
+      "score": {
+        "strain": 8.2,
+        "kilojoule": 9000.0
+      }
+    }
+  ],
+  "next_token": null
+}

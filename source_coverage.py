@@ -57,6 +57,7 @@ UNATTRIBUTED = "(unattributed)"
 KNOWN_STATISTICS: dict[tuple[str, str], str] = {
     ("apple-health", "hrv_ms"): "sdnn",
     ("health-connect", "hrv_ms"): "rmssd",
+    ("whoop", "hrv_ms"): "rmssd",
 }
 
 # domain -> metrics read from daily_metrics. A domain is as strong as its weakest metric.

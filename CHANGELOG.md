@@ -9,6 +9,13 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Added
 
+- **WHOOP import (`--source whoop`).** Reads JSON saved from the WHOOP Developer API v2 (a JSON array of
+  records, or one `{"records": [...]}` response): sleep (`sleep_hours`, asleep time only), recovery
+  (`resting_heart_rate`, `hrv_ms` as an RMSSD) and workouts (`workout_minutes`). Every value is kept as its
+  own observation with the source `WHOOP`, local days come from each record's `timezone_offset`, repeated
+  records import once, and a bad record is skipped and reported without stopping the rest. Written against
+  WHOOP's documented v2 sample responses and tested on synthetic data only; the WHOOP app's CSV export is
+  not supported. See `docs/importing.md` for the exact rules and what is left out.
 - **Consistent backups and safe restores (`quantified-self-backup`).** Copying `health.db` is not a backup:
   the database runs in WAL mode, so with anything holding it open a copy of the file alone can be empty or
   miss recent writes. `quantified-self-backup create FILE` uses SQLite's online-backup API for a consistent
