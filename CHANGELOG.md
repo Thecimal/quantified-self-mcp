@@ -7,6 +7,8 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-22
+
 ### Added
 
 - **WHOOP import (`--source whoop`).** Reads JSON saved from the WHOOP Developer API v2 (a JSON array of
