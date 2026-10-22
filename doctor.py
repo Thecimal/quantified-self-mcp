@@ -46,7 +46,7 @@ def check_python() -> bool:
     # check exists to catch.
     if sys.version_info >= (3, 10):  # noqa: UP036
         _ok(f"Python {sys.version_info.major}.{sys.version_info.minor} installed")
-        return True  # type: ignore
+        return True
     _fail(f"Python {sys.version_info.major}.{sys.version_info.minor} found, 3.10+ required")
     return False
 

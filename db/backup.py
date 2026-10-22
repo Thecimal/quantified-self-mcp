@@ -63,7 +63,7 @@ def _check_database(path: Path) -> dict:
             count = conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] if "measurements" in tables else 0
     except BackupError:
         raise
-    except (RuntimeError, *db_error_types()) as exc:
+    except (RuntimeError, *db_error_types()) as exc:  # type: ignore[misc]
         raise BackupError(
             f"{path.name} is not a readable health database ({exc}). If your database is encrypted, "
             "set HEALTH_DB_PASSPHRASE to the passphrase it was created with."
@@ -100,7 +100,7 @@ def create_backup(db_path: Path, dest: Path) -> dict:
     try:
         try:
             _snapshot(db_path, staged)
-        except (RuntimeError, *db_error_types()) as exc:
+        except (RuntimeError, *db_error_types()) as exc:  # type: ignore[misc]
             raise BackupError(f"Could not read the database at {db_path} ({exc}); no backup was written.") from exc
         facts = _check_database(staged)
         os.chmod(staged, 0o600)  # health data: owner-only, whatever the umask
@@ -117,7 +117,7 @@ def _require_unused(db_path: Path) -> None:
     simply moved aside by the caller."""
     try:
         conn = connect_writable(db_path)
-    except (RuntimeError, *db_error_types()):
+    except (RuntimeError, *db_error_types()):  # type: ignore[misc]
         return
     try:
         conn.execute("PRAGMA locking_mode = EXCLUSIVE")
@@ -143,7 +143,7 @@ def restore_backup(backup_path: Path, db_path: Path) -> dict:
     try:
         try:
             _snapshot(backup_path, staged)
-        except (RuntimeError, *db_error_types()) as exc:
+        except (RuntimeError, *db_error_types()) as exc:  # type: ignore[misc]
             raise BackupError(f"Could not read {backup_path.name} ({exc}); nothing was changed.") from exc
         if _check_database(staged) != facts:
             raise BackupError("The staged copy does not match the backup; nothing was changed.")

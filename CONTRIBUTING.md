@@ -47,11 +47,12 @@ Run the test suite:
 pytest
 ```
 
-Run the linter (CI runs this too — a pull request won't pass CI if this
-doesn't):
+Run the linter and type checker (CI runs these too — a pull request won't pass CI if these
+don't):
 
 ```bash
 ruff check .
+mypy .
 ```
 
 To try the server against real sample data, generate or regenerate it with

@@ -1020,12 +1020,12 @@ def record_import_start(
         },
     )
     conn.commit()
-    return int(cursor.lastrowid)
+    return int(cursor.lastrowid or 0)
 
 
 def record_import_finish(
     conn: sqlite3.Connection,
-    import_id: int,  # type: ignore
+    import_id: int,
     status: str,
     *,
     rows_loaded: int | None = None,
@@ -1205,7 +1205,7 @@ def insert_measurement(
         },
     )
     conn.commit()
-    return cursor.lastrowid
+    return int(cursor.lastrowid or 0)
 
 
 def _day_after(end: str) -> str | None:
@@ -1221,7 +1221,7 @@ def _day_after(end: str) -> str | None:
 
 def query_measurements(
     conn: sqlite3.Connection,
-    metric: str | None = None,  # type: ignore
+    metric: str | None = None,
     start: str | None = None,
     end: str | None = None,
     source: str | None = None,
@@ -1235,7 +1235,8 @@ def query_measurements(
     filters are optional; omitting them all returns the most recent
     `limit` measurements across every metric.
     """
-    clauses, params = [], {}
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
     if metric is not None:
         clauses.append("metric = :metric")
         params["metric"] = metric
@@ -1259,7 +1260,7 @@ def query_measurements(
     cursor.row_factory = row_class()
     rows = cursor.execute(
         f"SELECT id, timestamp, metric, value, unit, source, source_type, importer, imported_at, created_at "
-        f"FROM measurements {where} ORDER BY timestamp DESC LIMIT :limit",  # type: ignore
+        f"FROM measurements {where} ORDER BY timestamp DESC LIMIT :limit",
         params,
     ).fetchall()
     return [dict(row) for row in rows]
@@ -1307,12 +1308,12 @@ def insert_workout_session(
         },
     )
     conn.commit()
-    return cursor.lastrowid
+    return int(cursor.lastrowid or 0)
 
 
 def query_workout_sessions(
     conn: sqlite3.Connection,
-    start: str | None = None,  # type: ignore
+    start: str | None = None,
     end: str | None = None,
     activity_type: str | None = None,
     limit: int = 1000,
@@ -1322,7 +1323,8 @@ def query_workout_sessions(
     compare against `date` (YYYY-MM-DD) inclusively. All filters are
     optional; omitting them all returns the most recent `limit` sessions.
     """
-    clauses, params = [], {}
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
     if start is not None:
         clauses.append("date >= :start")
         params["start"] = start
@@ -1338,7 +1340,7 @@ def query_workout_sessions(
     cursor.row_factory = row_class()
     rows = cursor.execute(
         f"SELECT id, date, activity_type, start_time, duration_minutes, intensity, "
-        f"avg_heart_rate, max_heart_rate, source, notes, created_at "  # type: ignore
+        f"avg_heart_rate, max_heart_rate, source, notes, created_at "
         f"FROM workout_sessions {where} ORDER BY date DESC, id DESC LIMIT :limit",
         params,
     ).fetchall()
@@ -1370,7 +1372,7 @@ def get_metric_provenance(conn: sqlite3.Connection, metric: str, day: str) -> di
     for row in rows:
         by_source.setdefault(row["source"], []).append((row["value"], row["timestamp"]))
 
-    sources = [
+    sources: list[dict[str, Any]] = [
         {
             "source": source,
             "value": round(sum(v for v, _ts in readings) / len(readings), 2),
@@ -1379,19 +1381,18 @@ def get_metric_provenance(conn: sqlite3.Connection, metric: str, day: str) -> di
         }
         for source, readings in by_source.items()
     ]
-    sources.sort(key=lambda s: s["n"], reverse=True)
+    sources.sort(key=lambda s: int(s["n"]), reverse=True)
 
     conflict = False
-    distinct_values = [s["value"] for s in sources if s["source"] is not None]
+    distinct_values: list[float] = [float(s["value"]) for s in sources if s["source"] is not None]
     if len(distinct_values) > 1:
-        lo, hi = min(distinct_values), max(distinct_values)  # type: ignore
+        lo, hi = min(distinct_values), max(distinct_values)
         conflict = lo == 0 or (hi - lo) / lo > CONFLICT_TOLERANCE_PCT
 
     return {"metric": metric, "date": day, "sources": sources, "conflict": conflict}
 
 
-# type: ignore
-# How far apart two sources' same-day averages for a metric can be before  # type: ignore
+# How far apart two sources' same-day averages for a metric can be before
 # get_metric_provenance/resolve_source_conflicts calls it a conflict
 # rather than ordinary reading-to-reading noise.
 CONFLICT_TOLERANCE_PCT = 0.05

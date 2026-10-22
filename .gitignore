@@ -1,25 +1,38 @@
 # Personal data — never commit this
 data/
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 .venv/
 venv/
+env/
+ENV/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Build artifacts — built by .github/workflows/publish.yml on release tags,
 # never meant to be committed (they'd immediately go stale)
 dist/
 build/
 
-# Patch files downloaded to apply locally — meant to be applied and
-# discarded, not committed (git add -A has swept these in by accident
-# more than once)
+# Patch & temporary debug files
 *.patch
+*.log
+*errors.txt
 
 # OS
 .DS_Store

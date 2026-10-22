@@ -74,6 +74,7 @@ import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from import_adapters import ADAPTERS, RowError, detect_adapter
 from logic import (
@@ -165,7 +166,7 @@ def _to_float(raw: str) -> float | None:
     return value
 
 
-def _read_csv(csv_path: Path, column_map: dict[str, str] | None = None) -> tuple[list[dict[str, str]], list[str]]:
+def _read_csv(csv_path: Path, column_map: dict[str, str] | None = None) -> tuple[list[dict[str, Any]], list[str]]:
     """Read csv_path, matching column names case-insensitively.
 
     column_map (canonical column -> this CSV's actual header text, e.g.
@@ -193,17 +194,18 @@ def _read_csv(csv_path: Path, column_map: dict[str, str] | None = None) -> tuple
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
             sys.exit(f"Error: {csv_path} appears to be empty.")
-        header_map = {name.strip().lower(): name for name in reader.fieldnames}
+        fieldnames = reader.fieldnames
+        header_map = {name.strip().lower(): name for name in fieldnames}
 
         def resolve(canonical: str) -> str | None:
             mapped = column_map.get(canonical)
             if mapped is not None:
-                if mapped not in reader.fieldnames:
+                if mapped not in fieldnames:
                     sys.exit(
-                        f"Error: --map {canonical}={mapped!r} but {csv_path} has no such "  # type: ignore
-                        f"column. Found columns: {', '.join(reader.fieldnames)}"
+                        f"Error: --map {canonical}={mapped!r} but {csv_path} has no such "
+                        f"column. Found columns: {', '.join(fieldnames)}"
                     )
-                return mapped  # type: ignore
+                return mapped
             direct = header_map.get(canonical)
             if direct is not None:
                 return direct
@@ -228,7 +230,6 @@ def _read_csv(csv_path: Path, column_map: dict[str, str] | None = None) -> tuple
     return rows, present_columns
 
 
-# type: ignore
 ALL_METRIC_COLUMNS = CORE_METRIC_COLUMNS + OPTIONAL_COLUMNS
 
 # Parser for each metric column's raw CSV string.
@@ -261,13 +262,13 @@ def _load_csv_rows(csv_path: Path, column_map: dict[str, str] | None = None) -> 
             date_val = (row.get("date") or "").strip()
             if not date_val:
                 raise RowError("missing date")
-            parsed = {"date": _normalize_date(date_val)}
+            parsed: dict[str, Any] = {"date": _normalize_date(date_val)}
             for col in present_columns:
                 parsed[col] = _METRIC_PARSERS[col](row.get(col) or "")
             try:
                 validate_metrics({k: v for k, v in parsed.items() if k != "date"})
             except ValueError as exc:
-                raise RowError(str(exc)) from exc  # type: ignore
+                raise RowError(str(exc)) from exc
             parsed_rows.append(parsed)
         except RowError as exc:
             print(f"Skipping {csv_path} line {i}: {exc}", file=sys.stderr)

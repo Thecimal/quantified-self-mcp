@@ -387,9 +387,8 @@ def register_health_tools(
                 "Could not write to the health database — it may be locked by another process. Try again in a moment.",
             ) from exc
 
-        return LogDailyMetricResult(logged=provided, row=DailyMetricsRow(**_redact_private_fields(row)))
+        return LogDailyMetricResult(logged=provided, row=DailyMetricsRow(**_redact_private_fields(row or {})))
 
-    # type: ignore
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Clear a single metric",

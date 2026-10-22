@@ -142,6 +142,7 @@ def _call_anthropic(prompt: str, tools: list[dict]) -> str:
         }
     ).encode("utf-8")
 
+    assert API_KEY is not None
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
         data=body,
@@ -152,7 +153,7 @@ def _call_anthropic(prompt: str, tools: list[dict]) -> str:
         },
         method="POST",
     )
-    try:  # type: ignore
+    try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:

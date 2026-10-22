@@ -67,7 +67,7 @@ def test_unreadable_version_is_an_error_not_a_pass(tmp_path):
 def test_the_real_pyproject_version_is_accepted_for_its_own_tag():
     sys.path.insert(0, str(SCRIPT.parent))
     try:
-        import check_tag_matches_version as mod
+        import check_tag_matches_version as mod  # type: ignore[import-not-found]
     finally:
         sys.path.remove(str(SCRIPT.parent))
     version = mod.project_version((REPO / "pyproject.toml").read_text())

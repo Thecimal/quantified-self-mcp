@@ -80,7 +80,7 @@ def test_every_field_is_carried_through():
 def test_records_are_immutable():
     record = normalize_record(_raw())
     with pytest.raises(FrozenInstanceError):
-        record.value = 1  # type: ignore[misc]
+        record.value = 1
 
 
 @pytest.mark.parametrize("metric", list(METRICS))

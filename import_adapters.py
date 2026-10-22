@@ -598,7 +598,7 @@ def adapt_whoop(path: Path) -> AdaptedImport:
 
     observations: list[dict[str, Any]] = []
     sleep_wake: dict[Any, datetime] = {}  # sleep id -> local time of waking, for dating recovery records
-    seen: set[tuple] = set()
+    seen: set[tuple[Any, ...]] = set()
     recoveries: list[dict] = []
     unsupported_types: defaultdict[str, int] = defaultdict(int)
     skipped = 0
@@ -657,16 +657,16 @@ def adapt_whoop(path: Path) -> AdaptedImport:
     for record in recoveries:
         try:
             what = "WHOOP recovery record"
-            key = ("recovery", record["cycle_id"], record["sleep_id"])
-            if key in seen:
+            recovery_key = ("recovery", record["cycle_id"], record["sleep_id"])
+            if recovery_key in seen:
                 continue
             score = record.get("score")
             if record.get("score_state") != "SCORED" or not isinstance(score, dict):
                 unsupported_types["recovery (not scored)"] += 1
-                seen.add(key)
+                seen.add(recovery_key)
                 continue
-            woke = sleep_wake.get(record["sleep_id"])
-            if woke is None:
+            recovery_woke = sleep_wake.get(record["sleep_id"])
+            if recovery_woke is None:
                 raise RowError(
                     f"{what} points to sleep {record['sleep_id']!r}, which is not a scored sleep in this file"
                 )
@@ -674,9 +674,9 @@ def adapt_whoop(path: Path) -> AdaptedImport:
             hrv = _finite_float(_whoop_need(score, "hrv_rmssd_milli", what), f"{what} hrv_rmssd_milli")
             _check_observation_bounds("resting_heart_rate", rhr, what)  # both valid before either is kept
             _check_observation_bounds("hrv_ms", hrv, what)
-            observe(woke, "resting_heart_rate", rhr, "bpm", what)
-            observe(woke, "hrv_ms", hrv, "ms", what)
-            seen.add(key)
+            observe(recovery_woke, "resting_heart_rate", rhr, "bpm", what)
+            observe(recovery_woke, "hrv_ms", hrv, "ms", what)
+            seen.add(recovery_key)
         except (RowError, TypeError) as exc:  # TypeError: an id or field of an unusable type
             skip(exc)
 

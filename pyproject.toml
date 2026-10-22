@@ -113,7 +113,6 @@ explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = [
-    "anthropic.*",
     "sqlcipher3.*",
     "generate_sample_data"
 ]

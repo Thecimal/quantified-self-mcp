@@ -215,6 +215,18 @@ Apple Health:
 quantified-self-init-db export.xml
 ```
 
+Android Health Connect:
+
+```bash
+quantified-self-init-db health_connect_export.zip
+```
+
+WHOOP Developer API (v2) JSON:
+
+```bash
+quantified-self-init-db whoop.json --source whoop
+```
+
 ### Verify your setup (optional)
 
 Run the built-in diagnostic tool to check Python, dependencies, and database readiness:
