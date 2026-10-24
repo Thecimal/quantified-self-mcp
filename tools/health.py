@@ -156,9 +156,17 @@ def register_health_tools(
         except ValueError as exc:
             raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
 
+        # Private metrics are left out of the query itself, not just redacted afterwards: a day that only has
+        # a private metric would otherwise come back as an all-null row, be counted in days_with_data and
+        # coverage, and so reveal when the private metric was logged.
+        public_metrics = [m for m in metric_columns if m not in PRIVATE_FIELDS]
         try:
             with readonly_connection(db_path) as conn:
-                rows = daily_metrics_wide(conn, metric_columns, start.isoformat(), end.isoformat())
+                rows = (
+                    daily_metrics_wide(conn, public_metrics, start.isoformat(), end.isoformat())
+                    if public_metrics
+                    else []
+                )
         except db_error_types() as exc:
             logger.error("Database error reading %s: %s", db_path, exc)
             if _is_locked_error(exc):
@@ -174,7 +182,6 @@ def register_health_tools(
         truncated = len(rows) > MAX_ROWS_RETURNED
         returned_rows = rows[-MAX_ROWS_RETURNED:] if truncated else rows
 
-        public_metrics = [m for m in metric_columns if m not in PRIVATE_FIELDS]
         return ReadHealthDataResult(
             range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
             rows=[DailyMetricsRow(**_redact_private_fields(row)) for row in returned_rows],

@@ -11,16 +11,9 @@ and reports coverage that no public metric backs.
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DEFECT: read_health_data builds rows, summary.days_with_data and coverage from a pivot that includes "
-    "private metrics, so private-only days appear as all-null rows and inflate coverage_percent.",
-)
 def test_read_health_data_ignores_days_with_only_private_data(tmp_path, monkeypatch):
     monkeypatch.setenv("HEALTH_DB_PATH", str(tmp_path / "health.db"))
     monkeypatch.setenv("HEALTH_PRIVATE_FIELDS", "weight_kg")
