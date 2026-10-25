@@ -38,7 +38,7 @@ STEP_DAYS = (1, 2, 3, 4, 5, 7, 8, 9)  # readings 1000*d and 500 -> day total 100
 RHR_DAYS = (1, 2, 3, 4, 7, 8)  # readings 60 and 60 + 2*d -> day mean 60 + d (a sum would be 120 + 2*d)
 
 # One value per day through log_daily_metric.
-DAILY = {
+DAILY: dict[str, dict[int, float]] = {
     "sleep_hours": {1: 6.5, 2: 7.0, 3: 7.5, 4: 8.0, 5: 8.5, 7: 9.5, 8: 10.0, 9: 10.5},
     "workout_minutes": {1: 40, 2: 50, 3: 60, 4: 70, 5: 80, 7: 100},
     "mood": {1: 4, 2: 6, 3: 5, 7: 8, 8: 9, 9: 7},
