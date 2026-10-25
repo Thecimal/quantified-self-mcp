@@ -1314,7 +1314,13 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         except db_error_types() as exc:
             logger.error("Database error reading from %s: %s", HEALTH_DB_PATH, exc)
         else:
-            sessions = [WorkoutSessionRow(**row) for row in session_rows]
+            # A session's average and maximum heart rate are the heart_rate metric, so they follow its privacy
+            # setting. Nulling them here also drops "avg HR" from the narrative below, which skips a null.
+            hr_private = "heart_rate" in PRIVATE_FIELDS
+            sessions = [
+                WorkoutSessionRow(**({**row, "avg_heart_rate": None, "max_heart_rate": None} if hr_private else row))
+                for row in session_rows
+            ]
             for s in sessions:
                 detail = f"Logged workout: {s.activity_type}, {s.duration_minutes} min"
                 if s.intensity:
