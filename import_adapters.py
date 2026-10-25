@@ -394,6 +394,15 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
 
     Any other recordType is silently ignored, same as an unmapped Apple
     Health identifier.
+
+    A record repeated in the file (same recordType and metadata.id, and
+    identical content) is counted once, so an export that lists a record
+    twice cannot inflate a summed metric. Nothing else is treated as a
+    repeat: records without a metadata.id, equal values at different times,
+    equal values from different data origins, and one id on two different
+    recordTypes are all kept. One id whose content differs (a record edited
+    between exports) is also kept, with a warning on stderr, since which
+    version is right cannot be told from the file.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -411,11 +420,26 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
     exercise_minutes: dict[str, float] = defaultdict(float)
     sleep_seconds: dict[str, float] = defaultdict(float)
     unsupported_types: defaultdict[str, int] = defaultdict(int)
+    seen_ids: dict[tuple[str, str], str] = {}  # (recordType, metadata.id) -> the record's content, as first seen
     skipped = 0
 
     for record in records:
         try:
             rtype = record.get("recordType")
+            metadata = record.get("metadata")
+            record_id = metadata.get("id") if isinstance(metadata, dict) else None
+            if rtype and isinstance(record_id, str) and record_id.strip():
+                key, content = (rtype, record_id.strip()), json.dumps(record, sort_keys=True)
+                if key not in seen_ids:
+                    seen_ids[key] = content
+                elif seen_ids[key] == content:
+                    continue  # the same record exported twice
+                else:
+                    print(
+                        f"Warning: {path} has {rtype} id {record_id!r} more than once with different content; "
+                        "keeping both.",
+                        file=sys.stderr,
+                    )
             if rtype == "StepsRecord":
                 when = _parse_hc_datetime(record["startTime"])
                 count = _finite_float(record["count"], "StepsRecord count")  # parse before touching the defaultdict
