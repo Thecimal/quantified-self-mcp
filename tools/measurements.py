@@ -13,6 +13,7 @@ these back in.
 """
 
 import difflib
+import re
 
 from mcp.types import ToolAnnotations
 
@@ -54,6 +55,21 @@ from schemas import (
     MeasurementRow,
     ReadMeasurementsResult,
 )
+
+# A numeric UTC offset ("-08:00", "+04:00") at the end of a timestamp, limited to the range SQLite's date() accepts
+# (hours 00-14) so that an invalid offset is still rejected rather than silently dropped.
+_NUMERIC_OFFSET = re.compile(r"(?<=\d)[+-](?:0\d|1[0-4]):[0-5]\d$")
+
+
+def _wall_clock(timestamp: str) -> str:
+    """The timestamp as local wall-clock time, which is how every timestamp in `measurements` is stored.
+
+    daily_metrics buckets days with SQLite date(timestamp), which converts an offset-aware string to UTC first, so
+    an evening reading written with an offset such as -08:00 would be filed under the next day, disagreeing with the
+    day the person's device showed. Dropping the offset keeps the day that was written (the same convention the
+    Apple Health and WHOOP imports follow). "Z" carries no local time, so it and naive timestamps are left as given.
+    """
+    return _NUMERIC_OFFSET.sub("", timestamp)
 
 
 def _redact_measurement(row: dict) -> dict:
@@ -167,7 +183,10 @@ def register_measurement_tools(
 
         Args:
             timestamp: When the observation was taken, YYYY-MM-DD or a full
-                ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS).
+                ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS). Give local
+                wall-clock time. A numeric UTC offset (e.g. -08:00) is dropped
+                before storing, so the reading belongs to the day written in
+                the timestamp; a trailing "Z" is kept and counts as UTC.
             metric: Name of the metric, e.g. "resting_heart_rate", "steps".
                 Not free-form: must already have an entry in the
                 aggregation_rules table (steps, sleep_hours,
@@ -190,6 +209,7 @@ def register_measurement_tools(
             parse_date(timestamp[:10], "timestamp")
         except ValueError as exc:
             raise _tool_error(ERR_INVALID_TIMESTAMP, str(exc)) from exc
+        timestamp = _wall_clock(timestamp)
         if not metric.strip():
             raise _tool_error(ERR_INVALID_METRIC, "metric must be a non-empty string.")
         # Same bounds log_daily_metric and the CSV importers enforce. Without it an absurd value is stored

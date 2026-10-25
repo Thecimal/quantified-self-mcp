@@ -7,6 +7,16 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Fixed
+
+- **`log_measurement` day-shift with a UTC offset** — a timestamp written with a numeric offset (for example
+  `2026-03-02T23:30:00-08:00`) was stored as given, and `daily_metrics` buckets days with SQLite `date(timestamp)`,
+  which converts it to UTC first, so an evening reading was filed under the next day (the same bug the Apple Health
+  import had). The offset is now dropped before storing, so the reading belongs to the day written in the
+  timestamp, like every other timestamp in `measurements`. `Z` and naive timestamps are stored exactly as before,
+  and an out-of-range offset is still rejected. Readings already logged with an offset keep their stored timestamp
+  and their UTC day; nothing is migrated or recomputed.
+
 ## [0.5.0] - 2026-10-22
 
 ### Added
