@@ -9,6 +9,13 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **Retrying an import that failed after its rows were committed left `daily_metrics` behind** — an import
+  commits its measurements and then rebuilds the daily projection in a separate transaction. If the
+  rebuild failed (the run is recorded as `failed`), re-running the same import found every row already
+  stored, wrote nothing, skipped the rebuild and was recorded as `succeeded` with `0 added`, while the
+  new days stayed missing from `daily_metrics` and `db_invariant.verify()` reported a mismatch. An
+  import with nothing to write now repairs the projection when `verify()` finds a mismatch. No rows are
+  duplicated or rewritten, and an import that wrote nothing on a consistent database is unchanged.
 - **Weight and workout data wrongly reported `STALE` after 2 days** — `data_health` judged every metric
   against the 2-day daily-metric limit, so a weigh-in or workout from last week made the result `STALE`
   (and, in `get_baseline`, added a `latest_observation_older_than_threshold` reason), while

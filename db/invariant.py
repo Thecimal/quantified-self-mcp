@@ -128,7 +128,12 @@ def bulk_insert_measurements(
     rebuilding, so a caller gets the same read-only confirmation repair() gives.
     """
     if not rows and before_insert is None:
-        return verify(conn)
+        # Nothing to write. But an earlier run may have committed its rows and then failed before the
+        # rebuild below (the commit and the rebuild are separate transactions), and a retry of it finds
+        # every row already stored, so it ends up here. Rebuild then, or the retry reports success while
+        # the projection stays behind the measurements.
+        result = verify(conn)
+        return repair(conn) if result["status"] == "mismatch" else result
 
     assert_metrics_supported(conn, rows)
 
