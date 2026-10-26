@@ -9,6 +9,12 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **Weight and workout data wrongly reported `STALE` after 2 days** — `data_health` judged every metric
+  against the 2-day daily-metric limit, so a weigh-in or workout from last week made the result `STALE`
+  (and, in `get_baseline`, added a `latest_observation_older_than_threshold` reason), while
+  `get_data_status` and the source-coverage matrix already treat `weight_kg` and `workout_minutes` as
+  episodic and current for 30 days. Results for those metrics now use the same 30-day limit. Daily
+  metrics keep the 2-day limit, and gaps are still reported.
 - **`log_measurement` day-shift with a UTC offset** — a timestamp written with a numeric offset (for example
   `2026-03-02T23:30:00-08:00`) was stored as given, and `daily_metrics` buckets days with SQLite `date(timestamp)`,
   which converts it to UTC first, so an evening reading was filed under the next day (the same bug the Apple Health

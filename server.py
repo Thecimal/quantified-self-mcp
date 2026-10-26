@@ -70,7 +70,7 @@ from analytics import (
     find_correlations,
 )
 from analytics import baseline as compute_baseline
-from data_health import compose_data_health, merge_data_health
+from data_health import DEFAULT_STALE_AFTER_DAYS, compose_data_health, merge_data_health
 from errors import (
     ERR_DATABASE_ERROR,
     ERR_DATABASE_LOCKED,
@@ -140,6 +140,7 @@ from schemas import (
     TrendStats,
     WorkoutSessionRow,
 )
+from source_coverage import EPISODIC_METRICS, EPISODIC_STALE_AFTER_DAYS
 from tools.health import register_health_tools
 from tools.measurements import register_measurement_tools
 from tools.status import register_status_tools
@@ -346,15 +347,21 @@ def _data_health(
     `metric` (one name for every window, or one per window) turns on the source check: a window whose
     projected source changes inside it, whose winner was an unranked tie-break, or (for one metric over
     several windows) whose source differs from another window's, is reported as MIXED_SOURCES rather
-    than presented as one anonymous series."""
+    than presented as one anonymous series.
+
+    `metric` also decides when a window counts as stale: an episodic metric (weight, workouts) is not
+    expected daily, so it is judged against EPISODIC_STALE_AFTER_DAYS, the same policy source_coverage
+    and get_data_status apply, instead of the daily-metric default."""
     evidences = [evidence] if isinstance(evidence, Evidence) else list(evidence)
+    names: list[str] | None = None
+    if metric is not None:
+        names = [metric] * len(evidences) if isinstance(metric, str) else list(metric)
     dataset = None
     summaries: list[dict] = []
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
             dataset = compute_data_status(conn, date_type.today(), exclude_metrics=PRIVATE_FIELDS)
-            if metric is not None:
-                names = [metric] * len(evidences) if isinstance(metric, str) else list(metric)
+            if names is not None:
                 summaries = [
                     projected_source_summary(
                         conn, name, date_type.fromisoformat(e.requested_start), date_type.fromisoformat(e.requested_end)
@@ -382,8 +389,13 @@ def _data_health(
                     decision_tier=claim.get("tier"),
                     must_state=claim.get("must_state", ()),
                     source_issues=found,
+                    stale_after_days=EPISODIC_STALE_AFTER_DAYS
+                    if name in EPISODIC_METRICS
+                    else DEFAULT_STALE_AFTER_DAYS,
                 )
-                for e, found in zip(evidences, issues, strict=True)
+                for e, found, name in zip(
+                    evidences, issues, names if names is not None else [""] * len(evidences), strict=True
+                )
             ]
         )
     )
