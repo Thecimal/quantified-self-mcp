@@ -47,8 +47,10 @@ All tools enforce strict input validation, privacy protections (`HEALTH_PRIVATE_
   Identify dates where metric values deviate significantly from baseline.
 * **`compare_metric_periods(metric, period_a_start, period_a_end, period_b_start, period_b_end)`**
   Compare metrics between two time spans (e.g., this week vs. last week).
-* **`find_metric_correlation(metric_a, metric_b, window_days=60, end_date=None)`**
-  Compute Pearson correlation coefficient between two metrics over matching days.
+* **`find_metric_correlation(metric_a, metric_b, start_date=None, end_date=None, lag_days=0)`**
+  Pearson correlation between two metrics' daily values over matching days (default window: the 90 days up to
+  `end_date`; `lag_days=1` pairs `metric_a` today with `metric_b` tomorrow). It is an association only, never
+  evidence that one metric affects the other. Read `claim.decision` (the tier and `must_state`) before reporting `r`.
 * **`get_recent_changes(window_days=14, baseline_days=30, end_date=None)`**
   Scan all active metrics to find meaningful deviations from normal baselines.
 * **`explain_metric_change(metric, target_date, baseline_days=30)`**

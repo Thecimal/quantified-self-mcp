@@ -920,16 +920,38 @@ def find_metric_correlation(
     Compute the Pearson correlation between two metrics over the same
     window, joined by date. Correlation, not causation: a strong r just
     means the two moved together, not that one caused the other.
+    A question phrased causally ("does my sleep affect my mood?") still
+    gets only this association. The result does not show that one metric
+    affects or causes the other, so report r, n and the wording the claim
+    allows, and say nothing stronger.
 
     Use this tool when:
     - the user names or implies two *different* metrics and asks whether
-      they move together (e.g. "does my sleep affect my mood?", "did my
-      HRV change after I increased my workouts?").
+      they move together (e.g. "does my sleep affect my mood?", "do days
+      with more workout minutes tend to have a higher HRV?").
 
     Do not use this tool when:
     - only one metric is in question -> use `get_baseline`,
       `calculate_metric_trend`, or `detect_metric_anomalies` instead,
       depending on what's being asked about that one metric.
+    - the question is why one metric looked the way it did on a specific
+      date -> use `explain_metric_change`, which already reports the
+      other metrics that correlate with it.
+    - the question is whether one metric differs between two time periods
+      (e.g. before vs. after a date) -> use `compare_metric_periods`.
+
+    Reading the result: report what was observed (r, n, and how many days
+    of each metric were present) separately from what may be claimed
+    about it. Read claim.decision before reporting r. Its tier
+    (insufficient, suggestive, detectable_not_meaningful or supported) is
+    the strongest wording allowed, and a high r from a thin or gappy
+    sample is capped there, not in r itself, so never judge a correlation
+    from r alone. claim.decision.template is a sentence frame, not
+    finished text: replace "..." with the finding, and {limiting_factors}
+    with the must_state entries put into plain words. Those entries are
+    codes, not sentences (practical_not_evaluated, for example, means that
+    whether the difference matters in practice was not checked), so do not
+    quote a code to the user. When data_health is not VALID, say why.
 
     Privacy note: this server and its SQLite file are entirely local, but
     the data returned by this tool becomes part of the conversation sent
