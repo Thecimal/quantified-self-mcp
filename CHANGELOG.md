@@ -9,6 +9,12 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **`quantified-self-backup restore` accepted any SQLite file with a table named `measurements` or
+  `daily_metrics`** — the check only looked for the table names, so an unrelated database (or a damaged
+  export) with such a table passed validation, replaced the current database (which was moved aside) and
+  left a file the server could not open (`no such column: metric`). The backup's `measurements` table must
+  now have `timestamp`, `metric` and `value`, and `daily_metrics` a `date` column, which every schema
+  version has had, so older backups are still accepted. A rejected backup changes nothing.
 - **Retrying an import that failed after its rows were committed left `daily_metrics` behind** — an import
   commits its measurements and then rebuilds the daily projection in a separate transaction. If the
   rebuild failed (the run is recorded as `failed`), re-running the same import found every row already

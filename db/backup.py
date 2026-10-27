@@ -32,6 +32,9 @@ from logic import SCHEMA_VERSION, connect_writable, db_error_types, default_data
 
 _SIDECARS = ("", "-wal", "-shm")  # a SQLite database in WAL mode is the main file plus these two
 _APP_TABLES = frozenset({"measurements", "daily_metrics"})
+# Columns every release since the table was created has had (daily_metrics' `date` is in both its wide and
+# its narrow form). A file whose table of that name lacks them is not a health database.
+_REQUIRED_COLUMNS = {"measurements": frozenset({"timestamp", "metric", "value"}), "daily_metrics": frozenset({"date"})}
 
 
 class BackupError(Exception):
@@ -60,6 +63,9 @@ def _check_database(path: Path) -> dict:
                 raise BackupError(f"{path.name} failed SQLite's integrity check ({problems[0]}); it is damaged.")
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             version = conn.execute("PRAGMA user_version").fetchone()[0]
+            columns = {
+                t: {row[1] for row in conn.execute(f"PRAGMA table_info({t})")} for t in _REQUIRED_COLUMNS if t in tables
+            }
             count = conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] if "measurements" in tables else 0
     except BackupError:
         raise
@@ -70,6 +76,12 @@ def _check_database(path: Path) -> dict:
         ) from exc
     if not tables & _APP_TABLES:
         raise BackupError(f"{path.name} is a SQLite file but not a Quantified Self health database.")
+    for table, present in columns.items():
+        if missing := _REQUIRED_COLUMNS[table] - present:
+            raise BackupError(
+                f"{path.name} has a {table} table without the column(s) {', '.join(sorted(missing))}, so it is "
+                "not a Quantified Self health database."
+            )
     if version > SCHEMA_VERSION:
         raise BackupError(
             f"{path.name} has schema version {version}, newer than this release understands ({SCHEMA_VERSION}). "
