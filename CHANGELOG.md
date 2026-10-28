@@ -9,6 +9,18 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **Apple Health sleep lost its source and was added up across sources** — the importer summed every
+  "asleep" interval of a day, whichever app or device recorded it, and stored the total as one row under
+  the importer's name. A night recorded by two sources (a watch and a sleep app) therefore came out as
+  both durations added together, as if one source had slept that long, and neither source's name reached
+  the database, `get_metric_provenance` or the source coverage report, though steps, weight and the
+  other Apple Health metrics already kept it. Sleep is now stored like those: one day total per source,
+  under the `sourceName` its records carry, so the daily view picks one source's night instead of
+  adding them. A record with no `sourceName` is still stamped with the importer's name (no device is
+  invented), a day total keeps the noon day-level timestamp, and an interval that ends before it starts
+  is skipped like any other invalid record rather than subtracted from the day. Re-importing the same
+  export changes nothing; re-importing over a database imported earlier replaces the old summed row in
+  place. No migration is needed.
 - **`quantified-self-backup restore` accepted any SQLite file with a table named `measurements` or
   `daily_metrics`** — the check only looked for the table names, so an unrelated database (or a damaged
   export) with such a table passed validation, replaced the current database (which was moved aside) and

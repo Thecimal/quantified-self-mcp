@@ -186,7 +186,7 @@ def test_sample_files_through_two_importers_no_longer_double_count(tmp_path):
     ).fetchone() == (6.2, "fallback")
     unstamped = "SELECT COUNT(*) FROM measurements WHERE source IS NULL AND importer IS NOT NULL"
     assert conn.execute(unstamped).fetchone() == (0,)
-    # On every day both importers reported, the stored value is one importer's total, never their sum.
+    # On every day two sources reported, the stored value is one source's total, never their sum.
     two_sources = conn.execute(
         "SELECT date, value, resolved_source FROM daily_metrics WHERE metric = 'sleep_hours' AND source_count = 2"
     ).fetchall()
@@ -194,8 +194,8 @@ def test_sample_files_through_two_importers_no_longer_double_count(tmp_path):
     for day, value, resolved in two_sources:
         totals = dict(
             conn.execute(
-                "SELECT importer, SUM(value) FROM measurements WHERE metric = 'sleep_hours' AND date(timestamp) = ? "
-                "GROUP BY importer",
+                "SELECT source, SUM(value) FROM measurements WHERE metric = 'sleep_hours' AND date(timestamp) = ? "
+                "GROUP BY source",
                 (day,),
             )
         )

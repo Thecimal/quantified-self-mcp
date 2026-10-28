@@ -59,13 +59,13 @@ APPLE_RECORDS = [
 ]
 
 # What the database must hold afterwards: (timestamp, metric, value, source). The wall-clock time the source
-# reported is kept (no UTC shift); sleep is a day-level total, stored at the noon placeholder under the importer.
+# reported is kept (no UTC shift); sleep is a day-level total per source, stored at the noon placeholder.
 EXPECTED_MEASUREMENTS = [
     ("2026-03-02T03:00:00", "hrv_ms", 44.0, "Watch"),
     ("2026-03-02T06:00:00", "resting_heart_rate", 58.0, "Watch"),
     ("2026-03-02T07:00:00", "resting_heart_rate", 62.0, "Watch"),
     ("2026-03-02T07:10:00", "steps", 3000.0, "Watch"),
-    ("2026-03-02T12:00:00", "sleep_hours", 8.0, "apple-health"),
+    ("2026-03-02T12:00:00", "sleep_hours", 8.0, "Watch"),
     ("2026-03-02T12:00:00", "steps", 900.0, "Phone"),
     ("2026-03-02T18:40:00", "steps", 4500.0, "Watch"),
     ("2026-03-02T20:00:00", "water_ml", 1500.0, "Phone"),

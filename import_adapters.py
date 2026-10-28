@@ -187,7 +187,11 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
     - sleep_hours: summed duration (endDate - startDate) of "asleep"
       HKCategoryTypeIdentifierSleepAnalysis intervals, attributed to the
       calendar day the interval started on — a night that crosses
-      midnight is counted entirely on the day it started, not split
+      midnight is counted entirely on the day it started, not split.
+      Each source's intervals make that source's own day total (one
+      observation per source and day, stamped with the records' own
+      sourceName, at the noon day-level placeholder): two sources that
+      recorded the same night overlap, so they are never added together
     """
     step_sum: dict[str, float] = defaultdict(float)
     exercise_sum: dict[str, float] = defaultdict(float)
@@ -197,6 +201,7 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
     hrv_readings: dict[str, list[float]] = defaultdict(list)
     weight_latest: dict[str, tuple[datetime, float]] = {}
     sleep_seconds: dict[str, float] = defaultdict(float)
+    sleep_seconds_by_source: dict[tuple[str, str | None], float] = defaultdict(float)
     raw_measurements: list[dict[str, Any]] = []
     unsupported_types: defaultdict[str, int] = defaultdict(int)
     skipped = 0
@@ -286,7 +291,12 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
                     raise RowError("sleep record missing startDate or endDate")
                 start_dt = _parse_apple_datetime(start_raw)
                 end_dt = _parse_apple_datetime(end_raw)
-                sleep_seconds[start_dt.date().isoformat()] += (end_dt - start_dt).total_seconds()
+                if end_dt < start_dt:
+                    raise RowError("sleep record ends before it starts")
+                asleep = (end_dt - start_dt).total_seconds()
+                sleep_day = start_dt.date().isoformat()
+                sleep_seconds[sleep_day] += asleep
+                sleep_seconds_by_source[(sleep_day, elem.get("sourceName"))] += asleep
             elif rtype and rtype != "HKCategoryTypeIdentifierSleepAnalysis":
                 # A record type (or a Sleep record whose value isn't one
                 # of _SLEEP_ASLEEP_VALUES, e.g. InBed/Awake) this adapter
@@ -348,6 +358,22 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
         if day in water_sum:
             row["water_ml"] = int(round(water_sum[day]))
         rows.append(row)
+
+    # Sleep is stored like the quantity records: one observation per source, under the sourceName its records
+    # carry (a record with none keeps None and is stamped with the importer's name on import, as for any other
+    # metric), so the daily projection resolves between sources instead of being handed one added-up total.
+    # The day total stays at the noon placeholder, so the day each interval is filed under does not change.
+    for (day, source_name), seconds in sorted(
+        sleep_seconds_by_source.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")
+    ):
+        raw_measurements.append(
+            {
+                "timestamp": f"{day}T12:00:00",
+                "metric": "sleep_hours",
+                "value": round(seconds / 3600, 2),
+                "source": source_name,
+            }
+        )
 
     return AdaptedImport(
         rows=rows,
