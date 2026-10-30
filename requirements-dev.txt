@@ -3,7 +3,7 @@ pytest>=9.1.1,<10.0
 pytest-asyncio>=1.4.0,<2.0
 pytest-cov>=7.1.0
 ruff>=0.17.1,<0.18
-mypy>=1.15.0
+mypy>=2.4.0
 pre-commit>=4.0.0
 types-PyYAML>=6.0.0
 # Optional at runtime (see logic.py's "Database encryption" section) but a
