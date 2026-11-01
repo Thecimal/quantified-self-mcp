@@ -7,6 +7,15 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Changed
+
+- **`get_recent_changes` is about four times faster on a multi-year database.** It read each metric's
+  recent and baseline windows with 18 separate reads, and every read re-ran the schema and trigger
+  setup before a query that itself takes well under a millisecond; that setup was about 80% of the
+  call. It now reads every metric over both windows in one query. On three years of daily data (1,095
+  days, 9 metrics) a call went from about 160 ms to about 40 ms, with identical results, the same
+  evidence and confidence decisions, and the same privacy filtering.
+
 ### Fixed
 
 - **Apple Health sleep lost its source and was added up across sources** — the importer summed every

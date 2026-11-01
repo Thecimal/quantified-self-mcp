@@ -289,9 +289,15 @@ def _readonly_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
         yield conn
 
 
-def _fetch_metric_series(metric: str, start: date_type, end: date_type) -> list[Point]:
-    """Read a single metric's (date, value) series from daily_metrics,
-    skipping days where it's null.
+def _fetch_metrics_series(metrics: list[str], start: date_type, end: date_type) -> dict[str, list[Point]]:
+    """Read each metric's (date, value) series from daily_metrics over one
+    connection and one query, skipping the days where that metric is null.
+    Returns {metric: series}.
+
+    _fetch_metric_series is this for a single metric. A tool that needs many
+    series (get_recent_changes reads every metric) should call this once:
+    _ensure_db re-runs the schema/trigger bootstrap on every connection, and
+    that, not the query, was most of such a tool's time.
 
     Every Layer-2/Layer-3 tool below goes through this, so each gets the
     same two guardrails read_health_data already applies: an unrecognized
@@ -303,16 +309,17 @@ def _fetch_metric_series(metric: str, start: date_type, end: date_type) -> list[
     "private" has to mean "never fed into analytics," not just "never
     printed raw."
     """
-    if metric not in METRIC_COLUMNS:
-        raise _tool_error(ERR_INVALID_FIELD, f"metric must be one of: {', '.join(METRIC_COLUMNS)} — got {metric!r}")
-    if metric in PRIVATE_FIELDS:
-        raise _tool_error(
-            ERR_INVALID_FIELD,
-            f"{metric!r} is configured as private (HEALTH_PRIVATE_FIELDS) and can't be analyzed.",
-        )
+    for metric in metrics:
+        if metric not in METRIC_COLUMNS:
+            raise _tool_error(ERR_INVALID_FIELD, f"metric must be one of: {', '.join(METRIC_COLUMNS)} — got {metric!r}")
+        if metric in PRIVATE_FIELDS:
+            raise _tool_error(
+                ERR_INVALID_FIELD,
+                f"{metric!r} is configured as private (HEALTH_PRIVATE_FIELDS) and can't be analyzed.",
+            )
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
-            rows = daily_metrics_wide(conn, [metric], start.isoformat(), end.isoformat())
+            rows = daily_metrics_wide(conn, metrics, start.isoformat(), end.isoformat()) if metrics else []
     except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         if _is_locked_error(exc):
@@ -324,7 +331,16 @@ def _fetch_metric_series(metric: str, start: date_type, end: date_type) -> list[
             ERR_DATABASE_ERROR,
             "Could not read the health database — it may be missing or corrupt. Try again, or re-run init_db.py.",
         ) from exc
-    return [Point(parse_date(row["date"], "date"), float(row[metric])) for row in rows]
+    return {
+        metric: [Point(parse_date(row["date"], "date"), float(row[metric])) for row in rows if row[metric] is not None]
+        for metric in metrics
+    }
+
+
+def _fetch_metric_series(metric: str, start: date_type, end: date_type) -> list[Point]:
+    """One metric's (date, value) series; see _fetch_metrics_series, which it calls
+    with the same guardrails and the same errors."""
+    return _fetch_metrics_series([metric], start, end)[metric]
 
 
 def _baseline_stats(series: list[Point]) -> BaselineStats:
@@ -1102,11 +1118,13 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
 
     changes: list[ChangeNote] = []
     metric_evidences: list[Evidence] = []
-    for metric in METRIC_COLUMNS:
-        if metric in PRIVATE_FIELDS:
-            continue
-        recent_series = _fetch_metric_series(metric, recent_start, end)
-        baseline_series = _fetch_metric_series(metric, baseline_start, baseline_end)
+    metrics = [metric for metric in METRIC_COLUMNS if metric not in PRIVATE_FIELDS]
+    # One read for every metric over the baseline and recent windows (they are adjacent), split by day below:
+    # 18 separate reads each re-ran the schema bootstrap, which was ~80% of this tool's time.
+    window_series = _fetch_metrics_series(metrics, baseline_start, end)
+    for metric in metrics:
+        recent_series = [point for point in window_series[metric] if point.day >= recent_start]
+        baseline_series = [point for point in window_series[metric] if point.day <= baseline_end]
         # One evidence object per metric, over the full window this metric's
         # notes below are drawn from (baseline period + recent period), so a
         # "shift"/"anomaly"/"trend" note is never reported without the
