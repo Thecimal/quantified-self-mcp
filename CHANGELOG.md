@@ -18,6 +18,18 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **Health Connect steps, workouts and sleep from two apps were added together** — the importer summed
+  every `StepsRecord`, `ExerciseSessionRecord` and `SleepSessionRecord` of a day whichever app wrote it
+  and stored one total under the importer's name, ignoring `metadata.dataOrigin`. A walk recorded by two
+  apps (a fitness app and the phone vendor's health app) therefore counted twice, and neither app's
+  name reached the database. These three metrics are now stored one day total per data origin, under
+  the origin's package name, so the daily view picks one origin's total instead of adding them, as it
+  already does for Apple Health. Nothing is merged because values or times match: both origins' rows
+  are kept, records of one origin still add up, a record repeated with the same id is still counted
+  once, and a record with no `dataOrigin` is stamped with the importer's name (no origin is invented).
+  Re-importing the same export changes nothing; re-importing over a database imported earlier replaces
+  the old summed row in place. Heart rate, resting heart rate, HRV and weight are unchanged. No
+  migration is needed.
 - **Apple Health sleep lost its source and was added up across sources** — the importer summed every
   "asleep" interval of a day, whichever app or device recorded it, and stored the total as one row under
   the importer's name. A night recorded by two sources (a watch and a sleep app) therefore came out as
