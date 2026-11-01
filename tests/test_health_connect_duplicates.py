@@ -52,7 +52,8 @@ RECORDS = [
     _steps(3, 8, 500, "c1"),
     _steps(3, 9, 500, "c2"),
     # 06-04: two data origins reporting the same interval and value. Matching values alone do not make them one
-    # record, so neither is dropped here (which origin should win is a source-resolution question, not this one's).
+    # record, so neither is dropped: each origin's total is stored under its own source, and the daily view
+    # picks one source instead of adding them (see test_health_connect_origin_provenance.py).
     _steps(4, 8, 2000, "d1", GOOGLE_FIT),
     _steps(4, 8, 2000, "d2", SAMSUNG),
     # 06-05: one id, different content (a record edited between exports): ambiguous, so both are kept.
@@ -87,7 +88,7 @@ def test_a_repeated_health_connect_record_counts_once_and_ambiguous_ones_are_kep
     assert daily[("2026-06-01", "steps")] == 1000  # identical repeat of a1: once
     assert daily[("2026-06-02", "steps")] == 1400  # no id: both kept
     assert daily[("2026-06-03", "steps")] == 1000  # equal values, different ids and times: both kept
-    assert daily[("2026-06-04", "steps")] == 4000  # different origins, matching values: not merged
+    assert daily[("2026-06-04", "steps")] == 2000  # different origins: both kept, one source's total shown
     assert daily[("2026-06-05", "steps")] == 700  # same id, different content: both kept
     assert daily[("2026-06-06", "steps")] == 1000  # id shared with another record type: not a repeat
     assert daily[("2026-06-06", "weight_kg")] == 70.0

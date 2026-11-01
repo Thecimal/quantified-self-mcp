@@ -73,7 +73,7 @@ class AdaptedImport(NamedTuple):
     skipped: int  # source records this adapter itself couldn't parse (already printed to stderr)
     # Individual, unaggregated observations this adapter could recover
     # provenance for — each: {"timestamp", "metric", "value", "unit",
-    # "source"}. Provenance-aware sources (currently just Apple Health,
+    # "source"}. Provenance-aware sources (Apple Health, and Health Connect for its summed metrics,
     # via each Record's `sourceName` attribute — e.g. "Ben's Apple
     # Watch") populate this; init_db.py loads it into the measurements
     # table alongside `rows` (see logic.measurement_rows_from_daily's
@@ -402,6 +402,14 @@ def _parse_hc_datetime(raw: str) -> datetime:
         raise RowError(f"unparseable Health Connect timestamp {raw!r}") from exc
 
 
+def _hc_data_origin(metadata: Any) -> str | None:
+    """The package name of the app that wrote a Health Connect record (metadata.dataOrigin.packageName),
+    or None when it is missing or blank."""
+    origin = metadata.get("dataOrigin") if isinstance(metadata, dict) else None
+    name = origin.get("packageName") if isinstance(origin, dict) else None
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
 def adapt_health_connect(path: Path) -> AdaptedImport:
     """Parse a Health Connect record-JSON export (see the module
     docstring for exactly which export shape this expects) and aggregate
@@ -429,6 +437,13 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
     recordTypes are all kept. One id whose content differs (a record edited
     between exports) is also kept, with a warning on stderr, since which
     version is right cannot be told from the file.
+
+    steps, workout_minutes and sleep_hours are also stored one day total per data origin
+    (metadata.dataOrigin.packageName), as raw_measurements under that package name, instead of one
+    total added up across every app that wrote to Health Connect. Two apps reporting the same walk
+    are therefore two sources for the day, and the daily view picks one of them rather than adding
+    them (see db/aggregation.py). A record with no usable dataOrigin keeps source None and is
+    stamped with the importer's name on import; no origin is invented for it.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -445,6 +460,9 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
     weight_latest: dict[str, tuple[datetime, float]] = {}
     exercise_minutes: dict[str, float] = defaultdict(float)
     sleep_seconds: dict[str, float] = defaultdict(float)
+    # The same three summed totals (sleep in seconds), split by the data origin that wrote the records:
+    # (metric, day, origin).
+    summed_by_origin: dict[tuple[str, str, str | None], float] = defaultdict(float)
     unsupported_types: defaultdict[str, int] = defaultdict(int)
     seen_ids: dict[tuple[str, str], str] = {}  # (recordType, metadata.id) -> the record's content, as first seen
     skipped = 0
@@ -454,6 +472,7 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
             rtype = record.get("recordType")
             metadata = record.get("metadata")
             record_id = metadata.get("id") if isinstance(metadata, dict) else None
+            origin = _hc_data_origin(metadata)
             if rtype and isinstance(record_id, str) and record_id.strip():
                 key, content = (rtype, record_id.strip()), json.dumps(record, sort_keys=True)
                 if key not in seen_ids:
@@ -470,6 +489,7 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
                 when = _parse_hc_datetime(record["startTime"])
                 count = _finite_float(record["count"], "StepsRecord count")  # parse before touching the defaultdict
                 step_sum[when.date().isoformat()] += count
+                summed_by_origin[("steps", when.date().isoformat(), origin)] += count
             elif rtype == "HeartRateRecord":
                 for sample in record.get("samples", []):
                     when = _parse_hc_datetime(sample["time"])
@@ -497,6 +517,9 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
                 start = _parse_hc_datetime(record["startTime"])
                 end = _parse_hc_datetime(record["endTime"])
                 exercise_minutes[start.date().isoformat()] += (end - start).total_seconds() / 60
+                summed_by_origin[("workout_minutes", start.date().isoformat(), origin)] += (
+                    end - start
+                ).total_seconds() / 60
             elif rtype == "SleepSessionRecord":
                 start = _parse_hc_datetime(record["startTime"])
                 day = start.date().isoformat()
@@ -507,9 +530,11 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
                             s = _parse_hc_datetime(stage["startTime"])
                             e = _parse_hc_datetime(stage["endTime"])
                             sleep_seconds[day] += (e - s).total_seconds()
+                            summed_by_origin[("sleep_hours", day, origin)] += (e - s).total_seconds()
                 else:
                     end = _parse_hc_datetime(record["endTime"])
                     sleep_seconds[day] += (end - start).total_seconds()
+                    summed_by_origin[("sleep_hours", day, origin)] += (end - start).total_seconds()
             elif rtype:
                 # A recordType this adapter doesn't map to a column (e.g.
                 # BloodPressureRecord, OxygenSaturationRecord, dozens of
@@ -564,10 +589,28 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
             row["workout_minutes"] = int(round(exercise_minutes[day]))
         rows.append(row)
 
+    # One observation per (metric, day, origin) for the summed metrics, at the noon day-level placeholder, so
+    # the daily projection resolves between origins instead of being handed one added-up total. Every
+    # day of these metrics is covered here, so init_db skips their day rows (skip_metrics) and nothing is
+    # counted twice. A single origin's value is rounded exactly as the day row above rounds it.
+    raw_measurements: list[dict[str, Any]] = []
+    for (metric, day, origin), total in sorted(
+        summed_by_origin.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2] or "")
+    ):
+        raw_measurements.append(
+            {
+                "timestamp": f"{day}T12:00:00",
+                "metric": metric,
+                "value": round(total / 3600, 2) if metric == "sleep_hours" else int(round(total)),
+                "source": origin,
+            }
+        )
+
     return AdaptedImport(
         rows=rows,
         present_columns=present_columns,
         skipped=skipped,
+        raw_measurements=raw_measurements,
         unsupported_types=dict(unsupported_types),
     )
 
