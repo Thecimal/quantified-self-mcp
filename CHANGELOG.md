@@ -9,6 +9,12 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **A source conflict on the last day of a window could go uncounted** — `explain_metric_change`'s
+  count of days where sources disagreed (`conflicting_days`) bounded its window with
+  `<last day>T23:59:59`, so a reading in that last second with fractional seconds (`23:59:59.5`, which the
+  timestamp format allows and WHOOP imports can carry) fell outside it, although the daily view counted it
+  on that day. The window now ends at the end of its last day, the same day boundary the daily view uses.
+  Readings at any other time are counted exactly as before.
 - **Workout sessions ignored `HEALTH_PRIVATE_FIELDS`** — `read_workout_sessions` and
   `log_workout_session` returned a session's `duration_minutes` even with `workout_minutes` private, and
   its average and maximum heart rate even with `heart_rate` private, though every other tool nulls,

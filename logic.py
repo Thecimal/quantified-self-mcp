@@ -1516,7 +1516,10 @@ def count_source_conflicts(conn: sqlite3.Connection, metric: str, start: date, e
     """
     # limit=-1 (SQLite: no limit): this count is a mandatory caveat, so it must see every row in the window.
     # A MAX_ROWS_RETURNED cap would drop the oldest days (newest-first order) and undercount conflicts.
-    rows = query_measurements(conn, metric=metric, start=start.isoformat(), end=end.isoformat() + "T23:59:59", limit=-1)
+    # A plain-date end takes in the whole last day, as the projection's date(timestamp) does. An end of
+    # "...T23:59:59" dropped a reading in that last second that has fractional seconds, which the timestamp
+    # contract allows (.mmm, .ffffff), so a conflict on the window's last day could go uncounted.
+    rows = query_measurements(conn, metric=metric, start=start.isoformat(), end=end.isoformat(), limit=-1)
     by_day: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         by_day.setdefault(row["timestamp"][:10], []).append(row)
