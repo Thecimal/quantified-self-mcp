@@ -440,7 +440,7 @@ class WorkoutSessionRow(BaseModel):
     date: str
     activity_type: str
     start_time: str | None = None
-    duration_minutes: int
+    duration_minutes: int | None  # null for workout_minutes listed in HEALTH_PRIVATE_FIELDS
     intensity: str | None = None
     avg_heart_rate: int | None = None
     max_heart_rate: int | None = None

@@ -7,6 +7,16 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Fixed
+
+- **Workout sessions ignored `HEALTH_PRIVATE_FIELDS`** — `read_workout_sessions` and
+  `log_workout_session` returned a session's `duration_minutes` even with `workout_minutes` private, and
+  its average and maximum heart rate even with `heart_rate` private, though every other tool nulls,
+  refuses or skips a private metric (and `explain_metric_change` already nulled a quoted session's heart
+  rate). Both tools now return null for those fields when their metric is private; the stored session is
+  untouched, and with no private fields set nothing changes. `duration_minutes` in the session schema is
+  therefore nullable.
+
 ### Changed
 
 - **`get_recent_changes` is about four times faster on a multi-year database.** It read each metric's

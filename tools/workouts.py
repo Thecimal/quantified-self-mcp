@@ -37,11 +37,26 @@ from logic import (
     row_class,
     validate_read_window,
 )
+from privacy import PRIVATE_FIELDS
 from schemas import (
     LogWorkoutSessionResult,
     ReadWorkoutSessionsResult,
     WorkoutSessionRow,
 )
+
+
+def _redact_private_session(row: dict) -> dict:
+    """A workout session row with the values of any private metric nulled. duration_minutes is the
+    workout_minutes quantity and avg/max heart rate are the heart_rate metric, so each follows that metric's
+    HEALTH_PRIVATE_FIELDS setting, the same rule explain_metric_change applies to the sessions it quotes. The
+    stored row is untouched."""
+    redacted = dict(row)
+    if "workout_minutes" in PRIVATE_FIELDS:
+        redacted["duration_minutes"] = None
+    if "heart_rate" in PRIVATE_FIELDS:
+        redacted["avg_heart_rate"] = None
+        redacted["max_heart_rate"] = None
+    return redacted
 
 
 def register_workout_tools(
@@ -122,7 +137,8 @@ def register_workout_tools(
             notes: Free-text notes, e.g. route or how it felt. Optional.
 
         Returns:
-            A LogWorkoutSessionResult with the stored row, including its new id.
+            A LogWorkoutSessionResult with the stored row, including its new id. duration_minutes is null
+            when workout_minutes is private (HEALTH_PRIVATE_FIELDS), and the heart rates when heart_rate is.
         """
         try:
             parse_date(date, "date")
@@ -166,7 +182,7 @@ def register_workout_tools(
                 "Could not write to the health database — it may be locked by another process. Try again in a moment.",
             ) from exc
 
-        return LogWorkoutSessionResult(session=WorkoutSessionRow(**dict(row)))
+        return LogWorkoutSessionResult(session=WorkoutSessionRow(**_redact_private_session(dict(row))))
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -210,7 +226,8 @@ def register_workout_tools(
             limit: Maximum rows to return, 1 to 1000 (default 200).
 
         Returns:
-            A ReadWorkoutSessionsResult with the matching rows and a count.
+            A ReadWorkoutSessionsResult with the matching rows and a count. duration_minutes is null when
+            workout_minutes is private (HEALTH_PRIVATE_FIELDS), and the heart rates when heart_rate is.
         """
         try:
             start_date, end_date = validate_read_window(start_date, end_date, limit)
@@ -230,6 +247,8 @@ def register_workout_tools(
             logger.error("Database error reading from %s: %s", db_path, exc)
             raise _tool_error(ERR_DATABASE_ERROR, "Could not read the health database. Try again in a moment.") from exc
 
-        return ReadWorkoutSessionsResult(sessions=[WorkoutSessionRow(**row) for row in rows], count=len(rows))
+        return ReadWorkoutSessionsResult(
+            sessions=[WorkoutSessionRow(**_redact_private_session(row)) for row in rows], count=len(rows)
+        )
 
     return log_workout_session, read_workout_sessions

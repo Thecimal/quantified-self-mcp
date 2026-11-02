@@ -8,8 +8,7 @@ Privacy-boundary audit: HEALTH_PRIVATE_FIELDS must hold on every output path.
    tool and resource through the real MCP client (including with the private
    metric as an argument), and checks tool results, error messages, resources,
    the exported CSV file, and server logs for the sentinel.
-3. One strict xfail records a confirmed bypass (workout sessions); it turns red
-   when the bypass is fixed so the marker must be removed deliberately.
+3. Workout sessions follow the privacy setting of the metrics they carry; see test_workout_privacy.py.
 """
 
 import json
@@ -30,7 +29,6 @@ REDACTS = "redacts the private metric's value (null) in its output"
 REFUSES = "refuses a private metric outright (error), never computes from it"
 EXCLUDES = "silently skips private metrics when it iterates over all metrics"
 NO_PRIVATE_DATA = "returns no metric values (writes only, or reads a non-metric table)"
-KNOWN_GAP = "KNOWN GAP: see the strict xfail below"
 
 PRIVACY_BOUNDARY = {
     "read_health_data": REDACTS,
@@ -51,8 +49,8 @@ PRIVACY_BOUNDARY = {
     "explain_metric_change": EXCLUDES,
     "get_data_status": EXCLUDES,
     "get_import_status": NO_PRIVATE_DATA,
-    "log_workout_session": KNOWN_GAP,
-    "read_workout_sessions": KNOWN_GAP,
+    "log_workout_session": REDACTS,
+    "read_workout_sessions": REDACTS,
 }
 
 # Distinctive values: a float and a 4-digit int that do not occur in ids,
@@ -204,27 +202,6 @@ async def test_private_metric_is_still_stored_and_other_metrics_unaffected(make_
         assert conn.execute("SELECT value FROM daily_metrics WHERE metric = 'weight_kg'").fetchone() == (77.3173,)
     finally:
         conn.close()
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="DEFECT: read_workout_sessions / log_workout_session ignore HEALTH_PRIVATE_FIELDS. With "
-    "workout_minutes private, a session's duration_minutes (the same quantity) is still returned, and "
-    "avg/max heart rate come back even with heart_rate private. Needs a policy decision: redact the "
-    "fields (duration_minutes would have to become nullable in the public schema) or refuse the tool.",
-)
-async def test_workout_sessions_respect_private_workout_minutes(make_server):
-    server = make_server("workout_minutes")
-    async with Client(server.mcp) as client:
-        await client.call_tool(
-            "log_workout_session",
-            {"date": "2026-10-01", "activity_type": "run", "duration_minutes": 137},
-        )
-        try:
-            text = json.dumps((await client.call_tool("read_workout_sessions", {})).structured_content)
-        except ToolError as exc:
-            text = f"ERROR {exc}"
-    assert not _hits(137, text)
 
 
 @pytest.mark.parametrize("private", ["weight_kg", "water_ml"])
