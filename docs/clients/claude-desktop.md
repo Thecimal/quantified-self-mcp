@@ -1,75 +1,88 @@
 # Claude Desktop
 
-Tested with Claude Desktop on macOS and Windows.
+Tested with Claude Desktop on macOS, Windows, and Linux.
 
-## 1. Install
+---
+
+## Option 1: Run with `uvx` (Recommended — No clone needed)
+
+If you have `uv` installed, Claude Desktop can run Quantified Self MCP directly without managing virtual environments:
+
+Open your Claude Desktop configuration file:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+Or in the app: **Settings → Developer → Edit Config**.
+
+Add this entry under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "quantified-self": {
+      "command": "uvx",
+      "args": ["quantified-self-mcp"]
+    }
+  }
+}
+```
+
+---
+
+## Option 2: Local Source / Virtual Environment
+
+If you are developing locally or prefer a fixed virtual environment:
+
+### 1. Clone & Install
 
 ```bash
 git clone https://github.com/Thecimal/quantified-self-mcp.git
 cd quantified-self-mcp
 python3 -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
-## 2. Import sample data
+### 2. Import Data
 
 ```bash
-python init_db.py sample_data/health_sample.csv
+quantified-self-init-db sample_data/health_sample.csv
 ```
 
-## 3. Copy this config
+### 3. Configure Claude Desktop
 
-Open the config file:
+Add this entry under `mcpServers` in `claude_desktop_config.json`:
 
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux**: `~/.config/Claude/claude_desktop_config.json`
-
-Or from the app: **Settings → Developer → Edit Config**.
-
-Add this entry under `mcpServers`, using the **absolute path** to the Python interpreter inside the `.venv` you just created (not a bare `python`):
-
+**macOS / Linux**:
 ```json
 {
   "mcpServers": {
     "quantified-self": {
-      "command": "/absolute/path/to/quantified-self-mcp/.venv/bin/python3",
-      "args": ["/absolute/path/to/quantified-self-mcp/server.py"]
+      "command": "/absolute/path/to/quantified-self-mcp/.venv/bin/quantified-self-mcp"
     }
   }
 }
 ```
 
-Windows:
-
+**Windows**:
 ```json
 {
   "mcpServers": {
     "quantified-self": {
-      "command": "C:\\absolute\\path\\to\\quantified-self-mcp\\.venv\\Scripts\\python.exe",
-      "args": ["C:\\absolute\\path\\to\\quantified-self-mcp\\server.py"]
+      "command": "C:\\absolute\\path\\to\\quantified-self-mcp\\.venv\\Scripts\\quantified-self-mcp.exe"
     }
   }
 }
 ```
+
+---
 
 ## 4. Restart Claude Desktop
 
-Fully quit and reopen the app (closing the window is not enough). Look for the hammer/tools icon in the chat box — `quantified-self` should be listed.
+Fully quit and reopen Claude Desktop (closing the window is not enough). Look for the hammer/tools icon in the chat input — `quantified-self` tools should be active.
 
-## 5. Ask this exact question
-
+Ask Claude:
+```text
+How has my sleep and resting heart rate changed over the last 30 days?
 ```
-How has my sleep changed over the last 30 days?
-```
-
-## 6. Expected result
-
-Claude calls `read_health_data`, then summarizes average sleep hours, steps, and resting heart rate across the imported sample range, usually noting the trend direction.
-
-## Troubleshooting
-
-- **Server doesn't show up**: confirm `command` points at the `.venv` interpreter (not system Python), that the path exists, and that you fully restarted the app.
-- **Logs**: `~/Library/Logs/Claude/mcp-server-quantified-self.log` (macOS) or `%APPDATA%\Claude\logs\mcp-server-quantified-self.log` (Windows).
-- **"No health database found"**: re-run step 2 — the tools don't auto-create empty databases.

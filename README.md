@@ -1,367 +1,298 @@
+<div align="center">
 
 # Quantified Self MCP
-[![CI](https://github.com/Thecimal/quantified-self-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Thecimal/quantified-self-mcp/actions)
-[![CodeQL](https://github.com/Thecimal/quantified-self-mcp/actions/workflows/codeql.yml/badge.svg)](https://github.com/Thecimal/quantified-self-mcp/actions/workflows/codeql.yml)
-[![PyPI](https://img.shields.io/pypi/v/quantified-self-mcp.svg)](https://pypi.org/project/quantified-self-mcp/)
-[![Python Versions](https://img.shields.io/pypi/pyversions/quantified-self-mcp.svg)](https://pypi.org/project/quantified-self-mcp/)
-[![License](https://img.shields.io/github/license/Thecimal/quantified-self-mcp)](https://github.com/Thecimal/quantified-self-mcp/blob/main/LICENSE)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
-[![M8ven Score](https://m8ven.ai/badge/mcp/thecimal-quantified-self-mcp-v6tlvp)](https://m8ven.ai/mcp/thecimal-quantified-self-mcp-v6tlvp)
-[![Quantified Self MCP Server MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/score.svg)](https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp)
 
-<img width="1536" height="1024" alt="bd0ee6dc-c3e0-4c7d-8bc7-17de569e1cb5" src="https://github.com/user-attachments/assets/447e8018-b56f-4dfb-bfa9-909e9ad0de6f" />
+**Your health data. Your AI. Your machine.**
 
-> **Your health data. Your AI. Your machine.**
->
-> A local-first MCP server that gives AI agents access to your personal health data — with **privacy, provenance, and evidence built in**.
+A privacy-first, local Model Context Protocol (MCP) server that connects AI assistants to your personal health history — with **statistical evidence, provenance, and granular privacy** built in.
 
+<p align="center">
+  <a href="https://github.com/Thecimal/quantified-self-mcp/actions/workflows/ci.yml"><img src="https://github.com/Thecimal/quantified-self-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Thecimal/quantified-self-mcp/actions/workflows/codeql.yml"><img src="https://github.com/Thecimal/quantified-self-mcp/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://pypi.org/project/quantified-self-mcp/"><img src="https://img.shields.io/pypi/v/quantified-self-mcp.svg" alt="PyPI"></a>
+  <a href="https://pypi.org/project/quantified-self-mcp/"><img src="https://img.shields.io/pypi/pyversions/quantified-self-mcp.svg" alt="Python Versions"></a>
+  <a href="https://github.com/Thecimal/quantified-self-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Thecimal/quantified-self-mcp" alt="License"></a>
+  <a href="https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp"><img src="https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/score.svg" alt="Glama Score"></a>
+  <a href="https://m8ven.ai/mcp/thecimal-quantified-self-mcp-v6tlvp"><img src="https://m8ven.ai/badge/mcp/thecimal-quantified-self-mcp-v6tlvp" alt="M8ven Score"></a>
+  <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" alt="Ruff"></a>
+</p>
 
-· **[Documentation](docs/)**
+<p align="center">
+  <a href="#-instant-client-setup"><b>⚡ Instant Client Setup</b></a> •
+  <a href="#-quick-start"><b>🚀 Quick Start</b></a> •
+  <a href="#-why-quantified-self-mcp"><b>💡 Why This?</b></a> •
+  <a href="#-evidence--provenance-engine"><b>🔎 Evidence Engine</b></a> •
+  <a href="#-supported-data--integrations"><b>📊 Supported Data</b></a> •
+  <a href="docs/"><b>📚 Documentation</b></a>
+</p>
 
----
+<img width="1536" height="1024" alt="Quantified Self MCP Hero" src="https://github.com/user-attachments/assets/447e8018-b56f-4dfb-bfa9-909e9ad0de6f" />
 
-## What is it?
-
-Quantified Self MCP gives an AI agent a **local, structured interface to your own health history**.
-
-Instead of another health dashboard, you can ask your AI questions like:
-
-```text
-Why did my HRV change recently?
-
-How has my sleep changed over the last 30 days?
-
-What happened to my resting heart rate after my workouts increased?
-
-What patterns do you see across my recent health data?
-
-Which metrics changed the most this month?
-```
-
-The AI retrieves the relevant data through MCP and analyzes it.
-
-> **The goal isn't another health dashboard.**
->
-> **It's a trustworthy interface between your health history and your AI.**
+</div>
 
 ---
 
-## Why is it different?
+## ⚡ Instant Client Setup
 
-### 🔒 Local-first
+Connect Quantified Self MCP to your favorite AI assistant in seconds:
 
-Your health database runs locally in SQLite.
+### Claude Desktop
 
-You control where your data goes.
+Add this to your Claude Desktop configuration:
+* **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+* **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+* **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-You can use a completely local AI stack:
+```json
+{
+  "mcpServers": {
+    "quantified-self": {
+      "command": "uvx",
+      "args": ["quantified-self-mcp"]
+    }
+  }
+}
+```
+*(Or point `"command"` to your installed `quantified-self-mcp` binary if installed via pip).*
 
-```text
-Health Data
-     ↓
-Local SQLite
-     ↓
-Quantified Self MCP
-     ↓
-MCP Agent
-     ↓
-Local LLM
+### Cursor
+
+In Cursor, navigate to **Settings → Features → MCP Servers → Add New MCP Server**, or add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "quantified-self": {
+      "command": "uvx",
+      "args": ["quantified-self-mcp"]
+    }
+  }
+}
 ```
 
-Cloud models are also supported. In that configuration, the MCP database remains local, but data returned by MCP tools may be sent to the model provider.
+### Windsurf
 
-### 🤖 AI-native
+Add to your `mcp_config.json`:
 
-Built specifically for **MCP-compatible AI agents**, rather than another standalone health application.
-
-### 🔎 Evidence & provenance
-
-Analytics can be traced back to the underlying health data and its provenance.
-
-The goal is not simply:
-
-```text
-HRV ↓ 24%
+```json
+{
+  "mcpServers": {
+    "quantified-self": {
+      "command": "uvx",
+      "args": ["quantified-self-mcp"]
+    }
+  }
+}
 ```
 
-but understanding:
-
-```text
-What data produced this result?
-Where did it come from?
-What period was analyzed?
-How strong is the evidence, and how strongly may it be claimed?
-```
-
-Concretely, every trend, baseline, anomaly, comparison, correlation, recent change, and explained metric carries a `claim` alongside its numbers — not just descriptive coverage, but an explicit, machine-checkable statement of how strongly the result may be reported:
-
-```text
-Analysis result
-    ↓
-claim: ClaimEvidence
-    ├── evidence   → what data was actually observed (coverage, gaps, freshness)
-    ├── profile    → how much evaluative evidence exists, per dimension
-    │                (sample, temporal, missingness, ...)
-    └── decision   → what claim strength is justified: insufficient,
-                     suggestive, detectable_not_meaningful, or supported —
-                     plus the specific caveats that must be stated
-```
-
-`evidence` is descriptive: it reports the coverage a result rests on (how many days were logged, how large any gaps are, how fresh the data is). `profile` evaluates that coverage along several independent dimensions rather than collapsing it into one number. `decision` is the authoritative output: the only field that says how strongly the result may actually be claimed, and it is derived exclusively from the assessed dimensions in `profile` — never from a raw coverage number by itself. Composite results (like explaining a metric change, which combines a headline claim, a trend claim, and any correlations) roll their component decisions up into a single `overall_decision`, which is never stronger than the weakest component.
-
-**Without evidence:**
-> Your HRV decreased 24% over the last 30 days.
-
-**With evidence:**
-> Your HRV decreased 24% over the last 30 days — but HRV was only logged on 71% of those days, so treat this trend cautiously rather than as a settled pattern.
-
-The second answer is what `calculate_metric_trend` (and every other analytics tool) is designed to make possible: the tool returns the 24% figure *and* a `claim.decision` alongside it (e.g. `tier: "suggestive"`, with `must_state` naming the specific gaps and low-coverage days behind that tier), and each tool's own description tells the calling model to report that tier and those caveats rather than stating the number as if it came from a complete series.
-
-### 📊 Longitudinal
-
-Analyze health history across days, weeks, months, and years:
-
-- trends
-- baselines
-- anomalies
-- period comparisons
-- correlations
-- recent changes
-- metric explanations
-
-### 📥 Import existing data
-
-Bring your existing health history into the local database.
-
-Supported imports include:
-
-- CSV
-- Apple Health exports
-- WHOOP Developer API JSON (v2)
-
-See the [import documentation](docs/importing.md).
+> [!TIP]
+> **Need guides for LM Studio, Open WebUI, or Android Health Connect?**
+> See our step-by-step [Client Guides](docs/clients/).
 
 ---
 
-## What can your AI do?
+## 🚀 Quick Start
 
-### Read
-
-- Health metrics
-- Metric history
-- Raw measurements
-- Workout sessions
-- Data provenance
-
-### Analyze
-
-- Baselines
-- Trends
-- Anomalies
-- Period comparisons
-- Correlations
-
-### Explain
-
-- Recent changes
-- Metric changes
-- Supporting evidence
-- Data provenance
-
-The MCP currently exposes **20 tools** across data access, measurements, workouts, analytics, personal intelligence, and data freshness (`get_data_status`, `get_import_status`).
-
-See the [tool reference](docs/tools.md) for the complete list.
-
----
-
-## Supported data
-
-Currently supported metrics include:
-
-- 👟 Steps
-- 😴 Sleep
-- ❤️ Heart rate
-- ❤️ Resting heart rate
-- 📈 HRV
-- ⚖️ Weight
-- 🏋️ Workout minutes
-- 🙂 Mood
-- 💧 Water
-
-The data model is extensible, so you can keep only the metrics you actually use.
-
----
-
-## Quick start
-
-### Install
+### 1. Install
 
 ```bash
 pip install quantified-self-mcp
 ```
 
-### Import your data
+### 2. Import Your Health History
 
-CSV:
+Quantified Self MCP automatically creates and manages a local SQLite database (`health.db`):
 
 ```bash
+# From CSV:
 quantified-self-init-db your-health-data.csv
-```
 
-Apple Health:
-
-```bash
+# From Apple Health export:
 quantified-self-init-db export.xml
-```
 
-Android Health Connect:
+# From WHOOP Developer API (v2) JSON:
+quantified-self-init-db whoop.json --source whoop
 
-```bash
+# From Android Health Connect export:
 quantified-self-init-db health_connect_export.zip
 ```
 
-WHOOP Developer API (v2) JSON:
+### 3. Verify Setup
 
-```bash
-quantified-self-init-db whoop.json --source whoop
-```
-
-### Verify your setup (optional)
-
-Run the built-in diagnostic tool to check Python, dependencies, and database readiness:
+Run the built-in diagnostic tool to verify Python dependencies, schema integrity, and database readiness:
 
 ```bash
 quantified-self-doctor
 ```
 
-### Back up and restore your data
+### 4. Ask Your AI
 
-Do not back up by copying `health.db`: the database runs in WAL mode, so recent changes can still be in
-`health.db-wal`, and a copy of `health.db` alone can be empty or out of date. Use the backup command, which
-takes a consistent snapshot even while your MCP client is running:
-
-```bash
-quantified-self-backup create ~/backups/health-2026-10-21.db
-```
-
-It never overwrites an existing backup. To restore (close your MCP client first), run:
-
-```bash
-quantified-self-backup restore ~/backups/health-2026-10-21.db
-```
-
-The backup is checked before anything is touched (it must pass SQLite's integrity check, be a health database,
-and not come from a newer release). Your current database is moved aside as `health.db.pre-restore-<time>`
-rather than deleted. If the database is encrypted (`HEALTH_DB_PASSPHRASE`), the backup is encrypted with the
-same passphrase. Use `--db-path` to point at a database other than the default.
-
-### Connect an MCP client
-
-Configure your preferred MCP-compatible client to run:
-
-```bash
-quantified-self-mcp
-```
-
-Client-specific setup guides are available in [`docs/clients/`](docs/clients/).
-
-### Ask your AI
+Open your MCP-connected assistant and ask questions in plain English:
 
 ```text
-How has my sleep changed over the last 30 days?
+"How has my sleep and resting heart rate changed over the last 30 days?"
+"Why did my HRV drop last week?"
+"What patterns exist between my workout minutes and sleep quality?"
+"Which of my health metrics changed the most this month?"
 ```
-
-That's it.
 
 ---
 
-## Privacy
+## 💡 Why Quantified Self MCP?
 
-Health data is sensitive.
+Most health apps either trap your data in a closed cloud dashboard or feed raw numbers blindly into an LLM. Quantified Self MCP provides a **trustworthy, analytical bridge**:
 
-Quantified Self MCP is designed around **local ownership**:
+| Feature | Standard Health Dashboards | Naive LLM Prompts | Quantified Self MCP |
+| :--- | :---: | :---: | :---: |
+| **Data Ownership** | ❌ Locked in Cloud | ⚠️ Uploaded to 3rd-party | ✅ **100% Local SQLite** |
+| **Privacy Redaction** | ❌ All or nothing | ❌ Raw data dumped | ✅ **Granular Field Exclusion** |
+| **Statistical Claims** | ⚠️ Uncalibrated percentages | ❌ Hallucinated correlations | ✅ **ClaimEvidence & Caveats** |
+| **Provenance Tracking** | ❌ Opaque | ❌ None | ✅ **Multi-source origin stamps** |
+| **Atomic Snapshots** | ⚠️ Manual exports | ❌ None | ✅ **WAL-safe backup/restore** |
 
-- Your database stays on your machine.
-- No proprietary health-data cloud is required.
-- You choose the AI model.
-- You can run the entire stack locally.
-- Private metrics can be excluded from AI access.
+### 🔒 100% Local & Private
+Your database lives on your machine in SQLite. No proprietary health cloud required. If you want a completely offline, air-gapped system, pair it with local models via **LM Studio** or **Ollama**.
 
-For example:
-
+You can also redact specific sensitive metrics from being exposed to the AI:
 ```bash
-HEALTH_PRIVATE_FIELDS=weight_kg,mood
+export HEALTH_PRIVATE_FIELDS=weight_kg,mood
 ```
-
-Private fields remain stored locally but are excluded from MCP read and analytical operations.
-
-See [`SECURITY.md`](SECURITY.md) for security considerations.
+*Private fields remain safely stored in SQLite for your own records, but are blocked from all AI queries and analytics.*
 
 ---
 
-## Architecture
+## 🔎 Evidence & Provenance Engine
+
+When an AI analyzes your health, **a number without context is dangerous**.
+
+If an LLM sees a 24% drop in HRV, did it come from 30 continuous days of wearable data, or just 4 sparse readings with a week-long gap?
+
+Quantified Self MCP solves this with an integrated **ClaimEvidence Engine**:
 
 ```text
-                  AI Agent
-                     │
-                 MCP Protocol
-                     │
-                     ▼
-          ┌─────────────────────┐
-          │ Quantified Self MCP │
-          │                     │
-          │  Data · Analytics   │
-          │  Evidence           │
-          └──────────┬──────────┘
-                     │
-                     ▼
-              Local SQLite
-                     │
-                     ▼
-              Your Health Data
+Analysis Result
+     ↓
+claim: ClaimEvidence
+     ├── evidence   → Raw coverage observed (days logged, max gap, freshness)
+     ├── profile    → Dimension assessment (sample size, temporal span, missingness)
+     └── decision   → Authoritative claim tier:
+                      [ insufficient | suggestive | detectable_not_meaningful | supported ]
+                      + specific mandatory caveats (must_state)
 ```
 
-The MCP server is the bridge between your health history and your AI.
+### Example: Naive vs. Evidence-Backed AI Response
+
+* **Without Evidence Engine (Naive LLM)**:
+  > *"Your HRV dropped 24% over the last month. You may be overtraining."*
+
+* **With Quantified Self MCP Evidence**:
+  > *"Your HRV decreased 24% over the last 30 days — but HRV was only logged on 71% of those days with a 5-day recording gap, so this is flagged as suggestive rather than a confirmed trend. (Source: Apple Watch)."*
+
+Every analytical tool (`calculate_metric_trend`, `explain_metric_change`, `detect_metric_anomalies`) returns explicit claim tiers alongside mandatory disclosures.
 
 ---
 
-## Documentation
+## 📊 Supported Data & Integrations
 
-Detailed documentation lives outside the README:
+Quantified Self MCP ships with 20 specialized tools spanning raw measurements, longitudinal statistics, and data health:
 
-- **[Client setup](docs/clients/)**
-- **[Importing health data](docs/importing.md)**
-- **[Tool reference](docs/tools.md)**
-- **[Security](SECURITY.md)**
-- **[Contributing](CONTRIBUTING.md)**
-- **[Changelog](CHANGELOG.md)**
+```text
+                  AI Agent (Claude / Cursor / LM Studio)
+                                   │
+                              MCP Protocol
+                                   │
+                                   ▼
+          ┌──────────────────────────────────────────────────┐
+          │               Quantified Self MCP                │
+          │                                                  │
+          │  • Data Access         • Longitudinal Analytics  │
+          │  • Workout Tracking    • ClaimEvidence Engine    │
+          │  • Provenance Resolver • Data Freshness/Health   │
+          └────────────────────────┬─────────────────────────┘
+                                   │
+                                   ▼
+                         Local SQLite (health.db)
+```
+
+### Metrics Supported Out of the Box
+
+| Metric | Category | Standard Unit | Notes |
+| :--- | :--- | :--- | :--- |
+| 👟 **Steps** | Activity | count | Summed per day with multi-source deduplication |
+| 😴 **Sleep** | Recovery | hours | Provenance-checked interval handling |
+| ❤️ **Resting Heart Rate** | Cardiovascular | bpm | Daily baseline tracking & anomaly detection |
+| 📈 **HRV** (Heart Rate Variability) | Recovery | ms | RMSSD/SDNN normalized |
+| ⚖️ **Weight & Body Fat** | Measurements | kg / % | High-precision episodic measurement tracking |
+| 🏋️ **Workouts** | Activity | minutes / kcal | Individual workout sessions with sport metadata |
+| 🙂 **Mood** | Wellness | 1-5 scale | Subjective well-being logs |
+| 💧 **Water Intake** | Nutrition | ml | Daily fluid tracking |
+
+*The schema is fully extensible with custom metric definitions in `metric_registry.py`.*
 
 ---
 
-## Open source
+## 🔌 Client Compatibility
 
-Quantified Self MCP is open source and built for the wider MCP ecosystem.
-
-Contributions are welcome — especially around:
-
-- health-data imports
-- analytics
-- evidence and data quality
-- privacy
-- MCP client integrations
-- documentation
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+| Client / Assistant | Compatibility | Documentation |
+| :--- | :---: | :--- |
+| **Claude Desktop** | ✅ Official Support | [Claude Desktop Setup Guide](docs/clients/claude-desktop.md) |
+| **Cursor** | ✅ Full Support | [Cursor IDE Setup Guide](docs/clients/cursor.md) |
+| **Windsurf** | ✅ Full Support | Configure via `mcp_config.json` |
+| **LM Studio** | ✅ Local AI | [LM Studio Setup Guide](docs/clients/lm-studio.md) |
+| **Open WebUI** | ✅ Self-Hosted | [Open WebUI Setup Guide](docs/clients/open-webui.md) |
+| **Android Health Connect** | ✅ Export & Ingest | [Health Connect Guide](docs/clients/android-health-connect.md) |
 
 ---
 
-## License
+## 🛠️ Operations & Data Safety
 
-MIT
+### Atomic WAL Backups
+Never copy `health.db` while your server or MCP client is running: SQLite runs in WAL mode, meaning uncommitted writes live in `health.db-wal`. 
+
+Use the built-in backup CLI, which takes a live, consistent snapshot:
+
+```bash
+# Create a verified snapshot:
+quantified-self-backup create ~/backups/health-2026-11-04.db
+
+# Safe restore (checks schema integrity before moving old DB aside):
+quantified-self-backup restore ~/backups/health-2026-11-04.db
+```
+
+### Diagnostics
+Run anytime to check your Python runtime, database version, and environment configuration:
+
+```bash
+quantified-self-doctor
+```
 
 ---
 
-> **Your health data. Your AI. Your machine.**
->
-> **Local data. Open protocol. AI-powered insight.**
+## 📚 Documentation
+
+Deep-dive documentation and technical specs:
+
+* **[Complete Tool Catalog (20 Tools)](docs/tools.md)**
+* **[Data Import Guide (Apple Health, WHOOP, CSV)](docs/importing.md)**
+* **[Client Setup Guides](docs/clients/)**
+* **[Security & Threat Model](SECURITY.md)**
+* **[Contribution Guidelines](CONTRIBUTING.md)**
+* **[Changelog](CHANGELOG.md)**
+
+---
+
+## 🤝 Contributing
+
+Contributions are warmly welcomed! We are actively looking for contributions in:
+- New wearable & app adapters (Garmin, Oura, Fitbit)
+- Specialized analytical & correlation tools
+- Evidence engine calibration
+- New MCP client integrations
+
+Please review [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) before opening a pull request.
+
+---
+
+## 📄 License
+
+Licensed under the [MIT License](LICENSE).
