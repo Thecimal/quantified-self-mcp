@@ -9,6 +9,16 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **The tool reference named arguments, defaults and capabilities the tools do not have** — `docs/tools.md`
+  documented `window_days`, `baseline_days`, `threshold_std`, `target_date`, `metrics` and `filename`
+  parameters, a `get_recent_changes` window of 14 days, an `explain_metric_change` bundle described as
+  causal, an IQR and normal range from `get_baseline`, and calories, distance and an end time for workout
+  sessions, none of which exist, so a call written from it failed validation (the real arguments are
+  `start_date`/`end_date`, `threshold`, `days` and `date`; defaults for `limit`, `stale_after_days` and
+  analysis windows were also wrong). It now matches the registered tools. `aggregate_measurements` also told
+  clients to look for a `method` field in `get_baseline`'s output, which has none; its description now states
+  how each metric is rolled up into a day (summed, averaged or latest reading). A test compares every
+  documented signature and default with the live tool schemas. No tool behavior changed.
 - **A source conflict on the last day of a window could go uncounted** — `explain_metric_change`'s
   count of days where sources disagreed (`conflicting_days`) bounded its window with
   `<last day>T23:59:59`, so a reading in that last second with fractional seconds (`23:59:59.5`, which the

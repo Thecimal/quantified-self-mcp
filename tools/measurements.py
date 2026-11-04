@@ -351,9 +351,11 @@ def register_measurement_tools(
 
         daily_metrics is a database-maintained projection (see db/schema.sql):
         every log_measurement/import automatically keeps it in sync the
-        moment it's written, using each metric's fixed aggregation method
-        (sum/mean/last — see aggregation_rules, or get_baseline's "method"
-        field). When a metric has measurements from more than one source on
+        moment it's written, using each metric's fixed aggregation method:
+        summed for steps, sleep_hours, workout_minutes and water_ml; averaged
+        for resting_heart_rate, mood, heart_rate and hrv_ms; the latest
+        reading for weight_kg (see aggregation_rules). When a metric has
+        measurements from more than one source on
         a day, the projection uses only one source's observations — never a
         blend of devices. It takes the highest-ranked present source in the
         stored source priority list (manual log_daily_metric entries rank
