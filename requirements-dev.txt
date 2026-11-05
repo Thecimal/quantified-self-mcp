@@ -5,7 +5,7 @@ pytest-cov>=7.1.0
 ruff>=0.17.3,<0.18
 mypy>=2.4.0
 pre-commit>=4.6.2
-types-PyYAML>=6.0.0
+types-PyYAML>=6.0.12.20261030
 # Optional at runtime (see logic.py's "Database encryption" section) but a
 # real dependency for tests, so tests/test_logic.py's encryption tests
 # exercise the actual package rather than a mock.
