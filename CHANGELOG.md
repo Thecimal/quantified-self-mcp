@@ -7,6 +7,8 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-05
+
 ### Added
 
 - **Agent-eval negative routing test suite (`should_not_use`)** — added 20 negative routing scenarios across all
