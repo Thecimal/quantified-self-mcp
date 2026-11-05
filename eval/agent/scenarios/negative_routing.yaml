@@ -1,0 +1,162 @@
+# Negative routing scenarios (should_not_use).
+# Ensures tools are not called inappropriately or destructively when a different tool is required.
+
+- id: should_not_clear_metric_when_reading_mood
+  tool: clear_metric
+  kind: should_not_use
+  fixture: complete
+  question: "What was my mood logged yesterday?"
+  must_call: [read_health_data]
+  forbidden_tools: [clear_metric]
+
+- id: should_not_export_csv_for_chat_question
+  tool: export_health_data_csv
+  kind: should_not_use
+  fixture: complete
+  question: "Can you quickly check my step count for today in chat?"
+  must_call: [read_health_data]
+  forbidden_tools: [export_health_data_csv]
+
+- id: should_not_log_daily_metric_when_asking_steps
+  tool: log_daily_metric
+  kind: should_not_use
+  fixture: complete
+  question: "How many steps did I log yesterday?"
+  must_call: [read_health_data]
+  forbidden_tools: [log_daily_metric]
+
+- id: should_not_log_measurement_when_inspecting_rhr
+  tool: log_measurement
+  kind: should_not_use
+  fixture: complete
+  question: "What was my lowest resting heart rate reading today?"
+  must_call: [read_measurements]
+  forbidden_tools: [log_measurement]
+
+- id: should_not_log_workout_session_when_querying_runs
+  tool: log_workout_session
+  kind: should_not_use
+  fixture: complete
+  question: "Did I log any runs last week?"
+  must_call: [read_workout_sessions]
+  forbidden_tools: [log_workout_session]
+
+- id: should_not_calculate_trend_when_asking_baseline
+  tool: calculate_metric_trend
+  kind: should_not_use
+  fixture: complete
+  question: "What is my normal baseline average for resting heart rate over the last 90 days?"
+  must_call: [get_baseline]
+  forbidden_tools: [calculate_metric_trend]
+
+- id: should_not_compare_periods_when_detecting_anomalies
+  tool: compare_metric_periods
+  kind: should_not_use
+  fixture: complete
+  question: "Did I have any resting heart rate spikes or unusual readings this week?"
+  must_call: [detect_metric_anomalies]
+  forbidden_tools: [compare_metric_periods]
+
+- id: should_not_detect_anomalies_when_asking_correlation
+  tool: detect_metric_anomalies
+  kind: should_not_use
+  fixture: complete
+  question: "Is there a statistical correlation between my sleep hours and next-day resting heart rate?"
+  must_call: [find_metric_correlation]
+  forbidden_tools: [detect_metric_anomalies]
+
+- id: should_not_find_correlation_when_explaining_change
+  tool: find_metric_correlation
+  kind: should_not_use
+  fixture: complete
+  question: "Why did my steps drop on {d3}?"
+  must_call: [explain_metric_change]
+  forbidden_tools: [find_metric_correlation]
+
+- id: should_not_explain_change_when_checking_currency
+  tool: explain_metric_change
+  kind: should_not_use
+  fixture: complete
+  question: "Is the database currently up to date or is my health data stale?"
+  must_call: [get_data_status]
+  forbidden_tools: [explain_metric_change]
+
+- id: should_not_get_baseline_when_asking_trend
+  tool: get_baseline
+  kind: should_not_use
+  fixture: complete
+  question: "Are my steps trending upward or downward over the last 60 days?"
+  must_call: [calculate_metric_trend]
+  forbidden_tools: [get_baseline]
+
+- id: should_not_get_data_status_when_checking_import_failure
+  tool: get_data_status
+  kind: should_not_use
+  fixture: complete
+  question: "Did my last file import succeed or fail?"
+  must_call: [get_import_status]
+  forbidden_tools: [get_data_status]
+
+- id: should_not_get_import_status_when_checking_currency
+  tool: get_import_status
+  kind: should_not_use
+  fixture: complete
+  question: "What is my current data currency and freshness status?"
+  must_call: [get_data_status]
+  forbidden_tools: [get_import_status]
+
+- id: should_not_get_history_when_ranking_changes
+  tool: get_metric_history
+  kind: should_not_use
+  fixture: complete
+  question: "Which of my health metrics changed the most over the last 14 days?"
+  must_call: [get_recent_changes]
+  forbidden_tools: [get_metric_history]
+
+- id: should_not_get_provenance_when_asking_history
+  tool: get_metric_provenance
+  kind: should_not_use
+  fixture: complete
+  question: "Show me a daily time series of my resting heart rate over the last month."
+  must_call: [get_metric_history]
+  forbidden_tools: [get_metric_provenance]
+
+- id: should_not_get_recent_changes_when_comparing_periods
+  tool: get_recent_changes
+  kind: should_not_use
+  fixture: complete
+  question: "Compare my steps in the last 7 days against the previous 7 days."
+  must_call: [compare_metric_periods]
+  forbidden_tools: [get_recent_changes]
+
+- id: should_not_read_health_data_when_requesting_raw_measurements
+  tool: read_health_data
+  kind: should_not_use
+  fixture: complete
+  question: "Show me all individual raw timestamped heart rate measurements from today."
+  must_call: [read_measurements]
+  forbidden_tools: [read_health_data]
+
+- id: should_not_read_measurements_when_querying_workouts
+  tool: read_measurements
+  kind: should_not_use
+  fixture: complete
+  question: "What workout sessions did I do this week?"
+  must_call: [read_workout_sessions]
+  forbidden_tools: [read_measurements]
+
+- id: should_not_read_workout_sessions_when_asking_steps
+  tool: read_workout_sessions
+  kind: should_not_use
+  fixture: complete
+  question: "What was my total daily step count for yesterday?"
+  must_call: [read_health_data]
+  forbidden_tools: [read_workout_sessions]
+
+- id: should_not_aggregate_measurements_when_inspecting_conflict
+  tool: aggregate_measurements
+  kind: should_not_use
+  fixture: complete
+  question: "Did my Apple Watch and phone disagree on step count on {yesterday}?"
+  must_call: [get_metric_provenance]
+  forbidden_tools: [aggregate_measurements]

@@ -113,6 +113,9 @@ quantified-self-init-db export.xml
 # From WHOOP Developer API (v2) JSON:
 quantified-self-init-db whoop.json --source whoop
 
+# From Oura Ring API (v2) JSON:
+quantified-self-init-db oura.json --source oura
+
 # From Android Health Connect export:
 quantified-self-init-db health_connect_export.zip
 ```

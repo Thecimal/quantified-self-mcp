@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from db import invariant as db_invariant
-from metric_registry import metric_bounds
+from metric_registry import METRICS, metric_bounds
 
 logger = logging.getLogger("quantified-self-mcp")
 
@@ -1356,9 +1356,10 @@ def get_metric_provenance(conn: sqlite3.Connection, metric: str, day: str) -> di
     that source's readings that day), "n", "latest_timestamp"}, ...]
     sorted by n descending, "conflict": bool}. "conflict" is True only
     when 2+ distinct non-null sources are present *and* their per-source
-    averages differ by more than CONFLICT_TOLERANCE_PCT of the smaller
-    one — a single source reporting multiple similar readings is not a
-    conflict. Rows with no source recorded are grouped under None.
+    totals (for metrics aggregated by sum) or per-source averages (for
+    all other metrics) differ by more than CONFLICT_TOLERANCE_PCT of the
+    smaller one — a single source reporting multiple similar readings is
+    not a conflict. Rows with no source recorded are grouped under None.
     """
     cursor = conn.cursor()
     cursor.row_factory = row_class()
@@ -1384,9 +1385,16 @@ def get_metric_provenance(conn: sqlite3.Connection, metric: str, day: str) -> di
     sources.sort(key=lambda s: int(s["n"]), reverse=True)
 
     conflict = False
-    distinct_values: list[float] = [float(s["value"]) for s in sources if s["source"] is not None]
-    if len(distinct_values) > 1:
-        lo, hi = min(distinct_values), max(distinct_values)
+    defn = METRICS.get(metric)
+    if defn is not None and defn.aggregation == "sum":
+        comparison_values: list[float] = [
+            float(sum(v for v, _ts in readings)) for source, readings in by_source.items() if source is not None
+        ]
+    else:
+        comparison_values = [float(s["value"]) for s in sources if s["source"] is not None]
+
+    if len(comparison_values) > 1:
+        lo, hi = min(comparison_values), max(comparison_values)
         conflict = lo == 0 or (hi - lo) / lo > CONFLICT_TOLERANCE_PCT
 
     return {"metric": metric, "date": day, "sources": sources, "conflict": conflict}

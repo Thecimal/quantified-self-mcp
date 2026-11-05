@@ -31,7 +31,7 @@ whose decision limits how strongly it may be stated.
 * **`aggregate_measurements(date, source_priority=None)`**
   Preview daily aggregation results using custom source-priority conflict resolution.
 * **`get_metric_provenance(metric, date)`**
-  Inspect readings for a specific date broken down by device/source to identify discrepancies.
+  Inspect readings for a specific date broken down by device/source to identify discrepancies. Conflict is evaluated against daily totals for sum metrics (steps, sleep, water, workout minutes) and against average readings for mean and last metrics.
 
 ## 3. Workouts & Activity Sessions
 

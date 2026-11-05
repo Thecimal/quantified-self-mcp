@@ -680,6 +680,40 @@ def test_get_metric_provenance_ignores_close_readings_as_non_conflict(tmp_path):
         conn.close()
 
 
+def test_get_metric_provenance_flags_sum_metric_conflict_on_different_totals(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        insert_measurement(conn, "2026-06-01T08:00:00", "steps", 500, source="Watch")
+        insert_measurement(conn, "2026-06-01T12:00:00", "steps", 500, source="Watch")
+        insert_measurement(conn, "2026-06-01T14:00:00", "steps", 2000, source="Phone")
+        result = get_metric_provenance(conn, "steps", "2026-06-01")
+        assert result["conflict"] is True
+        assert {s["source"] for s in result["sources"]} == {"Watch", "Phone"}
+    finally:
+        conn.close()
+
+
+def test_get_metric_provenance_mean_metric_conflict_boundaries(tmp_path):
+    conn = connect_writable(tmp_path / "test.db")
+    try:
+        ensure_schema(conn)
+        # 58 vs 70 is > 5% difference -> conflict
+        insert_measurement(conn, "2026-06-01T08:00:00", "resting_heart_rate", 58, source="Apple Watch")
+        insert_measurement(conn, "2026-06-01T08:05:00", "resting_heart_rate", 70, source="Garmin")
+        result = get_metric_provenance(conn, "resting_heart_rate", "2026-06-01")
+        assert result["conflict"] is True
+
+        # 60 vs 61 is < 5% difference -> not conflict
+        conn.execute("DELETE FROM measurements")
+        insert_measurement(conn, "2026-06-01T08:00:00", "resting_heart_rate", 60, source="Apple Watch")
+        insert_measurement(conn, "2026-06-01T08:05:00", "resting_heart_rate", 61, source="Garmin")
+        result2 = get_metric_provenance(conn, "resting_heart_rate", "2026-06-01")
+        assert result2["conflict"] is False
+    finally:
+        conn.close()
+
+
 def test_resolve_source_conflicts_prefers_explicit_priority():
     rows = [
         {"source": "Garmin", "value": 67, "imported_at": "2026-06-02T09:00:00"},

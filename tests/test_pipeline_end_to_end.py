@@ -357,12 +357,6 @@ async def test_csv_blank_cells_are_missing_and_an_explicit_zero_is_a_real_value(
     assert steps["evidence"]["observed_days"] == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DEFECT: get_metric_provenance compares each source's AVERAGE reading (documented), which for a "
-    "sum metric such as steps is not the source's day total, so two sources that agree on the day total are "
-    "reported as conflicting. Fixing it changes a documented field, so it waits for a decision.",
-)
 async def test_sources_that_agree_on_the_day_total_are_not_reported_as_a_conflicting_reading(tmp_path):
     # Watch logs 1000 steps as two records, Phone as one: both say 1000 for the day.
     records = [

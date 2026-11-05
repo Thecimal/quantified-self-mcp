@@ -1496,6 +1496,48 @@ def day_snapshot(date: str) -> dict:
     return DailyMetricsRow(**_redact_private_fields(row)).model_dump()
 
 
+@mcp.prompt(
+    name="weekly_health_review",
+    description="Guided prompt for an AI assistant to conduct a comprehensive weekly health and recovery review.",
+)
+def weekly_health_review(lookback_days: int = 7) -> str:
+    """Prompt for conducting a multi-metric health and recovery review."""
+    return (
+        f"Please perform a thorough review of my health and wellness metrics over the past {lookback_days} days.\n\n"
+        "Instructions for the assistant:\n"
+        "1. Check data currency and health status first (`get_data_status`).\n"
+        f"2. Inspect recent changes across all metrics over the last {lookback_days} days (`get_recent_changes`).\n"
+        "3. Review sleep duration/consistency, resting heart rate, and HRV trends relative to baselines\n"
+        "   (`get_baseline`).\n"
+        "4. Check for any detected anomalies or significant deviations (`detect_metric_anomalies`).\n"
+        "5. If conflicting data sources are present, check provenance (`get_metric_provenance`).\n"
+        "6. Provide a clear summary highlighting key wins, recovery status, and notable changes. "
+        "Strictly adhere to evidence tiers: state correlations as associations rather than causal facts, "
+        "and mention any data caveats."
+    )
+
+
+@mcp.prompt(
+    name="doctor_visit_prep",
+    description="Prepare an objective, data-backed summary of vitals, sleep, and activity for a doctor consultation.",
+)
+def doctor_visit_prep(lookback_days: int = 30) -> str:
+    """Prompt for preparing a clinical consultation briefing from personal health data."""
+    return (
+        f"I have an upcoming doctor consultation. Please prepare an objective, factual summary of my health data "
+        f"over the past {lookback_days} days to help guide our discussion.\n\n"
+        "Instructions for the assistant:\n"
+        "1. Summarize key physiological vitals: resting heart rate, HRV trends, and blood pressure measurements "
+        "(if logged).\n"
+        "2. Detail sleep metrics: average duration, variability, and any significant deficits.\n"
+        "3. Detail physical activity and workout sessions (`read_workout_sessions`).\n"
+        "4. List any anomalies or notable changes that deviated from typical baseline ranges.\n"
+        "5. Clearly format the output with bullet points suitable for a quick review with a clinician.\n"
+        "6. Include a clear disclaimer stating that this summary is derived from personal wearable/self-tracking "
+        "data and is intended to inform the discussion, not to diagnose or provide medical advice."
+    )
+
+
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 

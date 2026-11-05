@@ -7,8 +7,43 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Added
+
+- **Agent-eval negative routing test suite (`should_not_use`)** — added 20 negative routing scenarios across all
+  registered tools in `eval/agent/scenarios/negative_routing.yaml`, ensuring external LLM agents do not invoke
+  destructive or unsuited tools when answering factual, analytical, or status questions. Coverage now reflects
+  20/20 `should_not_use` scenarios.
+- **FastMCP Pre-baked Prompts (`weekly_health_review` and `doctor_visit_prep`)** — clients can now invoke
+  standardized health review prompts. `weekly_health_review` guides multi-turn assistant reviews through data health,
+  recent changes, baselines, and anomalies with evidence guardrails. `doctor_visit_prep` produces structured vitals
+  and activity briefs formatted for clinician appointments with medical disclaimers.
+- **Oura Ring API (v2) import adapter (`--source oura`)** — parses Oura export and API JSON payloads
+  (arrays, `{"data": [...]}`, or multi-endpoint collections) into daily metrics and raw measurements stamped with
+  provenance (`source="Oura"`). Maps `sleep_hours` (from total sleep duration), `steps` (from daily activity),
+  `resting_heart_rate` (from sleep lowest heart rate or readiness), `hrv_ms` (average HRV RMSSD), and
+  `workout_minutes` (from workout sessions). Auto-detected on `.json` exports with Oura signatures.
+
 ### Fixed
 
+- **Apple Health import dropped valid per-source sleep when the cross-source sum exceeded 24 h** — when multiple
+  sources recorded sleep intervals whose sum exceeded 24 hours (e.g. two apps recording long nights), the
+  importer previously validated the cross-source sum in the daily row against the 0–24 h bound, causing the entire
+  day to be skipped and discarding all per-source observations. The importer now validates each source's day total
+  individually with `_check_observation_bounds`, skipping only an offending source-day while storing valid source
+  records, and omits the cross-source sum from day rows when multiple sources are present.
+- **`log_measurement` accepted units that conflict with metric canonical units** — `log_measurement` accepted
+  any arbitrary `unit` argument (e.g. `lb` for `weight_kg` or `L` for `water_ml`) and stored the value unconverted,
+  corrupting daily aggregations, baselines, and trend analyses. It now validates that any provided non-empty unit
+  matches the canonical unit declared in `metric_registry.py` (case-insensitive), raising an invalid metric value
+  tool error if there is a conflict. Omitted units and metrics without a canonical unit (such as `mood`) remain
+  supported.
+- **`get_metric_provenance` reported agreeing sources as conflicting for sum metrics** — `get_metric_provenance`
+  previously compared each source's average reading across the day. For metrics aggregated by `sum` (steps,
+  sleep, water, workout minutes), the average reading depends on how many records each device logged rather
+  than the day total, causing two devices that agree on total steps (e.g. 1000 in two 500-step chunks vs 1000
+  in one) to be flagged as conflicting. Conflicts are now evaluated using each source's day total for sum
+  metrics, while retaining average-based comparison for mean and last metrics. Source values, counts, and
+  schema outputs remain unchanged.
 - **Health Connect days ignored the record's time zone** — the importer took each record's date from its
   timestamp string, so a `Z` (UTC) timestamp was filed under the UTC date: at UTC+02:00 a step count at
   00:30 local (`22:30Z`) landed on the previous day, and an evening one at UTC-08:00 on the next. Records

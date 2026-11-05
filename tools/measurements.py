@@ -46,6 +46,7 @@ from logic import (
 from logic import (
     get_metric_provenance as _get_metric_provenance,
 )
+from metric_registry import METRICS
 from privacy import PRIVATE_FIELDS, _redact_private_fields
 from schemas import (
     AggregateMeasurementsResult,
@@ -198,7 +199,9 @@ def register_measurement_tools(
                 telling the projection how to roll same-day readings up.
                 metrics_schema lists the current set.
             value: The numeric reading.
-            unit: Unit the value is in, e.g. "bpm", "kg". Optional.
+            unit: Unit the value is in, e.g. "bpm", "kg". Optional. If provided,
+                must match the metric's canonical unit (case-insensitive);
+                convert the reading to that canonical unit before logging.
             source: Where this came from, e.g. "Apple Watch", "manual". Optional.
             source_type: Category of source, e.g. "wearable", "manual", "app". Optional.
 
@@ -220,6 +223,16 @@ def register_measurement_tools(
             validate_metrics({metric: value})
         except ValueError as exc:
             raise _tool_error(ERR_INVALID_METRIC_VALUE, str(exc)) from exc
+
+        if unit is not None and unit.strip():
+            defn = METRICS.get(metric)
+            if defn is not None and defn.unit is not None:
+                if unit.strip().lower() != defn.unit.lower():
+                    raise _tool_error(
+                        ERR_INVALID_METRIC_VALUE,
+                        f"unit {unit!r} conflicts with canonical unit {defn.unit!r} for metric {metric!r}; "
+                        f"convert to {defn.unit!r} before logging.",
+                    )
 
         try:
             conn = connect_writable(db_path)

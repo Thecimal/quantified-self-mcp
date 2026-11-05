@@ -185,3 +185,72 @@ def test_a_database_imported_before_the_fix_is_corrected_in_place_by_a_reimport(
         assert invariant.verify(conn)["status"] == "ok"
     finally:
         conn.close()
+
+
+def test_sleep_summing_across_sources_over_24h_does_not_drop_day(tmp_path, capsys):
+    export = tmp_path / "export.xml"
+    export.write_text(
+        '<?xml version="1.0"?><HealthData>'
+        + _asleep("2026-03-01 00:00:00", "2026-03-01 13:00:00", WATCH)
+        + _asleep("2026-03-01 00:00:00", "2026-03-01 13:00:00", APP)
+        + _asleep("2026-03-02 00:00:00", "2026-03-02 07:00:00", WATCH)
+        + "</HealthData>",
+        encoding="utf-8",
+    )
+    db = tmp_path / "health.db"
+    init_health_db(export, db, replace=False, source="apple-health")
+    captured = capsys.readouterr()
+
+    assert "Skipping" not in captured.err
+
+    rows_01 = _sleep_rows(db, "2026-03-01")
+    assert [(r[0], r[1], r[2]) for r in rows_01] == [
+        ("2026-03-01T12:00:00", 13.0, APP),
+        ("2026-03-01T12:00:00", 13.0, WATCH),
+    ]
+    rows_02 = _sleep_rows(db, "2026-03-02")
+    assert [(r[0], r[1], r[2]) for r in rows_02] == [
+        ("2026-03-02T12:00:00", 7.0, WATCH),
+    ]
+
+    conn = sqlite3.connect(db)
+    try:
+        val, count, src_count = conn.execute(
+            "SELECT value, raw_measurement_count, source_count FROM daily_metrics "
+            "WHERE metric = 'sleep_hours' AND date = '2026-03-01'"
+        ).fetchone()
+        assert val == 13.0
+        assert src_count == 2
+
+        (rows_skipped,) = conn.execute("SELECT rows_skipped FROM imports ORDER BY id DESC LIMIT 1").fetchone()
+        assert rows_skipped == 0
+    finally:
+        conn.close()
+
+
+def test_sleep_source_exceeding_24h_is_skipped_while_valid_source_kept(tmp_path, capsys):
+    export = tmp_path / "export.xml"
+    export.write_text(
+        '<?xml version="1.0"?><HealthData>'
+        + _asleep("2026-03-01 00:00:00", "2026-03-02 01:00:00", WATCH)  # 25 hours
+        + _asleep("2026-03-01 00:00:00", "2026-03-01 06:00:00", APP)  # 6 hours
+        + "</HealthData>",
+        encoding="utf-8",
+    )
+    db = tmp_path / "health.db"
+    init_health_db(export, db, replace=False, source="apple-health")
+    captured = capsys.readouterr()
+
+    assert "Skipping" in captured.err
+    assert WATCH in captured.err
+    assert "2026-03-01" in captured.err
+
+    rows_01 = _sleep_rows(db, "2026-03-01")
+    assert [(r[1], r[2]) for r in rows_01] == [(6.0, APP)]
+
+    conn = sqlite3.connect(db)
+    try:
+        (rows_skipped,) = conn.execute("SELECT rows_skipped FROM imports ORDER BY id DESC LIMIT 1").fetchone()
+        assert rows_skipped == 1
+    finally:
+        conn.close()

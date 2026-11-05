@@ -310,6 +310,31 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
         finally:
             elem.clear()
 
+    valid_sleep_by_day: dict[str, list[float]] = defaultdict(list)
+    # Sleep is stored like the quantity records: one observation per source, under the sourceName its records
+    # carry (a record with none keeps None and is stamped with the importer's name on import, as for any other
+    # metric), so the daily projection resolves between sources instead of being handed one added-up total.
+    # The day total stays at the noon placeholder, so the day each interval is filed under does not change.
+    for (day, source_name), seconds in sorted(
+        sleep_seconds_by_source.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")
+    ):
+        hours = round(seconds / 3600, 2)
+        what = f"sleep record for {source_name or 'unknown source'} on {day}"
+        try:
+            _check_observation_bounds("sleep_hours", hours, what)
+            raw_measurements.append(
+                {
+                    "timestamp": f"{day}T12:00:00",
+                    "metric": "sleep_hours",
+                    "value": hours,
+                    "source": source_name,
+                }
+            )
+            valid_sleep_by_day[day].append(hours)
+        except RowError as exc:
+            print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+            skipped += 1
+
     all_days = (
         set(step_sum)
         | set(resting_hr_readings)
@@ -318,14 +343,14 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
         | set(weight_latest)
         | set(exercise_sum)
         | set(water_sum)
-        | set(sleep_seconds)
+        | set(valid_sleep_by_day)
     )
 
     present_columns = [
         col
         for col, has_data in (
             ("steps", bool(step_sum)),
-            ("sleep_hours", bool(sleep_seconds)),
+            ("sleep_hours", bool(valid_sleep_by_day)),
             ("resting_heart_rate", bool(resting_hr_readings)),
             ("heart_rate", bool(heart_rate_readings)),
             ("hrv_ms", bool(hrv_readings)),
@@ -341,8 +366,8 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
         row: dict[str, Any] = {"date": day}
         if day in step_sum:
             row["steps"] = int(round(step_sum[day]))
-        if day in sleep_seconds:
-            row["sleep_hours"] = round(sleep_seconds[day] / 3600, 2)
+        if day in valid_sleep_by_day and len(valid_sleep_by_day[day]) == 1:
+            row["sleep_hours"] = valid_sleep_by_day[day][0]
         if day in resting_hr_readings:
             readings = resting_hr_readings[day]
             row["resting_heart_rate"] = int(round(sum(readings) / len(readings)))
@@ -358,22 +383,6 @@ def adapt_apple_health(path: Path) -> AdaptedImport:
         if day in water_sum:
             row["water_ml"] = int(round(water_sum[day]))
         rows.append(row)
-
-    # Sleep is stored like the quantity records: one observation per source, under the sourceName its records
-    # carry (a record with none keeps None and is stamped with the importer's name on import, as for any other
-    # metric), so the daily projection resolves between sources instead of being handed one added-up total.
-    # The day total stays at the noon placeholder, so the day each interval is filed under does not change.
-    for (day, source_name), seconds in sorted(
-        sleep_seconds_by_source.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")
-    ):
-        raw_measurements.append(
-            {
-                "timestamp": f"{day}T12:00:00",
-                "metric": "sleep_hours",
-                "value": round(seconds / 3600, 2),
-                "source": source_name,
-            }
-        )
 
     return AdaptedImport(
         rows=rows,
@@ -848,10 +857,183 @@ def adapt_whoop(path: Path) -> AdaptedImport:
     )
 
 
+_OURA_SOURCE = "Oura"
+
+
+def adapt_oura(path: Path) -> AdaptedImport:
+    """Parse JSON saved from the Oura Ring API (v2) or an Oura export.
+    Supports either:
+    - a JSON array of records (e.g. daily_activity, sleep, daily_readiness, workout)
+    - a {"data": [...]} collection response from the Oura v2 API
+    - a dict with keys mapping to record lists (e.g. {"sleep": [...], "daily_activity": [...]})
+
+    Metrics extracted with source "Oura":
+    - sleep_hours: from total_sleep_duration (seconds to hours)
+    - steps: from daily_activity steps
+    - resting_heart_rate: from lowest_heart_rate in sleep or resting_heart_rate in readiness
+    - hrv_ms: from average_hrv in sleep records (RMSSD)
+    - workout_minutes: from workout records (duration in seconds to minutes)
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sys.exit(f"Error: couldn't read {path} as Oura JSON: {exc}")
+
+    records: list[dict[str, Any]] = []
+    if isinstance(data, list):
+        records = [r for r in data if isinstance(r, dict)]
+    elif isinstance(data, dict):
+        if "data" in data and isinstance(data["data"], list):
+            records = [r for r in data["data"] if isinstance(r, dict)]
+        elif "records" in data and isinstance(data["records"], list):
+            records = [r for r in data["records"] if isinstance(r, dict)]
+        else:
+            for val in data.values():
+                if isinstance(val, list):
+                    records.extend(r for r in val if isinstance(r, dict))
+
+    if not records:
+        raise RowError("no Oura records found in file")
+
+    observations: list[dict[str, Any]] = []
+    skipped = 0
+    unsupported_types: defaultdict[str, int] = defaultdict(int)
+
+    def observe(ts: str, metric: str, val: float, unit: str, what: str) -> None:
+        nonlocal skipped
+        try:
+            _check_observation_bounds(metric, val, what)
+            observations.append(
+                {
+                    "timestamp": ts,
+                    "metric": metric,
+                    "value": val,
+                    "unit": unit,
+                    "source": _OURA_SOURCE,
+                }
+            )
+        except RowError as exc:
+            print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+            skipped += 1
+
+    for r in records:
+        day = r.get("day")
+        if not day and "timestamp" in r and isinstance(r["timestamp"], str):
+            day = r["timestamp"][:10]
+        if not day and "bedtime_end" in r and isinstance(r["bedtime_end"], str):
+            day = r["bedtime_end"][:10]
+        if not day and "start_datetime" in r and isinstance(r["start_datetime"], str):
+            day = r["start_datetime"][:10]
+
+        if not day or not isinstance(day, str):
+            unsupported_types["unknown_record"] += 1
+            continue
+
+        ts_noon = f"{day}T12:00:00"
+
+        # 1. Sleep: total_sleep_duration
+        if "total_sleep_duration" in r and r["total_sleep_duration"] is not None:
+            try:
+                secs = _finite_float(r["total_sleep_duration"], "sleep duration")
+                hours = round(secs / 3600, 2)
+                observe(ts_noon, "sleep_hours", hours, "h", f"Oura sleep on {day}")
+            except RowError as exc:
+                print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+                skipped += 1
+
+            if "average_hrv" in r and r["average_hrv"] is not None:
+                try:
+                    hrv = _finite_float(r["average_hrv"], "average_hrv")
+                    observe(ts_noon, "hrv_ms", round(hrv, 1), "ms", f"Oura HRV on {day}")
+                except RowError as exc:
+                    print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+                    skipped += 1
+
+            if "lowest_heart_rate" in r and r["lowest_heart_rate"] is not None:
+                try:
+                    rhr = _finite_float(r["lowest_heart_rate"], "lowest_heart_rate")
+                    observe(ts_noon, "resting_heart_rate", int(round(rhr)), "bpm", f"Oura resting HR on {day}")
+                except RowError as exc:
+                    print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+                    skipped += 1
+
+        # 2. Daily Activity: steps
+        if "steps" in r and r["steps"] is not None:
+            try:
+                steps_val = _finite_float(r["steps"], "steps")
+                observe(ts_noon, "steps", int(round(steps_val)), "count", f"Oura steps on {day}")
+            except RowError as exc:
+                print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+                skipped += 1
+
+        # 3. Readiness: resting_heart_rate (if not already logged from sleep)
+        if "resting_heart_rate" in r and r["resting_heart_rate"] is not None:
+            try:
+                rhr = _finite_float(r["resting_heart_rate"], "resting_heart_rate")
+                observe(ts_noon, "resting_heart_rate", int(round(rhr)), "bpm", f"Oura resting HR on {day}")
+            except RowError as exc:
+                print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+                skipped += 1
+
+        # 4. Workout
+        if "activity" in r or "workout" in str(r.get("type", "")).lower():
+            duration_secs = r.get("duration")
+            if duration_secs is None and "start_datetime" in r and "end_datetime" in r:
+                try:
+                    s_dt = datetime.fromisoformat(r["start_datetime"].replace("Z", "+00:00"))
+                    e_dt = datetime.fromisoformat(r["end_datetime"].replace("Z", "+00:00"))
+                    duration_secs = (e_dt - s_dt).total_seconds()
+                except Exception:
+                    pass
+            if duration_secs is not None:
+                try:
+                    mins = round(_finite_float(duration_secs, "workout duration") / 60)
+                    observe(ts_noon, "workout_minutes", mins, "min", f"Oura workout on {day}")
+                except RowError as exc:
+                    print(f"Skipping a record in {path}: {exc}", file=sys.stderr)
+                    skipped += 1
+
+    observations.sort(key=lambda o: (o["timestamp"], o["metric"], o["value"]))
+    by_day: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for o in observations:
+        by_day[o["timestamp"][:10]][o["metric"]].append(o["value"])
+
+    rows: list[dict[str, Any]] = []
+    for day in sorted(by_day):
+        metrics = by_day[day]
+        row: dict[str, Any] = {"date": day}
+        if "steps" in metrics:
+            row["steps"] = int(round(sum(metrics["steps"])))
+        if "sleep_hours" in metrics:
+            row["sleep_hours"] = round(sum(metrics["sleep_hours"]), 2)
+        if "resting_heart_rate" in metrics:
+            row["resting_heart_rate"] = int(
+                round(sum(metrics["resting_heart_rate"]) / len(metrics["resting_heart_rate"]))
+            )
+        if "hrv_ms" in metrics:
+            row["hrv_ms"] = round(sum(metrics["hrv_ms"]) / len(metrics["hrv_ms"]), 1)
+        if "workout_minutes" in metrics:
+            row["workout_minutes"] = int(round(sum(metrics["workout_minutes"])))
+        rows.append(row)
+
+    present = {o["metric"] for o in observations}
+    present_columns = [
+        c for c in ("steps", "sleep_hours", "resting_heart_rate", "hrv_ms", "workout_minutes") if c in present
+    ]
+    return AdaptedImport(
+        rows=rows,
+        present_columns=present_columns,
+        skipped=skipped,
+        raw_measurements=observations,
+        unsupported_types=dict(unsupported_types),
+    )
+
+
 def detect_adapter(path: Path) -> str:
     """Best-effort guess at which adapter a source file needs, by file
     extension. Only used for --source auto (the CLI default) — an
-    explicit --source always wins over this.
+    explicit --source always wins over this. JSON sources require an explicit
+    --source (e.g. --source whoop or --source oura).
     """
     return "apple-health" if path.suffix.lower() == ".xml" else "csv"
 
@@ -860,4 +1042,5 @@ ADAPTERS: dict[str, Callable[[Path], AdaptedImport]] = {
     "apple-health": adapt_apple_health,
     "health-connect": adapt_health_connect,
     "whoop": adapt_whoop,
+    "oura": adapt_oura,
 }
