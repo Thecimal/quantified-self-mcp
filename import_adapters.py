@@ -402,6 +402,40 @@ def _parse_hc_datetime(raw: str) -> datetime:
         raise RowError(f"unparseable Health Connect timestamp {raw!r}") from exc
 
 
+# A Health Connect ZoneOffset as an exporter writes it: its ISO form ("+02:00", "-08:00", "+05:30", "Z"),
+# optionally with seconds. Health Connect allows offsets up to +/-18:00.
+_HC_ZONE_OFFSET = re.compile(r"^(?:(Z)|([+-])(\d{2}):(\d{2})(?::(\d{2}))?)$")
+
+
+def _hc_zone_offset(raw: Any) -> timezone | None:
+    """The UTC offset a Health Connect record carries (startZoneOffset / zoneOffset), or None when it is
+    missing, not a string or not a valid offset. None means "unknown": the caller keeps the timestamp's own
+    offset, exactly as before."""
+    match = _HC_ZONE_OFFSET.match(raw.strip()) if isinstance(raw, str) else None
+    if match is None:
+        return None
+    if match.group(1):
+        return timezone.utc
+    sign, hours, minutes, seconds = match.group(2), int(match.group(3)), int(match.group(4)), int(match.group(5) or 0)
+    total = hours * 3600 + minutes * 60 + seconds
+    if minutes > 59 or seconds > 59 or total > 18 * 3600:
+        return None
+    return timezone(timedelta(seconds=-total if sign == "-" else total))
+
+
+def _hc_day(when: datetime, offset: timezone | None) -> str:
+    """The calendar day (YYYY-MM-DD) of a parsed Health Connect instant, in the record's own local time.
+
+    The record's zone offset, when it has a valid one, is the local clock the user lived by, so an aware
+    instant is converted to it once before the date is taken (22:30Z with +02:00 is 00:30 the next day).
+    A timestamp with no offset of its own is already a wall-clock time and is not converted. With no usable
+    record offset the date is read in the timestamp's own offset (the UTC date for a "Z" string).
+    """
+    if offset is not None and when.tzinfo is not None:
+        when = when.astimezone(offset)
+    return when.date().isoformat()
+
+
 def _hc_data_origin(metadata: Any) -> str | None:
     """The package name of the app that wrote a Health Connect record (metadata.dataOrigin.packageName),
     or None when it is missing or blank."""
@@ -425,6 +459,14 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
     - sleep_hours: summed duration of SleepSessionRecord stages in
       _HC_ASLEEP_STAGES, or the whole session if a record has no stages
       (attributed to the day the session/stage started)
+
+    Days are the user's local calendar days. Interval records (steps, heart rate, exercise, sleep) are
+    placed by their startZoneOffset, instantaneous records (resting heart rate, HRV, weight) by their
+    zoneOffset: the record's start/time instant is converted to that offset once, then the date is
+    taken. That offset wins over any offset written in the timestamp string. A record with no valid
+    offset field (absent, null or malformed) falls back to the timestamp's own offset, as before, and
+    a timestamp with no offset at all is taken as local wall-clock time. Heart-rate samples carry no
+    offset of their own and use their record's startZoneOffset.
 
     Any other recordType is silently ignored, same as an unmapped Apple
     Health identifier.
@@ -488,41 +530,42 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
             if rtype == "StepsRecord":
                 when = _parse_hc_datetime(record["startTime"])
                 count = _finite_float(record["count"], "StepsRecord count")  # parse before touching the defaultdict
-                step_sum[when.date().isoformat()] += count
-                summed_by_origin[("steps", when.date().isoformat(), origin)] += count
+                day = _hc_day(when, _hc_zone_offset(record.get("startZoneOffset")))
+                step_sum[day] += count
+                summed_by_origin[("steps", day, origin)] += count
             elif rtype == "HeartRateRecord":
+                sample_offset = _hc_zone_offset(record.get("startZoneOffset"))
                 for sample in record.get("samples", []):
                     when = _parse_hc_datetime(sample["time"])
                     bpm = _finite_float(sample["beatsPerMinute"], "HeartRateRecord sample")
-                    heart_rate_readings[when.date().isoformat()].append(bpm)
+                    heart_rate_readings[_hc_day(when, sample_offset)].append(bpm)
             elif rtype == "RestingHeartRateRecord":
                 when = _parse_hc_datetime(record["time"])
                 bpm = _finite_float(record["beatsPerMinute"], "RestingHeartRateRecord")
-                resting_hr_readings[when.date().isoformat()].append(bpm)
+                resting_hr_readings[_hc_day(when, _hc_zone_offset(record.get("zoneOffset")))].append(bpm)
             elif rtype in ("HeartRateVariabilityRmssdRecord", "HeartRateVariabilityRecord"):
                 when = _parse_hc_datetime(record["time"])
                 ms = record.get("heartRateVariabilityMillis", record.get("heartRateVariabilityRmssd"))
                 hrv = _finite_float(ms, "HeartRateVariability record")
-                hrv_readings[when.date().isoformat()].append(hrv)
+                hrv_readings[_hc_day(when, _hc_zone_offset(record.get("zoneOffset")))].append(hrv)
             elif rtype == "WeightRecord":
                 when = _parse_hc_datetime(record["time"])
                 weight = record["weight"]
                 unit = (weight.get("unit") or "").strip().lower()
                 value = _weight_to_kg(_finite_float(weight["value"], "WeightRecord"), unit, "WeightRecord")
-                day = when.date().isoformat()
+                day = _hc_day(when, _hc_zone_offset(record.get("zoneOffset")))
                 prior = weight_latest.get(day)
                 if prior is None or when > prior[0]:
                     weight_latest[day] = (when, value)
             elif rtype == "ExerciseSessionRecord":
                 start = _parse_hc_datetime(record["startTime"])
                 end = _parse_hc_datetime(record["endTime"])
-                exercise_minutes[start.date().isoformat()] += (end - start).total_seconds() / 60
-                summed_by_origin[("workout_minutes", start.date().isoformat(), origin)] += (
-                    end - start
-                ).total_seconds() / 60
+                day = _hc_day(start, _hc_zone_offset(record.get("startZoneOffset")))
+                exercise_minutes[day] += (end - start).total_seconds() / 60
+                summed_by_origin[("workout_minutes", day, origin)] += (end - start).total_seconds() / 60
             elif rtype == "SleepSessionRecord":
                 start = _parse_hc_datetime(record["startTime"])
-                day = start.date().isoformat()
+                day = _hc_day(start, _hc_zone_offset(record.get("startZoneOffset")))
                 stages = record.get("stages") or []
                 if stages:
                     for stage in stages:

@@ -9,6 +9,14 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ### Fixed
 
+- **Health Connect days ignored the record's time zone** — the importer took each record's date from its
+  timestamp string, so a `Z` (UTC) timestamp was filed under the UTC date: at UTC+02:00 a step count at
+  00:30 local (`22:30Z`) landed on the previous day, and an evening one at UTC-08:00 on the next. Records
+  are now placed by their own offset field (`startZoneOffset` for steps, heart rate, exercise and sleep;
+  `zoneOffset` for resting heart rate, HRV and weight): the instant is converted to that offset once, then
+  the date is taken. A record with no valid offset field, or a timestamp with no offset, behaves as before,
+  so existing imports are unchanged. Re-importing an export that contains records near local midnight
+  moves them to their correct day. No migration is needed.
 - **The tool reference named arguments, defaults and capabilities the tools do not have** — `docs/tools.md`
   documented `window_days`, `baseline_days`, `threshold_std`, `target_date`, `metrics` and `filename`
   parameters, a `get_recent_changes` window of 14 days, an `explain_metric_change` bundle described as
