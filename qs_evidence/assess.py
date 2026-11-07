@@ -20,6 +20,7 @@ from typing import Any
 
 from .missingness import evaluate_missingness
 from .models import ClaimDecision, Dimension, DimensionResult, EvidenceProfile, Status
+from .provenance import SourceSummary, evaluate_provenance
 from .registry import AnalysisSpec, load_registry
 from .resolver import resolve
 from .sample import (
@@ -114,6 +115,7 @@ def assess_trend(
     start: date,
     end: date,
     effect: dict[str, Any] | None = None,
+    provenance: SourceSummary | None = None,
 ) -> Assessment:
     t = _thresholds(_registry()["trend"])
     values = align(points, start, end)
@@ -125,6 +127,7 @@ def assess_trend(
             Dimension.SAMPLE: evaluate_trend(_days(start, len(values)), values, t),
             Dimension.TEMPORAL: evaluate_temporal(values, start, t),
             Dimension.MISSINGNESS: evaluate_missingness(values, thresholds=t),
+            Dimension.PROVENANCE: evaluate_provenance({"window": provenance}),
         },
     )
 
@@ -136,6 +139,8 @@ def assess_window_comparison(
     points_b: Iterable[tuple[date, float]],
     range_b: tuple[date, date],
     effect: dict[str, Any] | None = None,
+    provenance_a: SourceSummary | None = None,
+    provenance_b: SourceSummary | None = None,
 ) -> Assessment:
     """Period A is the later/"current" window, period B the baseline it is measured against."""
     t = _thresholds(_registry()["window_comparison"])
@@ -153,6 +158,9 @@ def assess_window_comparison(
             Dimension.MISSINGNESS: _worst(
                 Dimension.MISSINGNESS,
                 {"period_a": evaluate_missingness(a, thresholds=t), "period_b": evaluate_missingness(b, thresholds=t)},
+            ),
+            Dimension.PROVENANCE: evaluate_provenance(
+                {"period_a": provenance_a, "period_b": provenance_b}, same_metric=True
             ),
         },
     )
@@ -192,6 +200,8 @@ def assess_correlation(
     end: date,
     lag_days: int = 0,
     effect: dict[str, Any] | None = None,
+    provenance_a: SourceSummary | None = None,
+    provenance_b: SourceSummary | None = None,
 ) -> Assessment:
     """Judged on complete pairs, not per series. b is shifted so a[day] pairs with b[day + lag_days].
 
@@ -217,6 +227,7 @@ def assess_correlation(
                 Dimension.MISSINGNESS,
                 {"metric_a": evaluate_missingness(x, thresholds=t), "metric_b": evaluate_missingness(y, thresholds=t)},
             ),
+            Dimension.PROVENANCE: evaluate_provenance({"metric_a": provenance_a, "metric_b": provenance_b}),
         },
     )
 
@@ -227,6 +238,7 @@ def assess_anomaly(
     start: date,
     end: date,
     effect: dict[str, Any] | None = None,
+    provenance: SourceSummary | None = None,
 ) -> Assessment:
     """The window is its own baseline, which is how analytics.detect_anomalies scores it."""
     t = _thresholds(_registry()["anomaly"])
@@ -238,6 +250,7 @@ def assess_anomaly(
         {
             Dimension.SAMPLE: evaluate_anomaly(values, t),
             Dimension.TEMPORAL: evaluate_temporal(values, start, t),
+            Dimension.PROVENANCE: evaluate_provenance({"window": provenance}),
         },
     )
 
@@ -248,6 +261,7 @@ def assess_baseline(
     start: date,
     end: date,
     effect: dict[str, Any] | None = None,
+    provenance: SourceSummary | None = None,
 ) -> Assessment:
     """A "what's normal" claim over the window: sample adequacy, temporal spread and missingness."""
     t = _thresholds(_registry()["baseline"])
@@ -260,5 +274,6 @@ def assess_baseline(
             Dimension.SAMPLE: evaluate_baseline(values, t),
             Dimension.TEMPORAL: evaluate_temporal(values, start, t),
             Dimension.MISSINGNESS: evaluate_missingness(values, thresholds=t),
+            Dimension.PROVENANCE: evaluate_provenance({"window": provenance}),
         },
     )

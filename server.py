@@ -108,6 +108,7 @@ from privacy import (
 from qs_evidence import (
     Assessment,
     ClaimDecision,
+    SourceSummary,
     assess_anomaly,
     assess_baseline,
     assess_correlation,
@@ -309,6 +310,19 @@ def _fetch_metrics_series(metrics: list[str], start: date_type, end: date_type) 
     "private" has to mean "never fed into analytics," not just "never
     printed raw."
     """
+    return _read_metrics_series(metrics, start, end, [])[0]
+
+
+def _read_metrics_series(
+    metrics: list[str],
+    start: date_type,
+    end: date_type,
+    source_windows: Sequence[tuple[str, date_type, date_type]],
+) -> tuple[dict[str, list[Point]], list[SourceSummary]]:
+    """_fetch_metrics_series (same guardrails, same errors), plus the source summary of each
+    (metric, start, end) window in `source_windows`, read on the same connection so a caller that needs both
+    (get_recent_changes) pays for one database setup, not two. Every window's metric must be one of `metrics`,
+    so the privacy guardrail has already refused a private metric before any of its sources are read."""
     for metric in metrics:
         if metric not in METRIC_COLUMNS:
             raise _tool_error(ERR_INVALID_FIELD, f"metric must be one of: {', '.join(METRIC_COLUMNS)} — got {metric!r}")
@@ -317,9 +331,13 @@ def _fetch_metrics_series(metrics: list[str], start: date_type, end: date_type) 
                 ERR_INVALID_FIELD,
                 f"{metric!r} is configured as private (HEALTH_PRIVATE_FIELDS) and can't be analyzed.",
             )
+    assert all(m in metrics for m, _, _ in source_windows)
     try:
         with _readonly_connection(HEALTH_DB_PATH) as conn:
             rows = daily_metrics_wide(conn, metrics, start.isoformat(), end.isoformat()) if metrics else []
+            sources = [
+                SourceSummary.from_mapping(projected_source_summary(conn, m, s_, e_)) for m, s_, e_ in source_windows
+            ]
     except db_error_types() as exc:
         logger.error("Database error reading %s: %s", HEALTH_DB_PATH, exc)
         if _is_locked_error(exc):
@@ -331,10 +349,11 @@ def _fetch_metrics_series(metrics: list[str], start: date_type, end: date_type) 
             ERR_DATABASE_ERROR,
             "Could not read the health database — it may be missing or corrupt. Try again, or re-run init_db.py.",
         ) from exc
-    return {
+    series = {
         metric: [Point(parse_date(row["date"], "date"), float(row[metric])) for row in rows if row[metric] is not None]
         for metric in metrics
     }
+    return series, sources
 
 
 def _fetch_metric_series(metric: str, start: date_type, end: date_type) -> list[Point]:
@@ -415,6 +434,26 @@ def _data_health(
             ]
         )
     )
+
+
+def _provenance_for(requests: Sequence[tuple[str, date_type, date_type]]) -> list[SourceSummary | None]:
+    """Source summary (see logic.projected_source_summary) for each (metric, start, end) window, read on one
+    connection, in request order. It feeds the PROVENANCE dimension so that source conflicts and source changes
+    reach the ClaimDecision itself, not only data_health.
+
+    A private metric reports no sources: nothing about it is read. An unreadable database yields None per window,
+    which the evaluator treats as NOT_ASSESSED (it caps the claim), never as clean provenance."""
+    try:
+        with _readonly_connection(HEALTH_DB_PATH) as conn:
+            return [
+                SourceSummary((), 0)
+                if metric in PRIVATE_FIELDS
+                else SourceSummary.from_mapping(projected_source_summary(conn, metric, start, end))
+                for metric, start, end in requests
+            ]
+    except db_error_types() as exc:
+        logger.error("Database error reading source provenance from %s: %s", HEALTH_DB_PATH, exc)
+        return [None] * len(requests)
 
 
 def _claim_evidence(assessment: Assessment, evidence: Evidence) -> ClaimEvidence:
@@ -660,7 +699,8 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
     series = _fetch_metric_series(metric, start, end)
     stats = _baseline_stats(series)
     evidence = Evidence(**build_evidence(series, start, end))
-    assessment = assess_baseline(metric, series, start, end, effect=stats.model_dump())
+    (provenance,) = _provenance_for([(metric, start, end)])
+    assessment = assess_baseline(metric, series, start, end, effect=stats.model_dump(), provenance=provenance)
     return GetBaselineResult(
         metric=metric,
         range=DateRange(start_date=start.isoformat(), end_date=end.isoformat()),
@@ -740,8 +780,14 @@ def detect_metric_anomalies(
         raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
     series = _fetch_metric_series(metric, start, end)
     anomalies = detect_anomalies(series, threshold=threshold)
+    (provenance,) = _provenance_for([(metric, start, end)])
     assessment = assess_anomaly(
-        metric, series, start, end, effect={"n_anomalies": len(anomalies), "threshold": threshold}
+        metric,
+        series,
+        start,
+        end,
+        effect={"n_anomalies": len(anomalies), "threshold": threshold},
+        provenance=provenance,
     )
     evidence = Evidence(**build_evidence(series, start, end))
     return DetectAnomaliesResult(
@@ -818,7 +864,8 @@ def calculate_metric_trend(
         raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
     series = _fetch_metric_series(metric, start, end)
     trend = _trend_stats(series)
-    assessment = assess_trend(metric, series, start, end, effect=trend.model_dump())
+    (provenance,) = _provenance_for([(metric, start, end)])
+    assessment = assess_trend(metric, series, start, end, effect=trend.model_dump(), provenance=provenance)
     evidence = Evidence(**build_evidence(series, start, end))
     return CalculateTrendResult(
         metric=metric,
@@ -900,6 +947,7 @@ def compare_metric_periods(
     series_a = _fetch_metric_series(metric, start_a, end_a)
     series_b = _fetch_metric_series(metric, start_b, end_b)
     result = compare_periods(series_a, series_b)
+    provenance_a, provenance_b = _provenance_for([(metric, start_a, end_a), (metric, start_b, end_b)])
     assessment = assess_window_comparison(
         metric,
         series_a,
@@ -907,6 +955,8 @@ def compare_metric_periods(
         series_b,
         (start_b, end_b),
         effect={"delta": result["delta"], "pct_change": result["pct_change"]},
+        provenance_a=provenance_a,
+        provenance_b=provenance_b,
     )
     claim = _claim_evidence_comparative(
         assessment,
@@ -1019,6 +1069,7 @@ def find_metric_correlation(
     series_a = _fetch_metric_series(metric_a, start, end)
     series_b = _fetch_metric_series(metric_b, start, end)
     result = find_correlations(series_a, series_b, lag_days=lag_days)
+    provenance_a, provenance_b = _provenance_for([(metric_a, start, end), (metric_b, start, end)])
     assessment = assess_correlation(
         metric_a,
         series_a,
@@ -1028,6 +1079,8 @@ def find_metric_correlation(
         end,
         lag_days=lag_days,
         effect={"r": result["r"], "n": result["n"], "lag_days": lag_days},
+        provenance_a=provenance_a,
+        provenance_b=provenance_b,
     )
     evidence_a = Evidence(**build_evidence(series_a, start, end))
     evidence_b = Evidence(**build_evidence(series_b, start, end))
@@ -1121,7 +1174,15 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
     metrics = [metric for metric in METRIC_COLUMNS if metric not in PRIVATE_FIELDS]
     # One read for every metric over the baseline and recent windows (they are adjacent), split by day below:
     # 18 separate reads each re-ran the schema bootstrap, which was ~80% of this tool's time.
-    window_series = _fetch_metrics_series(metrics, baseline_start, end)
+    # Source provenance for both windows of every metric is read on that same connection (see _provenance_for).
+    window_series, window_provenance = _read_metrics_series(
+        metrics,
+        baseline_start,
+        end,
+        [(m, recent_start, end) for m in metrics] + [(m, baseline_start, baseline_end) for m in metrics],
+    )
+    recent_provenance = dict(zip(metrics, window_provenance[: len(metrics)], strict=True))
+    baseline_provenance = dict(zip(metrics, window_provenance[len(metrics) :], strict=True))
     for metric in metrics:
         recent_series = [point for point in window_series[metric] if point.day >= recent_start]
         baseline_series = [point for point in window_series[metric] if point.day <= baseline_end]
@@ -1145,6 +1206,8 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
                 baseline_series,
                 (baseline_start, baseline_end),
                 effect={"delta": comparison["delta"], "pct_change": comparison["pct_change"]},
+                provenance_a=recent_provenance[metric],
+                provenance_b=baseline_provenance[metric],
             )
             changes.append(
                 ChangeNote(
@@ -1162,7 +1225,14 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
 
         recent_anomalies = detect_anomalies(recent_series)
         anomaly_claim = (
-            assess_anomaly(metric, recent_series, recent_start, end, effect={"n_anomalies": len(recent_anomalies)})
+            assess_anomaly(
+                metric,
+                recent_series,
+                recent_start,
+                end,
+                effect={"n_anomalies": len(recent_anomalies)},
+                provenance=recent_provenance[metric],
+            )
             if recent_anomalies
             else None
         )
@@ -1183,7 +1253,9 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
 
         trend = calculate_trend(recent_series)
         if trend["direction"] not in ("flat", "insufficient_data") and (trend["r_squared"] or 0) >= 0.3:
-            trend_claim = assess_trend(metric, recent_series, recent_start, end, effect=dict(trend))
+            trend_claim = assess_trend(
+                metric, recent_series, recent_start, end, effect=dict(trend), provenance=recent_provenance[metric]
+            )
             changes.append(
                 ChangeNote(
                     metric=metric,
@@ -1287,6 +1359,11 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     except db_error_types() as exc:
         logger.error("Database error counting source conflicts for %s: %s", metric, exc)
 
+    # Source provenance of the metric over the 90-day (baseline/anomaly/correlation) and 30-day (trend) windows.
+    baseline_provenance, trend_provenance = _provenance_for(
+        [(metric, baseline_start, target_day), (metric, trend_start, target_day)]
+    )
+
     correlated: list[CorrelationResult] = []
     # Paired with `correlated` positionally (before the top-5 truncation below) so the composite
     # decision below can be built from exactly the correlations actually surfaced to the caller.
@@ -1297,6 +1374,7 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         other_series = _fetch_metric_series(other, baseline_start, target_day)
         result = find_correlations(series, other_series, lag_days=0)
         if result["r"] is not None and abs(result["r"]) >= 0.5:
+            (other_provenance,) = _provenance_for([(other, baseline_start, target_day)])
             corr_assessment = assess_correlation(
                 metric,
                 series,
@@ -1305,6 +1383,8 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
                 baseline_start,
                 target_day,
                 effect={"r": result["r"], "n": result["n"], "lag_days": 0},
+                provenance_a=baseline_provenance,
+                provenance_b=other_provenance,
             )
             correlated.append(
                 CorrelationResult(
@@ -1390,11 +1470,16 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
             "is_anomaly": matching_anomaly is not None,
             "modified_z_score": matching_anomaly["modified_z_score"] if matching_anomaly else None,
         },
+        provenance=baseline_provenance,
     )
-    trend_assessment = assess_trend(metric, trend_series, trend_start, target_day, effect=dict(trend))
+    trend_assessment = assess_trend(
+        metric, trend_series, trend_start, target_day, effect=dict(trend), provenance=trend_provenance
+    )
     # The response reports baseline statistics (baseline, narrative_facts), so the baseline is a component of
     # the composite: its coverage/temporal limits must reach overall_decision like every other included claim.
-    baseline_assessment = assess_baseline(metric, series, baseline_start, target_day, effect=dict(stats))
+    baseline_assessment = assess_baseline(
+        metric, series, baseline_start, target_day, effect=dict(stats), provenance=baseline_provenance
+    )
     overall_decision = combine_decisions(
         [
             baseline_assessment.decision,

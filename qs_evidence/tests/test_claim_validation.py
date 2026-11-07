@@ -20,7 +20,7 @@ from qs_evidence.registry import AnalysisSpec, DimensionPolicy
 
 REG = load_registry()
 S = Status
-ALL_OK = {"sample": S.ADEQUATE, "temporal": S.ADEQUATE, "missingness": S.ADEQUATE}
+ALL_OK = {"sample": S.ADEQUATE, "temporal": S.ADEQUATE, "missingness": S.ADEQUATE, "provenance": S.ADEQUATE}
 
 
 def _profile(analysis: str, **statuses: Status) -> EvidenceProfile:

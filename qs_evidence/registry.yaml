@@ -10,6 +10,7 @@ window_comparison:
     sample:               {on_not_assessed: cap}
     temporal:             {on_not_assessed: cap}
     missingness:          {on_not_assessed: cap}
+    provenance:           {on_not_assessed: cap}   # source conflicts/changes; missing read caps
   max_tier: {tier: suggestive, factor: practical_not_evaluated}
   thresholds:
     min_n_per_window: 7
@@ -22,6 +23,7 @@ trend:
     sample:               {on_not_assessed: cap}
     temporal:             {on_not_assessed: cap}
     missingness:          {on_not_assessed: cap}
+    provenance:           {on_not_assessed: cap}   # source conflicts/changes; missing read caps
   max_tier: {tier: suggestive, factor: practical_not_evaluated}
   thresholds:
     min_n: 14
@@ -32,6 +34,7 @@ correlation:
     sample:               {on_not_assessed: cap}   # judged on n_paired, not n per series
     temporal:             {on_not_assessed: cap}
     missingness:          {on_not_assessed: cap}
+    provenance:           {on_not_assessed: cap}   # source conflicts/changes; missing read caps
   max_tier: {tier: suggestive, factor: practical_not_evaluated}
   thresholds:
     min_n_paired: 20
@@ -40,6 +43,7 @@ anomaly:
   dimensions:
     sample:               {on_not_assessed: cap}   # baseline length
     temporal:             {on_not_assessed: cap}
+    provenance:           {on_not_assessed: cap}   # source conflicts/changes; missing read caps
   max_tier: {tier: suggestive, factor: practical_not_evaluated}
   thresholds:
     min_baseline_days: 28
@@ -48,5 +52,6 @@ baseline:
     sample:               {on_not_assessed: cap}   # window length / observation count
     temporal:             {on_not_assessed: cap}
     missingness:          {on_not_assessed: cap}
+    provenance:           {on_not_assessed: cap}   # source conflicts/changes; missing read caps
   thresholds:
     min_baseline_days: 28   # same policy as anomaly's baseline requirement
