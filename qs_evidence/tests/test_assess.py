@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from qs_evidence import ClaimTier, Dimension, Status, load_registry
+from qs_evidence import ClaimTier, Dimension, SourceSummary, Status, load_registry
 from qs_evidence import assess as assess_mod
 from qs_evidence.models import TIER_RANK
 
@@ -28,6 +28,8 @@ def gap_last(values, k):
 
 
 CEILING_FACTORS = {"practical_not_evaluated"}
+# One consistent source, no tie-breaks: the provenance input a clean window supplies.
+CLEAN = SourceSummary(("src",), 0)
 
 
 def test_align_places_values_by_day_and_drops_non_finite():
@@ -61,9 +63,9 @@ def test_every_registry_analysis_has_an_assess_entry_point_and_lists_exactly_its
 
 
 def test_out_of_scope_dimensions_are_absent_and_the_ceiling_names_what_was_not_evaluated():
-    a = assess_mod.assess_trend("m", pts(wave(30)), START, end_of(30))
+    a = assess_mod.assess_trend("m", pts(wave(30)), START, end_of(30), provenance=CLEAN)
     by = {d.dimension: d for d in a.profile.dimensions}
-    assert set(by) == {Dimension.SAMPLE, Dimension.TEMPORAL, Dimension.MISSINGNESS}
+    assert set(by) == {Dimension.SAMPLE, Dimension.TEMPORAL, Dimension.MISSINGNESS, Dimension.PROVENANCE}
     assert all(d.status == Status.ADEQUATE for d in by.values())
     assert a.decision.tier == ClaimTier.SUGGESTIVE
     assert a.decision.limiting_factors == ["practical_not_evaluated"]
@@ -74,7 +76,7 @@ def test_out_of_scope_dimensions_are_absent_and_the_ceiling_names_what_was_not_e
 
 def test_trend_clean_vs_recent_gap_vs_tiny_sample():
     effect = {"slope_per_day": -0.5}
-    clean = assess_mod.assess_trend("m", pts(wave(30)), START, end_of(30), effect)
+    clean = assess_mod.assess_trend("m", pts(wave(30)), START, end_of(30), effect, provenance=CLEAN)
     gappy = assess_mod.assess_trend("m", pts(gap_last(wave(30), 6)), START, end_of(30), effect)
     tiny = assess_mod.assess_trend("m", pts(wave(10)), START, end_of(10), effect)
 
@@ -181,9 +183,14 @@ def test_n_eff_is_bounded_by_n_paired_and_handles_constant_series():
 # ---- baseline ---------------------------------------------------------------------------------------
 
 
-def test_baseline_clean_window_is_supported_with_only_its_three_dimensions():
-    a = assess_mod.assess_baseline("m", pts(wave(60)), START, end_of(60), effect={"n": 60})
-    assert {d.dimension for d in a.profile.dimensions} == {Dimension.SAMPLE, Dimension.TEMPORAL, Dimension.MISSINGNESS}
+def test_baseline_clean_window_is_supported_with_only_its_four_dimensions():
+    a = assess_mod.assess_baseline("m", pts(wave(60)), START, end_of(60), effect={"n": 60}, provenance=CLEAN)
+    assert {d.dimension for d in a.profile.dimensions} == {
+        Dimension.SAMPLE,
+        Dimension.TEMPORAL,
+        Dimension.MISSINGNESS,
+        Dimension.PROVENANCE,
+    }
     assert all(d.status == Status.ADEQUATE for d in a.profile.dimensions)
     assert a.decision.tier == ClaimTier.SUPPORTED and a.decision.limiting_factors == []
     assert a.profile.effect == {"n": 60}
@@ -203,7 +210,7 @@ def test_baseline_recent_gap_limits_the_claim_without_blocking_it():
 
 
 def test_baseline_constant_series_is_not_blocked_by_zero_variance():
-    a = assess_mod.assess_baseline("m", pts([50.0] * 60), START, end_of(60))
+    a = assess_mod.assess_baseline("m", pts([50.0] * 60), START, end_of(60), provenance=CLEAN)
     by = {d.dimension: d for d in a.profile.dimensions}
     assert by[Dimension.SAMPLE].status == Status.ADEQUATE
     assert a.decision.tier == ClaimTier.SUPPORTED

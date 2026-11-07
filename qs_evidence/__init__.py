@@ -8,6 +8,7 @@ from .assess import (
 )
 from .missingness import evaluate_missingness
 from .models import ClaimDecision, ClaimTier, Dimension, DimensionResult, EvidenceProfile, Status
+from .provenance import SourceSummary, evaluate_provenance
 from .registry import AnalysisSpec, load_registry
 from .resolver import combine_decisions, resolve, validate_claim_decision
 from .sample import evaluate_sample
@@ -28,6 +29,8 @@ __all__ = [
     "evaluate_temporal",
     "evaluate_missingness",
     "evaluate_sample",
+    "evaluate_provenance",
+    "SourceSummary",
     "Assessment",
     "assess_anomaly",
     "assess_baseline",

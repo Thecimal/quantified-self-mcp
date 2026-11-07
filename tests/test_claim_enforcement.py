@@ -14,7 +14,12 @@ from qs_evidence import Dimension, DimensionResult, EvidenceProfile, Status, loa
 
 START = date(2026, 3, 1)
 REG = load_registry()
-ALL_OK = {"sample": Status.ADEQUATE, "temporal": Status.ADEQUATE, "missingness": Status.ADEQUATE}
+ALL_OK = {
+    "sample": Status.ADEQUATE,
+    "temporal": Status.ADEQUATE,
+    "missingness": Status.ADEQUATE,
+    "provenance": Status.ADEQUATE,
+}
 SUPPORTED = {"tier": "supported", "permitted_phrasing_class": "supported", "template": "Your data shows ..."}
 
 
