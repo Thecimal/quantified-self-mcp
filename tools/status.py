@@ -29,6 +29,7 @@ from logic import (
     db_error_types,
     list_imports,
 )
+from source_coverage import stale_metrics
 
 MAX_STALE_AFTER_DAYS = 3660
 MAX_IMPORTS_RETURNED = 50
@@ -68,6 +69,13 @@ class DataGap(BaseModel):
     days: int
 
 
+class StaleMetric(BaseModel):
+    metric: str
+    latest_data: str
+    days_behind: int
+    stale_after_days: int
+
+
 class DataStatusResult(BaseModel):
     status: str
     reason: str | None = None
@@ -84,6 +92,7 @@ class DataStatusResult(BaseModel):
     source: str | None = None
     last_successful_import: str | None = None
     latest_import: ImportRecord | None = None
+    stale_metrics: list[StaleMetric] = []
 
 
 class GetImportStatusResult(BaseModel):
@@ -128,7 +137,10 @@ def register_status_tools(
         coverage window, gaps, last successful import, and an overall status
         of CURRENT, STALE, INCOMPLETE, NO_DATA or IMPORT_FAILED. Check this
         before drawing conclusions from any analysis, and say so when the
-        status is anything other than CURRENT.
+        status is anything other than CURRENT. The status and latest_data
+        describe the database as a whole, so one metric that is still
+        arriving keeps them current while another has stopped: read
+        stale_metrics too, and do not present a listed metric as current.
 
         Use this tool when:
         - the user asks how up to date their data is, or whether an import
@@ -152,13 +164,19 @@ def register_status_tools(
             "days_behind", "coverage" (start/end), "gap_count",
             "missing_days" and the most recent "gaps", the importer ("source")
             and time of the last successful import, and the "latest_import"
-            record. Metrics listed in HEALTH_PRIVATE_FIELDS are ignored.
+            record. "stale_metrics" lists each metric whose own latest day trails today by
+            more than its threshold (stale_after_days, or 30 days for weight and workouts),
+            most behind first, whatever the overall status; it says when the data is *for*,
+            not when it was imported. Metrics listed in HEALTH_PRIVATE_FIELDS are ignored.
         """
         if not 0 <= stale_after_days <= MAX_STALE_AFTER_DAYS:
             raise _tool_error(ERR_INVALID_RANGE, f"stale_after_days must be between 0 and {MAX_STALE_AFTER_DAYS}.")
         try:
             with readonly_connection(db_path) as conn:
                 status = compute_data_status(
+                    conn, date.today(), stale_after_days=stale_after_days, exclude_metrics=private_fields
+                )
+                status["stale_metrics"] = stale_metrics(
                     conn, date.today(), stale_after_days=stale_after_days, exclude_metrics=private_fields
                 )
         except db_error_types() as exc:

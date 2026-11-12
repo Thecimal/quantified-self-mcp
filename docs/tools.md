@@ -70,7 +70,9 @@ whose decision limits how strongly it may be stated.
 ## 5. System Status & Freshness
 
 * **`get_data_status(stale_after_days=2)`**
-  Evaluate database freshness, latest recorded dates, total days logged, and metric coverage.
+  Evaluate database freshness, latest recorded dates, total days logged, and coverage gaps. The status
+  describes the database as a whole; `stale_metrics` lists each metric whose own latest day is older than
+  its threshold (`stale_after_days`, or 30 days for weight and workouts), even when the status is `CURRENT`.
 * **`get_import_status(limit=5)`**
   Review recent data imports: source file, importer type, duration, records added, and status.
 

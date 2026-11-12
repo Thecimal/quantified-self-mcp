@@ -140,6 +140,32 @@ def _freshness(
     return days_behind, ("CURRENT" if days_behind <= stale_after_days else "STALE")
 
 
+def stale_metrics(
+    conn: sqlite3.Connection,
+    today: date,
+    stale_after_days: int = DEFAULT_STALE_AFTER_DAYS,
+    exclude_metrics: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """Metrics whose own latest day with data trails `today` by more than their stale threshold, most behind
+    first. The dataset-wide latest day (logic.compute_data_status) is only as old as the freshest metric, so a
+    metric that stopped arriving is invisible there while any other metric is still current. Daily metrics
+    are judged against `stale_after_days`, episodic ones (weight, workouts) against EPISODIC_STALE_AFTER_DAYS,
+    as everywhere else (see _freshness). This reads the day a value is *for*, never when it was imported.
+    Metrics in `exclude_metrics` are left out. Read-only."""
+    clause, params = _in_clause(sorted(set(exclude_metrics)))
+    stale: list[dict[str, Any]] = []
+    for metric, latest in conn.execute(
+        f"SELECT metric, MAX(date) FROM daily_metrics WHERE date IS NOT NULL{clause} GROUP BY metric", params
+    ):
+        days_behind, freshness = _freshness(latest, today, stale_after_days, metric)
+        if freshness == "STALE":
+            threshold = EPISODIC_STALE_AFTER_DAYS if metric in EPISODIC_METRICS else stale_after_days
+            stale.append(
+                {"metric": metric, "latest_data": latest, "days_behind": days_behind, "stale_after_days": threshold}
+            )
+    return sorted(stale, key=lambda entry: (-entry["days_behind"], entry["metric"]))
+
+
 def classify(
     facts: dict[str, Any],
     *,

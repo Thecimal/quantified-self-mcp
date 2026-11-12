@@ -7,6 +7,17 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Fixed
+
+- **`get_data_status` said CURRENT while a metric had stopped arriving** — the status and `latest_data` came
+  from the newest day of any metric, so steps logged daily kept the database CURRENT while HRV, sleep or any
+  other metric had not been updated for weeks, and a client had nothing to tell it so. The result now carries
+  `stale_metrics`: each metric whose own latest day trails today by more than its threshold (`stale_after_days`,
+  or 30 days for weight and workouts, as in the coverage matrix and the analytics' data health), most behind
+  first. It is based on the day a value is for, not when it was imported, so a backfill imported today does not
+  make old data look current. The status itself is unchanged, and the new field is additive (empty when every
+  metric is current). No migration is needed.
+
 ## [0.7.0] - 2026-11-12
 
 ### Added
