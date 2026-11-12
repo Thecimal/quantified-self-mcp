@@ -7,6 +7,17 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-12
+
+### Added
+
+- **`PROVENANCE` evidence dimension evaluator** — added a dedicated provenance dimension evaluator in `qs_evidence/provenance.py` that assesses source consistency and detects unranked source conflicts or source switches across evaluation windows. Registered across all analyses in `qs_evidence/registry.yaml` with `on_not_assessed: cap`.
+- **MCP-boundary evidence regression test suite** — added `tests/test_evidence_contract_mcp.py` testing evidence contract adherence, claim sound tiers, and provenance caveat enforcement across all public analytics tools.
+
+### Fixed
+
+- **Source provenance and unranked conflicts were not carried into `ClaimDecision`** — analytical tools (`get_baseline`, `get_metric_trend`, `compare_metric_windows`, `detect_anomalies`, `find_metric_correlation`, `explain_metric_change`, and `get_recent_changes`) previously surfaced source conflicts in `data_health` but did not thread them into `ClaimDecision`, allowing baseline and trend claims to return `tier=supported` with empty `must_state` even when the underlying window had conflicting data sources. Provenance is now evaluated and threaded across all analytics tools; unranked source conflicts cap claim confidence and mandate caveats in `must_state`.
+
 ## [0.6.0] - 2026-11-05
 
 ### Added
