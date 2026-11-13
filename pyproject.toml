@@ -77,6 +77,10 @@ include = [
     "qs_evidence/*.py",
     "qs_evidence/registry.yaml",
     "integrations/jev/*.py",
+    "sample_data/*.py",
+    "sample_data/*.csv",
+    "sample_data/*.xml",
+    "sample_data/*.json",
 ]
 
 [tool.pytest.ini_options]

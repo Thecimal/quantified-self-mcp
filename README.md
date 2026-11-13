@@ -6,6 +6,8 @@
 
 A privacy-first, local Model Context Protocol (MCP) server that connects AI assistants to your personal health history — with **statistical evidence, provenance, and granular privacy** built in.
 
+<!-- mcp-name: io.github.Thecimal/quantified-self-mcp -->
+
 <p align="center">
   <a href="https://github.com/Thecimal/quantified-self-mcp/actions/workflows/ci.yml"><img src="https://github.com/Thecimal/quantified-self-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/Thecimal/quantified-self-mcp/actions/workflows/codeql.yml"><img src="https://github.com/Thecimal/quantified-self-mcp/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
@@ -99,25 +101,20 @@ Add to your `mcp_config.json`:
 pip install quantified-self-mcp
 ```
 
-### 2. Import Your Health History
+### 2. Initialize (Try in 10 Seconds with Demo Data)
 
-Quantified Self MCP automatically creates and manages a local SQLite database (`health.db`):
+Quantified Self MCP automatically creates and manages a local SQLite database (`health.db`). You can test it immediately with 60 days of realistic sample data, or import your personal health history:
 
 ```bash
-# From CSV:
-quantified-self-init-db your-health-data.csv
+# Instant demo mode (seeds 60 days of synthetic health data):
+quantified-self-init-db --demo
 
-# From Apple Health export:
-quantified-self-init-db export.xml
-
-# From WHOOP Developer API (v2) JSON:
-quantified-self-init-db whoop.json --source whoop
-
-# From Oura Ring API (v2) JSON:
-quantified-self-init-db oura.json --source oura
-
-# From Android Health Connect export:
-quantified-self-init-db health_connect_export.zip
+# Or import your own wearable exports:
+quantified-self-init-db export.xml                # Apple Health
+quantified-self-init-db whoop.json --source whoop # WHOOP Developer API (v2)
+quantified-self-init-db oura.json --source oura   # Oura Ring API (v2)
+quantified-self-init-db health_connect_export.zip # Android Health Connect
+quantified-self-init-db your-health-data.csv      # CSV
 ```
 
 ### 3. Verify Setup

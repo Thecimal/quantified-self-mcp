@@ -546,6 +546,33 @@ def test_cli_exits_cleanly_on_missing_csv(tmp_path):
     assert "not found" in result.stderr.lower() or "not found" in result.stdout.lower()
 
 
+def test_cli_demo_flag_initializes_database_with_sample_data(tmp_path):
+    db_path = tmp_path / "demo_health.db"
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "init_db.py"), "--demo", "--db-path", str(db_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert db_path.exists()
+    assert "Demo database initialized" in result.stdout
+    conn = sqlite3.connect(db_path)
+    count = conn.execute("SELECT count(DISTINCT date) FROM daily_metrics").fetchone()[0]
+    conn.close()
+    assert count == 60
+
+
+def test_cli_demo_rejects_source_path(tmp_path):
+    csv_path = _write_csv(tmp_path, ["date", "steps"], [["2026-01-01", "8000"]])
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "init_db.py"), str(csv_path), "--demo"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "cannot specify both" in result.stderr.lower() or "cannot specify both" in result.stdout.lower()
+
+
 def _minimal_env():
     # Keep PATH etc. so the subprocess's Python can actually run.
     return dict(os.environ)

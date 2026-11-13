@@ -6,6 +6,9 @@ You can import data from CSV exports, Apple Health, Android Health Connect, or W
 ## Quick Start
 
 ```bash
+# Instant demo mode (seeds 60 days of realistic sample data):
+quantified-self-init-db --demo
+
 # From CSV
 quantified-self-init-db export.csv
 
@@ -17,6 +20,9 @@ quantified-self-init-db health-connect.json --source health-connect
 
 # From WHOOP Developer API JSON
 quantified-self-init-db whoop.json --source whoop
+
+# From Oura Ring API (v2) JSON
+quantified-self-init-db oura.json --source oura
 ```
 
 ## Supported Import Formats
@@ -99,13 +105,34 @@ out of range, recovery whose sleep is absent) is skipped and counted, and the re
 not `SCORED` and anything else in the file (cycles, strain, SpO2, skin temperature, respiratory rate, heart-rate
 zones, sport type, energy) are listed under "Unsupported" by `--report` and are not stored.
 
+### 5. Oura Ring API (v2) JSON (`--source oura`)
+
+JSON exported from the Oura Ring API (v2) or user archive exports (arrays, `{"data": [...]}`, or multi-endpoint collections):
+
+```bash
+quantified-self-init-db oura.json --source oura --report
+```
+
+Files with standard Oura JSON signatures are also auto-detected.
+
+| Metric | Read from | Rule |
+| --- | --- | --- |
+| `sleep_hours` | `total_sleep_duration` | Duration in seconds converted to hours |
+| `steps` | `steps` (daily activity) | Total daily steps |
+| `resting_heart_rate` | `lowest_heart_rate` | Lowest resting heart rate observed during sleep |
+| `hrv_ms` | `average_hrv` | Average RMSSD (ms) |
+| `workout_minutes` | `duration` (workout sessions) | Workout duration in minutes |
+
+Each value is stored as an observation tagged with `source="Oura"` and provenance metadata.
+
 ---
 
 ## Import Options & CLI Flags
 
 | Flag | Description |
 | --- | --- |
-| `--source {auto,csv,apple-health,health-connect,whoop}` | Explicitly declare format. Defaults to auto-detection from file extension (`.xml` -> `apple-health`, otherwise `csv`). |
+| `--demo` | Seed the database with 60 days of synthetic health data for instant testing without an external file. |
+| `--source {auto,csv,apple-health,health-connect,whoop,oura}` | Explicitly declare format. Defaults to auto-detection from file extension (`.xml` -> `apple-health`, otherwise `csv`). |
 | `--replace` | Wipe existing tables before importing instead of incrementally appending/upserting. |
 | `--report` | Print detailed import metrics: date range, records imported, skipped records, and unmapped types. |
 | `--map COLUMN=HEADER` | Rename CSV columns to standard schema names (repeatable). |

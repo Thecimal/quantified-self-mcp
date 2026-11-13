@@ -493,7 +493,14 @@ def main() -> None:
     parser.add_argument(
         "source_path",
         type=Path,
-        help="Path to the source export file (this project's CSV, or e.g. Apple Health's export.xml).",
+        nargs="?",
+        default=None,
+        help="Path to the source export file (CSV or XML). Required unless --demo is passed.",
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Seed the database with 60 days of synthetic health data for instant testing.",
     )
     parser.add_argument(
         "--source",
@@ -544,6 +551,37 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    db_path = args.db_path.expanduser()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.demo:
+        if args.source_path:
+            sys.exit("Error: cannot specify both source_path and --demo")
+        import tempfile
+        from datetime import date, timedelta
+
+        from sample_data.generate_sample_data import generate_rows, write_csv
+
+        # 60 days ending yesterday so get_data_status reports CURRENT
+        start_date = date.today() - timedelta(days=60)
+        rows = generate_rows(seed=42, days=60, start_date=start_date)
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".csv", delete=False) as tf:
+            temp_path = Path(tf.name)
+        try:
+            write_csv(rows, temp_path)
+            init_health_db(temp_path, db_path, args.replace, "csv", {}, args.report)
+            print("\n✨ Demo database initialized with 60 days of realistic health data!")
+            print(f"Database ready at: {db_path}")
+            print("Connect your MCP client (Claude Desktop / Cursor / Windsurf) and ask:")
+            print('  • "How has my sleep and resting heart rate changed over the last 30 days?"')
+            print('  • "Run my weekly health review."')
+        finally:
+            temp_path.unlink(missing_ok=True)
+        return
+
+    if not args.source_path:
+        sys.exit("Error: source_path is required (or pass --demo to seed sample data)")
 
     if not args.source_path.exists():
         sys.exit(f"Error: source file not found at {args.source_path}")

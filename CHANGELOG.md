@@ -7,6 +7,15 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Added
+
+- **`--demo` CLI flag on `quantified-self-init-db`** — seeds 60 days of realistic synthetic health data ending
+  yesterday, allowing immediate local testing with MCP clients without requiring an external export. Bundles
+  `sample_data/` in the distribution wheel.
+- **Official MCP Registry integration** — added validated `server.json` schema metadata, ownership verification marker
+  in `README.md`, and automated registry publishing via GitHub Actions in `.github/workflows/publish.yml`.
+- **Documented Oura Ring API (v2) adapter** — added Oura to `docs/importing.md` and CLI flags reference.
+
 ### Fixed
 
 - **`get_data_status` said CURRENT while a metric had stopped arriving** — the status and `latest_data` came

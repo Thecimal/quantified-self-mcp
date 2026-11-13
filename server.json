@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Thecimal/quantified-self-mcp",
+  "title": "Quantified Self MCP",
+  "description": "Local-first MCP server for personal health data with privacy, statistical evidence, and provenance.",
+  "repository": {
+    "url": "https://github.com/Thecimal/quantified-self-mcp",
+    "source": "github",
+    "id": "1345815145"
+  },
+  "version": "0.7.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "quantified-self-mcp",
+      "version": "0.7.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
