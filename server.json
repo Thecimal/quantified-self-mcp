@@ -8,12 +8,12 @@
     "source": "github",
     "id": "1345815145"
   },
-  "version": "0.7.0",
+  "version": "0.8.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "quantified-self-mcp",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "transport": {
         "type": "stdio"
       }

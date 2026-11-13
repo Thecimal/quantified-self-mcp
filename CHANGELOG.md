@@ -7,6 +7,8 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-14
+
 ### Added
 
 - **`--demo` CLI flag on `quantified-self-init-db`** — seeds 60 days of realistic synthetic health data ending
