@@ -7,6 +7,8 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-14
+
 ### Fixed
 
 - **CLI `--help` and `--version` blocked instead of exiting** — running `quantified-self-mcp --help` or `--version` previously passed arguments straight into FastMCP's stdio transport, causing the process to block waiting on stdin. Added standard CLI argument parsing with `argparse` so help, version, and unknown flags exit immediately without launching the server or reading from stdin.
