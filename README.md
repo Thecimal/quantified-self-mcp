@@ -16,6 +16,7 @@ A privacy-first, local Model Context Protocol (MCP) server that connects AI assi
   <a href="https://github.com/Thecimal/quantified-self-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Thecimal/quantified-self-mcp" alt="License"></a>
   <a href="https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp"><img src="https://glama.ai/mcp/servers/Thecimal/quantified-self-mcp/badges/score.svg" alt="Glama Score"></a>
   <a href="https://m8ven.ai/mcp/thecimal-quantified-self-mcp-v6tlvp"><img src="https://m8ven.ai/badge/mcp/thecimal-quantified-self-mcp-v6tlvp" alt="M8ven Score"></a>
+  <a href="https://mcpservers.org/servers/thecimal/quantified-self-mcp"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org"></a>
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" alt="Ruff"></a>
 </p>
 
