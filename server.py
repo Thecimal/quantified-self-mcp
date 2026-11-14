@@ -47,6 +47,7 @@ In normal use, this file is launched as a subprocess by an MCP client
 such as Claude Desktop, which talks to it over stdio — see README.md.
 """
 
+import argparse
 import logging
 import os
 import sqlite3
@@ -61,6 +62,8 @@ from fastmcp import FastMCP
 from fastmcp import settings as fastmcp_settings
 from fastmcp.exceptions import ResourceError
 from mcp.types import ToolAnnotations
+
+__version__ = "0.8.0"
 
 from analytics import (
     Point,
@@ -1626,7 +1629,63 @@ def doctor_visit_prep(lookback_days: int = 30) -> str:
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="quantified-self-mcp",
+        description=(
+            "Quantified Self MCP Server: A local-first Model Context Protocol (MCP) server "
+            "connecting AI assistants to personal health history with privacy, statistical evidence, "
+            "and provenance."
+        ),
+    )
+    parser.add_argument(
+        "-v",
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show program's version number and exit.",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default=None,
+        help="Transport protocol to use (default: stdio, or http if PORT is set).",
+    )
+    parser.add_argument(
+        "--port",
+        "-p",
+        type=int,
+        default=None,
+        help="Port to listen on for HTTP transport (overrides PORT environment variable).",
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Host address to bind for HTTP transport (defaults to FASTMCP_HOST or loopback 127.0.0.1).",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    # If invoked inside a test runner (e.g. pytest) without explicit args,
+    # avoid reading pytest's own command-line arguments.
+    if argv is None:
+        if "pytest" in sys.modules and Path(sys.argv[0]).name.startswith("pytest"):
+            argv = []
+        else:
+            argv = sys.argv[1:]
+
+    # Support bare 'help' and 'version' commands without dashes
+    normalized_argv = list(argv)
+    if normalized_argv == ["help"]:
+        normalized_argv = ["--help"]
+    elif normalized_argv == ["version"]:
+        normalized_argv = ["--version"]
+
+    parser = build_parser()
+    args = parser.parse_args(normalized_argv)
+
     # Cloud platforms (e.g. Manufact) set PORT and expect an HTTP server
     # listening on it; Claude Desktop and other local stdio clients don't
     # set PORT at all, in which case we fall back to stdio as before.
@@ -1635,8 +1694,15 @@ def main():
     # export, is reachable by whoever can reach the port. So it listens on FastMCP's own default
     # (loopback) unless the operator sets FASTMCP_HOST, e.g. FASTMCP_HOST=0.0.0.0 for a container
     # that must be reached from outside; that choice is allowed but logged.
-    port = os.environ.get("PORT")
-    if port is not None:
+    port_str = str(args.port) if args.port is not None else os.environ.get("PORT")
+    transport = args.transport or ("http" if port_str is not None else "stdio")
+    if args.host:
+        fastmcp_settings.host = args.host
+
+    if transport == "http":
+        if port_str is None:
+            parser.error("--transport http requires --port or PORT environment variable")
+        port = int(port_str)
         if fastmcp_settings.host not in _LOOPBACK_HOSTS:
             logger.warning(
                 "HTTP transport is listening on %s:%s with no authentication: anyone who can reach "
@@ -1645,7 +1711,7 @@ def main():
                 fastmcp_settings.host,
                 port,
             )
-        mcp.run(transport="http", port=int(port))
+        mcp.run(transport="http", port=port)
     else:
         mcp.run()
 
