@@ -1,0 +1,83 @@
+# Final-answer scenarios (interpretation and grounding). Each pins what the answer must and must not say about the
+# real tool results; the checks that follow from the results themselves (data_health status, claim tier, an
+# association vs a cause, a window with no data) run automatically for any scenario that has an `answer` spec.
+# See eval/agent/answers.py. Expected values are read from the tool result, never typed in here.
+
+- id: answer_hrv_average_wrong_metric
+  tool: get_baseline
+  kind: grounding
+  fixture: complete
+  question: "What has my HRV averaged over the last three months?"
+  must_call: [get_baseline]
+  allowed_tools: [get_metric_history, get_data_status]
+  arguments: {metric: hrv_ms}
+  answer:
+    values:
+      - {tool: get_baseline, path: baseline.mean, unit: "\\b(ms|milliseconds?)\\b"}
+    forbid:
+      - {code: wrong_metric, layer: grounding, any: ["\\bbpm\\b", "\\bheart rate\\b(?! variability)"]}
+
+- id: answer_sleep_hrv_suggestive_as_supported
+  tool: find_metric_correlation
+  kind: interpretation
+  fixture: complete
+  question: "Does sleeping more raise my HRV?"
+  must_call: [find_metric_correlation]
+  allowed_tools: [get_data_status, get_metric_history]
+  answer:
+    values:
+      - {tool: find_metric_correlation, path: r}
+
+- id: answer_sparse_baseline_confident
+  tool: get_baseline
+  kind: interpretation
+  fixture: sparse
+  question: "What's my normal HRV?"
+  must_call: [get_baseline]
+  allowed_tools: [get_data_status, get_metric_history]
+  arguments: {metric: hrv_ms}
+  answer:
+    values:
+      - {tool: get_baseline, path: baseline.mean, unit: "\\b(ms|milliseconds?)\\b"}
+
+- id: answer_conflicting_sources_omitted
+  tool: get_metric_history
+  kind: interpretation
+  fixture: conflicting
+  question: "How many steps a day have I been taking lately?"
+  must_call: [get_metric_history]
+  allowed_tools: [get_data_status, read_health_data, get_baseline]
+  arguments: {metric: steps}
+  answer: {forbid_causal: true}
+
+- id: answer_missing_steps_as_zero
+  tool: get_metric_history
+  kind: grounding
+  fixture: empty
+  question: "How many steps did I take yesterday?"
+  must_call: [get_metric_history]
+  allowed_tools: [get_data_status, read_health_data]
+  answer: {forbid_causal: true}
+
+- id: answer_stale_baseline_with_caveats
+  tool: get_baseline
+  kind: interpretation
+  fixture: stale
+  question: "What's my average daily step count?"
+  must_call: [get_baseline]
+  allowed_tools: [get_data_status, get_metric_history]
+  arguments: {metric: steps}
+  answer:
+    values:
+      - {tool: get_baseline, path: baseline.mean, unit: "\\bsteps?\\b"}
+    dates:
+      - {tool: get_baseline, path: data_health.freshness.latest_data}
+
+- id: answer_failed_import_presented_current
+  tool: get_data_status
+  kind: interpretation
+  fixture: import_failed
+  question: "Is my health data up to date?"
+  must_call: [get_data_status]
+  allowed_tools: [get_import_status]
+  answer: {forbid_causal: true}

@@ -7,6 +7,23 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+### Added
+
+- **Final-answer scoring in the agent eval (`eval/agent/answers.py`)** — the interpretation and grounding
+  layers, previously reported as not scored, are now scored deterministically and offline for scenarios with
+  an `answer` spec. The checks derive from the tool results themselves: stale, source-conflicting,
+  failed-import and insufficient data must be disclosed and not called complete or current, suggestive
+  evidence must be hedged, nothing below the supported tier may use certainty language, an association must
+  not be given a cause, and a window with no data must not be answered with a zero. A scenario can also pin
+  the numbers, units, dates and required or forbidden phrases the answer must carry, with the expected
+  numbers read from the real tool result. Every failure reports the layer, a specific code and the violated
+  expectation, and the results flow into the existing summary, gates and artifacts. Seven synthetic
+  scenarios (`scenarios/answers.yaml`) cover a correct tool call with a wrong reading, suggestive evidence
+  presented as supported, insufficient data answered confidently, an omitted source conflict, missing data
+  read as zero, a failed import presented as current, and a correct answer with its caveats. Routing,
+  argument and execution scoring and the server are unchanged; scenarios without an `answer` spec are still
+  not scored.
+
 ## [0.8.1] - 2026-11-14
 
 ### Fixed

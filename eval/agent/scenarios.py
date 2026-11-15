@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from eval.agent.answers import validate_spec
 from eval.agent.fixtures import FIXTURES
 
 SCENARIO_DIR = Path(__file__).parent / "scenarios"
@@ -33,6 +34,8 @@ class Scenario:
     forbidden_tools: list[str] | None = None  # None: write tools are forbidden whenever `tool` is read-only
     arguments: dict[str, Any] = field(default_factory=dict)  # expected arguments of the first must_call tool
     expect_error: bool = False
+    # What the final answer must and must not say (see eval/agent/answers.py); empty: the answer is not scored.
+    answer: dict[str, Any] = field(default_factory=dict)
 
 
 def placeholders(today: date) -> dict[str, str]:
@@ -79,6 +82,9 @@ def validate_scenarios(scenarios: list[Scenario], registered: set[str] | None = 
             problems.append(f"{s.id}: unknown kind {s.kind!r}")
         if s.fixture not in FIXTURES:
             problems.append(f"{s.id}: unknown fixture {s.fixture!r}")
+        if s.kind in ("interpretation", "grounding") and not s.answer:
+            problems.append(f"{s.id}: an {s.kind} scenario needs an answer spec")
+        problems.extend(f"{s.id}: {problem}" for problem in validate_spec(s.answer) if s.answer)
         if s.kind == "should_use" and s.tool not in s.must_call:
             problems.append(f"{s.id}: a should_use scenario must list its own tool {s.tool!r} in must_call")
         if registered is not None:

@@ -16,6 +16,7 @@ Offline checks (no key, also run by `pytest`):
 
     python -m eval.agent --coverage --strict     # every registered tool must have a scenario
     pytest -q tests/test_agent_eval.py           # harness, fixtures, scoring, HTTP client, artifacts
+    pytest -q tests/test_agent_answer_eval.py    # final-answer scoring: interpretation and grounding
 
 Live run (costs tokens):
 
@@ -35,14 +36,43 @@ trace per scenario in `traces/`.
 | routing | required tools called, none forbidden, none outside the allowed set, no unregistered tool | scored |
 | arguments | the scenario's expected arguments appear on a call to its tool | scored (when a scenario pins any) |
 | execution | every call is registered and succeeds (unless the scenario expects the refusal) and the loop finishes | scored |
-| interpretation | does the answer respect `data_health` / claim tier | **not scored yet** |
-| final answer | numbers, dates, units, causal claims, leakage | **not scored yet** |
+| interpretation | the answer respects `data_health` and the claim tier, and states no cause for an association | scored (scenarios with an `answer` spec) |
+| grounding | the answer's numbers, units, dates and metric match the tool results; missing data is not a value | scored (scenarios with an `answer` spec) |
 
 Unscored layers are reported as `NOT_SCORED`, never as passed, and a run with
 any unscored layer ends `INCOMPLETE`, not `PASS`. A critical failure
 (`tool_hallucination`, `forbidden_tool_called`) fails the run whatever the
 rates are. Gates: routing, arguments, interpretation and grounding >= 95%,
 execution >= 98%.
+
+## Scoring the final answer
+
+`answers.py` scores the trace's final answer with no model involved, so it runs offline and gives the same
+verdict every time. A scenario opts in with an `answer:` spec; scenarios without one keep both layers
+NOT_SCORED, and a layer is scored only when at least one of its checks applied.
+
+Checks that follow from the tool results themselves (no per-scenario typing):
+
+- `data_health.status` (or `get_data_status`'s own status) of STALE, MIXED_SOURCES, IMPORT_INCOMPLETE or
+  INSUFFICIENT_DATA must be disclosed (`stale_data_not_disclosed`, `source_conflict_omitted`,
+  `import_failure_omitted`, `insufficient_data_not_acknowledged`), and the answer must not call such data
+  complete or up to date (`contradicts_data_health`).
+- claim tier `suggestive` needs hedged wording (`suggestive_presented_as_supported`); tiers below `supported`
+  forbid certainty language (`overconfident_conclusion`).
+- an association (`find_metric_correlation`) must not be given a cause (`causal_claim_unsupported`).
+- a window with no observations must not be answered with a zero (`missing_data_as_zero`).
+
+Checks the scenario pins (`answer.values`, `answer.dates`, `answer.require`, `answer.forbid`): a number read
+from the result at a path must appear with its unit (`value_not_stated`, `wrong_unit`), a date must appear
+(`date_not_stated`), plus scenario-specific required or forbidden phrases under their own code, such as
+`wrong_metric`. Expected numbers are read from the real tool result, never typed into the scenario. A failure
+is `{layer, code, detail}` and the detail names the violated expectation and the offending sentence.
+
+Limits: the checks are phrase-based and conservative. They catch a missing mandatory caveat or an unsupported
+claim; they do not judge style, and a caveat worded in a way none of the patterns recognize fails. Only the
+tiers and statuses above are enforced (a claim's `must_state` codes are not checked one by one), a hedge is
+required in the answer as a whole rather than per claim, and a negation within a few words turns a sentence
+into a disclaimer. There is no model judge yet.
 
 ## Scenarios and fixtures
 
@@ -62,6 +92,6 @@ scenario earns no coverage, and a newly registered tool appears as a gap.
 
 ## Not built yet
 
-`should_not_use`, argument, permission, interpretation and grounding scenarios;
-multi-tool and adversarial scenarios; the deterministic answer validators and
-the semantic judge; the CI gate. The coverage report lists these gaps.
+`argument` and `permission` scenarios, interpretation and grounding scenarios beyond
+`scenarios/answers.yaml` (seven so far, for six tools); multi-tool and adversarial scenarios; the
+optional semantic judge; the CI gate. The coverage report lists these gaps.

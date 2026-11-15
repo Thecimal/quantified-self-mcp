@@ -1,8 +1,10 @@
 """Deterministic scoring of one trace, layer by layer.
 
-Phase 1 scores routing, arguments and execution. Interpretation and final
-answer are left as None ("not scored") until their validators exist; the
-summary reports them as NOT_SCORED rather than counting them as passed.
+Routing, arguments and execution come from the tool calls. Interpretation and
+grounding come from the final answer (eval/agent/answers.py) and are scored only
+for scenarios that carry an `answer` spec; every other scenario leaves them as
+None ("not scored"), and the summary reports that as NOT_SCORED rather than
+counting it as passed.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from eval.agent.answers import score_answer
 from eval.agent.loop import Trace
 from eval.agent.scenarios import WRITE_TOOLS, Scenario, resolve
 
@@ -107,10 +110,16 @@ def score_trace(scenario: Scenario, trace: Trace, readonly: dict[str, bool], tod
         execution = False
         fail("execution", "agent_did_not_finish", f"the loop stopped with {trace.terminated!r}")
 
+    # final answer: interpretation and grounding (only for scenarios that pin expectations)
+    answer = score_answer(resolve(scenario.answer, today), trace, today)
+    failures.extend(answer.failures)
+
     return Score(
         routing=routing,
         arguments=arguments,
         execution=execution,
+        interpretation=answer.interpretation,
+        grounding=answer.grounding,
         failures=failures,
         critical=sorted(set(critical)),
     )
