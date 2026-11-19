@@ -51,7 +51,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.8.1
+        uses: sigstore/cosign-installer@v4.1.3
 
       - name: Download and verify mcp-publisher
         env:
