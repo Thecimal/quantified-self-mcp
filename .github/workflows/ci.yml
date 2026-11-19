@@ -8,7 +8,7 @@ on:
   workflow_call:
 
 jobs:
-  test:
+  test-matrix:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -83,3 +83,17 @@ jobs:
           assert not [n for n in names if n.startswith('qs_evidence/tests')], 'tests leaked into wheel'
           print('wheel file list OK')
           PY
+
+  test:
+    name: test
+    needs: [test-matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify test-matrix result
+        run: |
+          if [ "${{ needs.test-matrix.result }}" != "success" ]; then
+            echo "test-matrix failed with result: ${{ needs.test-matrix.result }}"
+            exit 1
+          fi
+          echo "test-matrix succeeded"
