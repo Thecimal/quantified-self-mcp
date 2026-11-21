@@ -26,6 +26,7 @@ A privacy-first, local Model Context Protocol (MCP) server that connects AI assi
   <a href="#-why-quantified-self-mcp"><b>💡 Why This?</b></a> •
   <a href="#-evidence--provenance-engine"><b>🔎 Evidence Engine</b></a> •
   <a href="#-supported-data--integrations"><b>📊 Supported Data</b></a> •
+  <a href="https://github.com/Thecimal/quantified-self-mcp/discussions"><b>💬 Community & Discussions</b></a> •
   <a href="docs/"><b>📚 Documentation</b></a>
 </p>
 
