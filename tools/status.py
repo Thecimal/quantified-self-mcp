@@ -138,15 +138,11 @@ def register_status_tools(
         of CURRENT, STALE, INCOMPLETE, NO_DATA or IMPORT_FAILED. Check this
         before drawing conclusions from any analysis, and say so when the
         status is anything other than CURRENT. The status and latest_data
-        describe the database as a whole, so one metric that is still
-        arriving keeps them current while another has stopped: read
-        stale_metrics too, and do not present a listed metric as current.
-
-        Use this tool when:
-        - the user asks how up to date their data is, or whether an import
-          is needed.
-        - you are about to interpret recent data and want to know whether it
-          is fresh enough to trust.
+        describe the database as a whole, so one metric still arriving keeps
+        them current while another has stopped: read "stale_metrics" too
+        (each metric's own latest day vs. its threshold, most behind first;
+        it's when the data is *for*, not when imported) before presenting a
+        listed metric as current.
 
         Privacy note: this server and its SQLite file are entirely local, but
         the data returned by this tool becomes part of the conversation sent
@@ -156,18 +152,9 @@ def register_status_tools(
 
         Args:
             stale_after_days: How many days the latest data may trail today
-                before the status becomes STALE. Defaults to 2.
-
-        Returns:
-            A DataStatusResult with "status", a machine-readable "reason" and
-            suggested "action" when the status is not CURRENT, "latest_data",
-            "days_behind", "coverage" (start/end), "gap_count",
-            "missing_days" and the most recent "gaps", the importer ("source")
-            and time of the last successful import, and the "latest_import"
-            record. "stale_metrics" lists each metric whose own latest day trails today by
-            more than its threshold (stale_after_days, or 30 days for weight and workouts),
-            most behind first, whatever the overall status; it says when the data is *for*,
-            not when it was imported. Metrics listed in HEALTH_PRIVATE_FIELDS are ignored.
+                before the status becomes STALE (30 days for weight and
+                workouts). Defaults to 2. Metrics in HEALTH_PRIVATE_FIELDS
+                are ignored.
         """
         if not 0 <= stale_after_days <= MAX_STALE_AFTER_DAYS:
             raise _tool_error(ERR_INVALID_RANGE, f"stale_after_days must be between 0 and {MAX_STALE_AFTER_DAYS}.")
@@ -197,10 +184,7 @@ def register_status_tools(
         List the most recent import runs, newest first: which importer, the
         source file's name and SHA-256, whether the run succeeded, failed or
         was interrupted, and how many rows were loaded, skipped and written.
-
-        Use this tool when:
-        - the user asks what was imported and when, or why an import did not
-          go through.
+        A run still marked "running" long after it started was interrupted.
 
         Privacy note: this server and its SQLite file are entirely local, but
         the data returned by this tool becomes part of the conversation sent
@@ -210,10 +194,6 @@ def register_status_tools(
 
         Args:
             limit: How many import runs to return (1-50). Defaults to 5.
-
-        Returns:
-            A GetImportStatusResult whose "imports" lists each run. A run
-            still marked "running" long after it started was interrupted.
         """
         if not 1 <= limit <= MAX_IMPORTS_RETURNED:
             raise _tool_error(ERR_INVALID_RANGE, f"limit must be between 1 and {MAX_IMPORTS_RETURNED}.")

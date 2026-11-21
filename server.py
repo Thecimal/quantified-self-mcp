@@ -588,15 +588,9 @@ def get_metric_history(
     metric: str, start_date: str | None = None, end_date: str | None = None
 ) -> GetMetricHistoryResult:
     """
-    Read one metric's day-by-day values, without the other six metrics
-    read_health_data always includes. Use this when you only care about a
-    single metric (e.g. before calling get_baseline or calculate_metric_trend
-    yourself) and don't need the full multi-metric payload.
-
-    Use this tool when:
-    - the user wants one specific metric's history/trend over time (e.g.
-      "show my weight over the last 30 days", "how has resting heart rate
-      changed this month").
+    One metric's day-by-day values only, not the other metrics
+    read_health_data always includes. Check "data_health" before trusting
+    the points as complete.
 
     Do not use this tool when:
     - the request is broad/general, across multiple metrics at once -> use
@@ -610,19 +604,11 @@ def get_metric_history(
 
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
-            workout_minutes, mood, water_ml, heart_rate, hrv_ms. Rejected if configured as
-            private via HEALTH_PRIVATE_FIELDS.
-        start_date: First day to include, formatted YYYY-MM-DD.
-            Defaults to 30 days before end_date.
-        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
-
-    Returns:
-        A GetMetricHistoryResult with "points" (date/value pairs; days with
-        no recorded value for this metric are simply absent) plus
-        "data_health": VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
-        IMPORT_INCOMPLETE, with the covered period, gaps and last import.
-        When status is not VALID, say why (see "reasons") before drawing
-        conclusions from the points.
+            workout_minutes, mood, water_ml, heart_rate, hrv_ms. Rejected if
+            configured as private via HEALTH_PRIVATE_FIELDS.
+        start_date: First day to include, YYYY-MM-DD. Defaults to 30 days
+            before end_date.
+        end_date: Last day to include, YYYY-MM-DD. Defaults to today.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -650,15 +636,12 @@ def get_metric_history(
 )
 def get_baseline(metric: str, start_date: str | None = None, end_date: str | None = None) -> GetBaselineResult:
     """
-    Compute "what's normal" for one metric over a window: mean, median,
-    and standard deviation. This is the number every other analytics tool
-    below measures against, so a wider window (60-90+ days) gives a more
-    stable baseline than the 30-day default read_health_data uses.
-
-    Use this tool when:
-    - the user asks what's normal/typical/usual for one metric (e.g.
-      "what's normal for my resting heart rate?"), with no particular
-      day or direction of change in mind.
+    Compute "what's normal" for one metric over a window: mean, median, and
+    standard deviation. The number every other analytics tool below measures
+    against, so a wider window (60-90+ days) is more stable than
+    read_health_data's 30-day default. Read `claim.decision`/`data_health`
+    before stating it — a thin window caps how it may be reported. Null
+    fields (n=0) mean no data in range, not an error.
 
     Do not use this tool when:
     - the user asks whether a metric is going up/down over time -> use
@@ -677,23 +660,9 @@ def get_baseline(metric: str, start_date: str | None = None, end_date: str | Non
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml, heart_rate, hrv_ms.
-        start_date: First day to include, formatted YYYY-MM-DD.
-            Defaults to 90 days before end_date.
-        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
-
-    Returns:
-        A GetBaselineResult with "baseline" (mean/median/stdev/n) plus
-        "claim" — the evidence behind it (claim.evidence: how much of the
-        window it is based on; claim.profile: per-dimension quality) and
-        claim.decision, which says how strongly the baseline may be stated.
-        Report every entry in claim.decision.must_state (e.g. "based on only
-        60% of days") rather than stating mean/median as if they were
-        computed from a complete series. All baseline fields are null and n
-        is 0 if the metric has no data in range — not an error, since
-        "nothing logged yet" is an expected state. "data_health" adds the
-        data-quality state (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE
-        or IMPORT_INCOMPLETE) with its reasons; when it is not VALID, say why
-        before stating the baseline.
+        start_date: First day to include, YYYY-MM-DD. Defaults to 90 days
+            before end_date.
+        end_date: Last day to include, YYYY-MM-DD. Defaults to today.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -731,12 +700,10 @@ def detect_metric_anomalies(
     the window, using a median/MAD-based modified z-score rather than a
     mean/stdev z-score — more robust for short, noisy personal-health
     series, where the mean/stdev version is easily dragged around by the
-    very outliers it's supposed to catch.
-
-    Use this tool when:
-    - the user asks whether anything looked unusual/off/weird on
-      particular days for one metric (e.g. "was there anything unusual
-      about my sleep last month?").
+    very outliers it's supposed to catch. An empty result only means
+    "nothing unusual" when `claim.decision` (and `data_health`) says the
+    data supports it — tier "insufficient" means say the detector couldn't
+    score the series, not that it's clean.
 
     Do not use this tool when:
     - the user wants a general sense of what's typical, with no interest
@@ -762,20 +729,6 @@ def detect_metric_anomalies(
         threshold: Modified z-score cutoff. 3.5 (the default, Iglewicz &
             Hoaglin's standard value) flags only clear outliers; lower it
             (e.g. 2.5) to see more borderline days.
-
-    Returns:
-        A DetectAnomaliesResult with "anomalies" (empty if fewer than 5
-        days have data, or if the series has no usable spread: constant, or
-        with a median absolute deviation of zero) plus "claim" for the window
-        they were computed over. An empty "anomalies" list only means
-        "nothing unusual happened" when claim.decision.tier says the data
-        supports it. If the tier is "insufficient" (must_state lists why, e.g.
-        baseline_mad_zero, baseline_zero_variance, baseline_too_short), the
-        detector could not score the series reliably — say that explicitly
-        rather than reporting a clean bill of health.
-        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
-        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
-        complete and current; when it is not VALID, say why.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -820,20 +773,20 @@ def calculate_metric_trend(
     Fit a simple straight-line trend to one metric over a window and
     report its direction, slope (change per day), and r_squared (how well
     a straight line actually fits — low r_squared means "noisy," not
-    "flat").
+    "flat"; "insufficient_data" below 3 points). A low evidence.coverage_ratio
+    or `claim.decision`/`data_health` means flag the fit as sparse rather
+    than stating the slope as complete.
 
-    Use this tool when:
-    - the user asks whether one metric is trending up/down/flat over a
-      continuous window (e.g. "is my weight trending down?", "how has my
-      HRV changed?").
+    Use this tool when the user asks whether one metric is trending
+    up/down/flat over a continuous window.
 
     Do not use this tool when:
-    - the user wants two specific, separately-defined ranges compared
-      (e.g. "this month vs last month") rather than a single continuous
-      slope -> use `compare_metric_periods` instead.
-    - the user asks what's typical/normal rather than which direction
-      it's moving -> use `get_baseline` instead.
-    - the user asks about isolated unusual days rather than an overall
+    - the user wants two specific, separately-defined ranges compared,
+      rather than a single continuous slope -> use `compare_metric_periods`
+      instead.
+    - the user asks what's typical/normal rather than direction -> use
+      `get_baseline` instead.
+    - the user asks about isolated unusual days rather than overall
       direction -> use `detect_metric_anomalies` instead.
 
     Privacy note: this server and its SQLite file are entirely local, but
@@ -845,21 +798,9 @@ def calculate_metric_trend(
     Args:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml, heart_rate, hrv_ms.
-        start_date: First day to include, formatted YYYY-MM-DD.
-            Defaults to 30 days before end_date.
-        end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
-
-    Returns:
-        A CalculateTrendResult with "trend" plus "evidence" for the window
-        it was fit over. direction is "insufficient_data" below 3 data
-        points in range. Even with a direction and slope, a low
-        evidence.coverage_ratio or "moderate"/"low" confidence means the
-        line is fit through a sparse series — flag that when reporting the
-        trend (e.g. "a decline, though the data only covers 60% of days")
-        rather than stating the slope as a clean, complete measurement.
-        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
-        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
-        complete and current; when it is not VALID, say why.
+        start_date: First day to include, YYYY-MM-DD. Defaults to 30 days
+            before end_date.
+        end_date: Last day to include, YYYY-MM-DD. Defaults to today.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=30)
@@ -900,12 +841,10 @@ def compare_metric_periods(
     Compare one metric's average between two date ranges — e.g. "this
     month vs. last month" or "since starting a new medication vs. before."
     The two ranges may be any length and need not be adjacent or equal in
-    size; each is summarized with its own baseline first.
-
-    Use this tool when:
-    - the user names or implies two distinct date ranges to weigh against
-      each other (e.g. "compare my average steps this month to last
-      month", "since starting a new medication vs. before").
+    size; each is summarized with its own baseline first. Read
+    `claim.decision`/`data_health` before reporting — must_state has to be
+    mentioned, and claim.evidence_a/evidence_b can disagree sharply between
+    the two periods. delta/pct_change are null if either has no data.
 
     Do not use this tool when:
     - there's only one continuous window and the question is about
@@ -925,22 +864,6 @@ def compare_metric_periods(
             workout_minutes, mood, water_ml, heart_rate, hrv_ms.
         period_a_start, period_a_end: The "current"/later period, YYYY-MM-DD.
         period_b_start, period_b_end: The period it's compared against, YYYY-MM-DD.
-
-    Returns:
-        A ComparePeriodsResult with each period's own baseline stats, plus
-        "delta" (period_a mean minus period_b mean) and "pct_change". Read
-        claim.decision before reporting the comparison: its "tier"
-        (insufficient, suggestive, detectable_not_meaningful, or supported)
-        says how strongly it may be stated, and every entry in
-        "must_state" has to be mentioned if you report it.
-        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
-        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
-        complete and current; when it is not VALID, say why.
-        claim.evidence_a/claim.evidence_b report each period's coverage
-        separately — the two periods can have very different coverage
-        (e.g. this month is 90% logged, last month only 40%), and that
-        asymmetry matters more than either evidence object alone. Both
-        delta and pct_change are null if either period has no data at all.
     """
     try:
         start_a, end_a = resolve_range(period_a_start, period_a_end, default_days=0)
@@ -1006,10 +929,8 @@ def find_metric_correlation(
     affects or causes the other, so report r, n and the wording the claim
     allows, and say nothing stronger.
 
-    Use this tool when:
-    - the user names or implies two *different* metrics and asks whether
-      they move together (e.g. "does my sleep affect my mood?", "do days
-      with more workout minutes tend to have a higher HRV?").
+    Use this tool when the user names or implies two different metrics and
+    asks whether they move together.
 
     Do not use this tool when:
     - only one metric is in question -> use `get_baseline`,
@@ -1047,23 +968,8 @@ def find_metric_correlation(
             Defaults to 90 days before end_date.
         end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
         lag_days: Shift metric_b this many days later before joining — 1
-            tests whether metric_a today predicts metric_b tomorrow (e.g.
-            "does poor sleep tonight predict lower steps tomorrow?").
-            0 (default) compares same-day values.
-
-    Returns:
-        A CorrelationResult with "r" (-1 to 1) and "n" (overlapping days
-        used); "r" is null with fewer than 4 overlapping days. Read
-        claim.decision before reporting "r": its "tier" (insufficient,
-        suggestive, detectable_not_meaningful, or supported) says how
-        strongly the correlation may be stated, and every entry in
-        "must_state" has to be mentioned if you report it. A high "r"
-        from a thin paired sample or a gappy series is reflected there,
-        not in "r" itself — never judge the strength of a correlation
-        from "r" alone.
-        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
-        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
-        complete and current; when it is not VALID, say why.
+            tests whether metric_a today predicts metric_b tomorrow. 0
+            (default) compares same-day values.
     """
     try:
         start, end = resolve_range(start_date, end_date, default_days=90)
@@ -1130,7 +1036,10 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
     The single best tool to start a "how have I been doing?" conversation
     with — it does the scanning across all metrics that would otherwise
     take one get_baseline/detect_metric_anomalies/calculate_metric_trend
-    call per metric.
+    call per metric. Only notable findings are included (reports signal, not
+    a status page). Each change carries its own `claim`/`evidence` — don't
+    state it as plain fact when evidence.confidence is "moderate"/"low".
+    Check `data_health` too.
 
     Do not use this tool when:
     - the user already named a specific metric and wants the full
@@ -1148,22 +1057,6 @@ def get_recent_changes(days: int = 7) -> GetRecentChangesResult:
             comparison baseline is the 4x-as-long period immediately
             before it, so a 7-day recent window compares against the
             preceding 28 days.
-
-    Returns:
-        A GetRecentChangesResult with "changes": one entry per metric per
-        notable finding (a >=15% period-over-period shift, any anomaly in
-        the recent window, or a clear non-flat trend with r_squared >=
-        0.3). Metrics with nothing notable, or no data, are simply absent
-        — this tool reports signal, not a status page for every metric.
-        Each change carries its own "evidence" (coverage over the baseline
-        + recent window it was computed from) — do not repeat a change's
-        detail to the user as a plain fact when its evidence.confidence is
-        "moderate" or "low"; say the finding is based on partial data
-        (e.g. name the coverage_ratio or recent_gap_days) instead of
-        stating it outright.
-        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
-        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
-        complete and current; when it is not VALID, say why.
     """
     if days < 2:
         raise _tool_error(ERR_INVALID_RANGE, "days must be at least 2.")
@@ -1296,7 +1189,11 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
     Returns facts, not an explanation — turning "sleep was 2.6 stdev below
     baseline and resting heart rate correlates at r=0.71" into an actual
     answer for the person is what the calling model should do with these
-    facts, not something this tool guesses at itself.
+    facts, not something this tool guesses at itself. Use `overall_decision`
+    (weakest-of-N over the baseline, trend and every correlation) to decide
+    what to report/caveat, not the individual claim/evidence fields.
+    "narrative_facts" restates the bundle in plain English but does not
+    hedge on coverage itself; check `data_health` too.
 
     Do not use this tool when:
     - scanning across many metrics for what changed lately, without a
@@ -1317,25 +1214,6 @@ def explain_metric_change(metric: str, date: str) -> ExplainMetricChangeResult:
         metric: One of steps, sleep_hours, resting_heart_rate, weight_kg,
             workout_minutes, mood, water_ml, heart_rate, hrv_ms.
         date: The day to explain, formatted YYYY-MM-DD.
-
-    Returns:
-        An ExplainMetricChangeResult with the day's value, the 90-day
-        baseline it's measured against, whether it's an anomaly, the
-        30-day trend ending on that date, and up to 5 other metrics with
-        |r| >= 0.5 over the same 90-day window (each still just a
-        correlation — see find_metric_correlation's note on causation).
-        "headline_claim.evidence" and "trend_claim.evidence" report coverage for the
-        90-day and 30-day windows respectively; each correlated metric
-        carries its own pair too. "narrative_facts" restates the above as
-        short plain-English sentences but does NOT itself hedge on
-        coverage. Use "overall_decision" for that: it is the single
-        weakest-of-N decision across the headline claim, the trend, and
-        every surfaced correlation, so its tier and must_state are what
-        to report/caveat with — not something to re-derive yourself from
-        the individual evidence/confidence fields.
-        "data_health" (VALID, VALID_WITH_GAPS, INSUFFICIENT_DATA, STALE or
-        IMPORT_INCOMPLETE, with reasons) says whether the data behind this is
-        complete and current; when it is not VALID, say why.
     """
     try:
         target_day = parse_date(date, "date")

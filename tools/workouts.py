@@ -108,10 +108,6 @@ def register_workout_tools(
         explain_metric_change say *what* the workout was, not just how long it
         ran. A day can have more than one session; each call adds a new row.
 
-        Use this tool when:
-        - the user describes an actual workout/exercise session (e.g. "I went
-          running for 40 minutes", "log today's strength workout").
-
         Do not use this tool when:
         - the user only wants to record the day's total exercise minutes as a
           single number, with no activity type/timing/intensity -> use
@@ -135,10 +131,6 @@ def register_workout_tools(
             max_heart_rate: Peak heart rate during the workout, bpm. Optional.
             source: Where this came from, e.g. "Apple Watch", "manual". Optional.
             notes: Free-text notes, e.g. route or how it felt. Optional.
-
-        Returns:
-            A LogWorkoutSessionResult with the stored row, including its new id. duration_minutes is null
-            when workout_minutes is private (HEALTH_PRIVATE_FIELDS), and the heart rates when heart_rate is.
         """
         try:
             parse_date(date, "date")
@@ -205,10 +197,6 @@ def register_workout_tools(
         each workout actually was — activity, timing, intensity, heart rate —
         rather than just a day's summed minutes.
 
-        Use this tool when:
-        - the user asks about workouts/exercise sessions specifically (e.g.
-          "what workouts did I do this week?", "show my recent gym sessions").
-
         Do not use this tool when:
         - the user just wants the daily workout_minutes total, not individual
           sessions -> use `read_health_data` or `get_metric_history` instead.
@@ -224,10 +212,6 @@ def register_workout_tools(
             end_date: Only return sessions on/before this date (YYYY-MM-DD). Omit for no upper bound.
             activity_type: Only return sessions of this activity type. Omit for all types.
             limit: Maximum rows to return, 1 to 1000 (default 200).
-
-        Returns:
-            A ReadWorkoutSessionsResult with the matching rows and a count. duration_minutes is null when
-            workout_minutes is private (HEALTH_PRIVATE_FIELDS), and the heart rates when heart_rate is.
         """
         try:
             start_date, end_date = validate_read_window(start_date, end_date, limit)

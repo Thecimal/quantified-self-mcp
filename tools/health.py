@@ -93,11 +93,10 @@ def register_health_tools(
         """
         Read daily health metrics from the local database: steps, sleep hours,
         resting heart rate, weight (kg), workout minutes, mood, and water
-        intake (ml).
-
-        Use this tool when:
-        - the request is broad/general, across multiple metrics at once (e.g.
-          "what health data do I have?", "overview of this week").
+        intake (ml). Best for a broad/general request across multiple
+        metrics at once. Check "coverage" before treating "summary" as a
+        full picture — a "confidence" of "moderate"/"low", or one metric's
+        coverage_percent much lower than the rest, means say so.
 
         Do not use this tool when:
         - the user wants one specific metric's history/trend over time -> use
@@ -118,38 +117,12 @@ def register_health_tools(
         same as pasting the data into a chat with that provider.
 
         Args:
-            start_date: First day to include, formatted YYYY-MM-DD.
-                Defaults to 30 days before end_date. Ranges over ~10 years are rejected.
-            end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
+            start_date: First day to include, YYYY-MM-DD. Defaults to 30
+                days before end_date. Ranges over ~10 years are rejected.
+            end_date: Last day to include, YYYY-MM-DD. Defaults to today.
 
-        Returns:
-            A ReadHealthDataResult with:
-            - "range": the start/end dates actually used
-            - "rows": one entry per day that has at least one recorded metric
-              (date plus whichever of steps, sleep_hours, resting_heart_rate,
-              weight_kg, workout_minutes, mood, water_ml, heart_rate, hrv_ms
-              were logged for that
-              day — fields with no data are null, not absent). Days with no
-              data at all are simply absent from "rows". Capped at the most
-              recent 400 matching days; see "truncated".
-            - "truncated": true if more matching days existed than were returned in "rows"
-            - "summary": days_with_data plus avg/min/max for each metric, computed
-              over *all* matching days even when "rows" is truncated
-            - "coverage": how complete this range's data actually is — the
-              requested period, days_expected vs. days_with_data, an overall
-              coverage_percent, and a per-metric coverage_percent in "metrics"
-              (e.g. sleep_hours might be 90% logged while hrv_ms is only 40%).
-              Use this before characterizing the data as a full picture: a
-              "confidence" of "moderate" or "low" (or any one metric's percent
-              being much lower than the others) means say so — e.g. "hrv_ms is
-              only logged on 40% of these days, so treat any pattern there
-              cautiously" — rather than treating every metric in "summary" as
-              equally well-observed.
-
-        Any metric listed in the HEALTH_PRIVATE_FIELDS environment variable is
-        always reported as null here (in both "rows" and "summary") and is left
-        out of "coverage.metrics" entirely, regardless of what's actually
-        stored for it.
+        Any metric listed in HEALTH_PRIVATE_FIELDS is always null in "rows"
+        and "summary", and left out of "coverage.metrics" entirely.
         """
         try:
             start, end = resolve_range(start_date, end_date, default_days=30)
@@ -219,24 +192,15 @@ def register_health_tools(
 
         Unlike read_health_data, this is not capped at MAX_ROWS_RETURNED and
         the row values themselves are not included in this tool's response —
-        only the resulting file's path and a row count are. That means a
-        long-range export doesn't have to pass through a cloud LLM's context
-        just to produce a file you can open yourself (in a spreadsheet, a
-        notebook, another tool, etc.). Any metric listed in
-        HEALTH_PRIVATE_FIELDS is still written as an empty cell in the file,
-        since those fields shouldn't leave the database at all, not just stay
-        out of the model's context.
+        only the resulting file's path and a row count are, so a long-range
+        export doesn't have to pass through a cloud LLM's context. Any metric
+        listed in HEALTH_PRIVATE_FIELDS is still written as an empty cell,
+        since those fields shouldn't leave the database at all.
 
         Args:
-            start_date: First day to include, formatted YYYY-MM-DD.
-                Defaults to 30 days before end_date. Ranges over ~10 years are rejected.
-            end_date: Last day to include, formatted YYYY-MM-DD. Defaults to today.
-
-        Returns:
-            An ExportCsvResult with "path" (the written file's absolute
-            path), "rows_exported" (days with at least one recorded metric —
-            days with no data at all are not written), and "range" (the
-            start/end dates actually used).
+            start_date: First day to include, YYYY-MM-DD. Defaults to 30
+                days before end_date. Ranges over ~10 years are rejected.
+            end_date: Last day to include, YYYY-MM-DD. Defaults to today.
         """
         try:
             start, end = resolve_range(start_date, end_date, default_days=30)
@@ -318,11 +282,8 @@ def register_health_tools(
         touched, so logging just today's mood doesn't erase today's steps if
         they were set earlier. To undo a value logged by mistake, use
         clear_metric rather than trying to overwrite it with a placeholder.
-
-        Use this tool when:
-        - the user is recording a simple day-level value for one of the nine
-          fixed metrics below (e.g. "log my weight as 82 kg", "I walked 8,000
-          steps today").
+        Use this for a simple day-level value for one of the nine fixed
+        metrics below.
 
         Do not use this tool when:
         - the observation needs its own timestamp/source, or the day may have
@@ -341,13 +302,6 @@ def register_health_tools(
             water_ml: Water intake in millilitres. 0-10,000.
             heart_rate: Non-resting heart rate reading in bpm. 20-250.
             hrv_ms: Heart rate variability in milliseconds. 0-300.
-
-        Returns:
-            A LogDailyMetricResult with "logged" (just the fields this call set)
-            and "row" (the day's full current state across all metrics,
-            including any set previously). Any field listed in
-            HEALTH_PRIVATE_FIELDS is always null in "row", regardless of what
-            was just written for it.
         """
         try:
             day = parse_date(date, "date")
@@ -426,15 +380,6 @@ def register_health_tools(
             date: The day to clear a field for, formatted YYYY-MM-DD.
             field: Which metric to blank out. One of: steps, sleep_hours,
                 resting_heart_rate, weight_kg, workout_minutes, mood, water_ml, heart_rate, hrv_ms.
-
-        Returns:
-            A ClearMetricResult with "cleared" (the field name) and "row" (the
-            day's full current state after clearing). If field was the only
-            metric that date had any data for, "row" is null and "note" says
-            so explicitly (clearing succeeded — there's just nothing left to
-            show). If there was nothing to clear in the first place, "row" is
-            also null but "note" says so instead. Any field listed in
-            HEALTH_PRIVATE_FIELDS is always null in "row".
         """
         try:
             day = parse_date(date, "date")
