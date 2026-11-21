@@ -7,22 +7,17 @@ Versions correspond to the [PyPI release history](https://pypi.org/project/quant
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-22
+
+### Changed
+
+- **MCP Tool Surface Context Cost Optimization (P1)** — trimmed verbose descriptions across all 20 MCP tools, moving architectural exposition out of the model prompt surface while preserving all validation rules, safety constraints, and behavioral contracts.
+- **Protocol-Level Safety Caveat Visibility** — relocated critical data integrity and privacy caveats from dead "Returns:" sections (which FastMCP strips from serialized tool descriptions) directly into the main description body, ensuring LLMs always receive required warnings.
+
 ### Added
 
-- **Final-answer scoring in the agent eval (`eval/agent/answers.py`)** — the interpretation and grounding
-  layers, previously reported as not scored, are now scored deterministically and offline for scenarios with
-  an `answer` spec. The checks derive from the tool results themselves: stale, source-conflicting,
-  failed-import and insufficient data must be disclosed and not called complete or current, suggestive
-  evidence must be hedged, nothing below the supported tier may use certainty language, an association must
-  not be given a cause, and a window with no data must not be answered with a zero. A scenario can also pin
-  the numbers, units, dates and required or forbidden phrases the answer must carry, with the expected
-  numbers read from the real tool result. Every failure reports the layer, a specific code and the violated
-  expectation, and the results flow into the existing summary, gates and artifacts. Seven synthetic
-  scenarios (`scenarios/answers.yaml`) cover a correct tool call with a wrong reading, suggestive evidence
-  presented as supported, insufficient data answered confidently, an omitted source conflict, missing data
-  read as zero, a failed import presented as current, and a correct answer with its caveats. Routing,
-  argument and execution scoring and the server are unchanged; scenarios without an `answer` spec are still
-  not scored.
+- **Tool Surface Measurement & Regression Suite** — added `scripts/measure_tool_surface.py` to deterministically calculate serialized tool schema size and approximate token usage offline. Added `tests/test_tool_surface_size.py` with tight token and character budgets to prevent prompt bloat regressions.
+- **Deterministic Agent Answer Evaluation (`eval/agent/answers.py`)** — offline, deterministic scoring for interpretation and grounding layers against an `answer` specification. Validates hedging of suggestive evidence, disclosure of stale/conflicting sources, avoidance of causal claims for correlations, and prevents zero-filling for missing data windows. Includes synthetic evaluation scenarios in `scenarios/answers.yaml`.
 
 ## [0.8.1] - 2026-11-14
 

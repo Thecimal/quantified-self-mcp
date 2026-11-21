@@ -63,7 +63,7 @@ from fastmcp import settings as fastmcp_settings
 from fastmcp.exceptions import ResourceError
 from mcp.types import ToolAnnotations
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 from analytics import (
     Point,
