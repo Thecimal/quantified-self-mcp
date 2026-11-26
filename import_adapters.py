@@ -1216,6 +1216,17 @@ def adapt_google_fit(path: Path) -> AdaptedImport:
     unsupported_types: defaultdict[str, int] = defaultdict(int)
     skipped = 0
 
+    def add_obs(ts: str, metric: str, value: float | int, unit: str) -> None:
+        observations.append(
+            {
+                "timestamp": ts,
+                "metric": metric,
+                "value": value,
+                "unit": unit,
+                "source": _GOOGLE_FIT_SOURCE,
+            }
+        )
+
     for name, payload in json_payloads:
         if not isinstance(payload, dict):
             continue
@@ -1244,13 +1255,13 @@ def adapt_google_fit(path: Path) -> AdaptedImport:
                             raise RowError("step_count.delta missing numeric value")
                         _check_observation_bounds("steps", val, f"{name} steps")
                         step_sum[day] += val
-                        observations.append({"timestamp": ts, "metric": "steps", "value": int(round(val)), "unit": "count", "source": _GOOGLE_FIT_SOURCE})
+                        add_obs(ts, "steps", int(round(val)), "count")
                     elif dtype in ("com.google.heart_rate.bpm", "com.google.heart_rate.summary"):
                         if val is None:
                             raise RowError(f"{dtype} missing numeric value")
                         _check_observation_bounds("heart_rate", val, f"{name} heart_rate")
                         heart_rate_readings[day].append(val)
-                        observations.append({"timestamp": ts, "metric": "heart_rate", "value": int(round(val)), "unit": "bpm", "source": _GOOGLE_FIT_SOURCE})
+                        add_obs(ts, "heart_rate", int(round(val)), "bpm")
                     elif dtype == "com.google.weight":
                         if val is None:
                             raise RowError("weight missing numeric value")
@@ -1258,7 +1269,7 @@ def adapt_google_fit(path: Path) -> AdaptedImport:
                         prior = weight_latest.get(day)
                         if prior is None or start_dt > prior[0]:
                             weight_latest[day] = (start_dt, val)
-                        observations.append({"timestamp": ts, "metric": "weight_kg", "value": round(val, 2), "unit": "kg", "source": _GOOGLE_FIT_SOURCE})
+                        add_obs(ts, "weight_kg", round(val, 2), "kg")
                     elif dtype == "com.google.sleep.segment":
                         end_dt = _gf_nanos_to_dt(pt.get("endTimeNanos"), "sleep.segment end")
                         dur_s = (end_dt - start_dt).total_seconds()
@@ -1268,7 +1279,7 @@ def adapt_google_fit(path: Path) -> AdaptedImport:
                         if stage in _GF_ASLEEP_STAGES:
                             _check_observation_bounds("sleep_hours", dur_s / 3600, f"{name} sleep_hours")
                             sleep_seconds[day] += dur_s
-                            observations.append({"timestamp": ts, "metric": "sleep_hours", "value": round(dur_s / 3600, 2), "unit": "hours", "source": _GOOGLE_FIT_SOURCE})
+                            add_obs(ts, "sleep_hours", round(dur_s / 3600, 2), "hours")
                     elif dtype == "com.google.active_minutes":
                         if val is None:
                             raise RowError("active_minutes missing numeric value")
@@ -1280,7 +1291,7 @@ def adapt_google_fit(path: Path) -> AdaptedImport:
                         ml = val * 1000.0
                         _check_observation_bounds("water_ml", ml, f"{name} water_ml")
                         water_ml_sum[day] += ml
-                        observations.append({"timestamp": ts, "metric": "water_ml", "value": int(round(ml)), "unit": "ml", "source": _GOOGLE_FIT_SOURCE})
+                        add_obs(ts, "water_ml", int(round(ml)), "ml")
                     elif dtype:
                         unsupported_types[dtype] += 1
                 except (TypeError, ValueError, RowError) as exc:
@@ -1317,7 +1328,7 @@ def adapt_google_fit(path: Path) -> AdaptedImport:
                     mins = dur_s / 60
                     _check_observation_bounds("workout_minutes", mins, f"{name} workout_minutes")
                     session_workout_minutes[day] += mins
-                    observations.append({"timestamp": ts, "metric": "workout_minutes", "value": int(round(mins)), "unit": "minutes", "source": _GOOGLE_FIT_SOURCE})
+                    add_obs(ts, "workout_minutes", int(round(mins)), "minutes")
             except (TypeError, ValueError, RowError) as exc:
                 print(f"Skipping a Google Fit session in {name}: {exc}", file=sys.stderr)
                 skipped += 1
@@ -1337,7 +1348,11 @@ def adapt_google_fit(path: Path) -> AdaptedImport:
                     steps_val = _finite_float(lowered["step count"], f"{name} Step count")
                     _check_observation_bounds("steps", steps_val, f"{name} steps")
                     csv_steps[day] += steps_val
-                weight_raw = lowered.get("average weight (kg)") or lowered.get("max weight (kg)") or lowered.get("min weight (kg)")
+                weight_raw = (
+                    lowered.get("average weight (kg)")
+                    or lowered.get("max weight (kg)")
+                    or lowered.get("min weight (kg)")
+                )
                 if weight_raw:
                     w_val = _finite_float(weight_raw, f"{name} Weight")
                     _check_observation_bounds("weight_kg", w_val, f"{name} weight_kg")
@@ -1354,27 +1369,27 @@ def adapt_google_fit(path: Path) -> AdaptedImport:
     for day, val in csv_steps.items():
         if day not in step_sum:
             step_sum[day] = val
-            observations.append({"timestamp": f"{day}T12:00:00", "metric": "steps", "value": int(round(val)), "unit": "count", "source": _GOOGLE_FIT_SOURCE})
+            add_obs(f"{day}T12:00:00", "steps", int(round(val)), "count")
 
     for day, val in csv_weight.items():
         if day not in weight_latest:
             weight_latest[day] = (datetime.fromisoformat(f"{day}T12:00:00"), val)
-            observations.append({"timestamp": f"{day}T12:00:00", "metric": "weight_kg", "value": round(val, 2), "unit": "kg", "source": _GOOGLE_FIT_SOURCE})
+            add_obs(f"{day}T12:00:00", "weight_kg", round(val, 2), "kg")
 
     for day, dur_s in session_sleep_seconds.items():
         if day not in sleep_seconds:
             sleep_seconds[day] = dur_s
-            observations.append({"timestamp": f"{day}T12:00:00", "metric": "sleep_hours", "value": round(dur_s / 3600, 2), "unit": "hours", "source": _GOOGLE_FIT_SOURCE})
+            add_obs(f"{day}T12:00:00", "sleep_hours", round(dur_s / 3600, 2), "hours")
 
     workout_minutes: dict[str, float] = dict(session_workout_minutes)
     for day, val in active_minutes.items():
         if day not in workout_minutes:
             workout_minutes[day] = val
-            observations.append({"timestamp": f"{day}T12:00:00", "metric": "workout_minutes", "value": int(round(val)), "unit": "minutes", "source": _GOOGLE_FIT_SOURCE})
+            add_obs(f"{day}T12:00:00", "workout_minutes", int(round(val)), "minutes")
     for day, val in csv_move_minutes.items():
         if day not in workout_minutes:
             workout_minutes[day] = val
-            observations.append({"timestamp": f"{day}T12:00:00", "metric": "workout_minutes", "value": int(round(val)), "unit": "minutes", "source": _GOOGLE_FIT_SOURCE})
+            add_obs(f"{day}T12:00:00", "workout_minutes", int(round(val)), "minutes")
 
     all_days = (
         set(step_sum)

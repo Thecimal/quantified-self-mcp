@@ -4,7 +4,7 @@ import json
 import sqlite3
 import sys
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -205,8 +205,16 @@ def test_google_fit_skips_malformed_points_and_rejects_empty_dir(tmp_path):
         json.dumps(
             {
                 "Data Points": [
-                    {"startTimeNanos": "not-a-number", "dataTypeName": "com.google.step_count.delta", "value": [{"intVal": 10}]},
-                    {"startTimeNanos": _ns("2026-03-12T12:00:00Z"), "dataTypeName": "com.google.step_count.delta", "value": [{"intVal": 1500}]},
+                    {
+                        "startTimeNanos": "not-a-number",
+                        "dataTypeName": "com.google.step_count.delta",
+                        "value": [{"intVal": 10}],
+                    },
+                    {
+                        "startTimeNanos": _ns("2026-03-12T12:00:00Z"),
+                        "dataTypeName": "com.google.step_count.delta",
+                        "value": [{"intVal": 1500}],
+                    },
                 ]
             }
         ),
