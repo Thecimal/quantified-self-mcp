@@ -1549,7 +1549,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     # If invoked inside a test runner (e.g. pytest) without explicit args,
     # avoid reading pytest's own command-line arguments.
     if argv is None:
-        if "pytest" in sys.modules and Path(sys.argv[0]).name.startswith("pytest"):
+        if "pytest" in sys.modules and (
+            Path(sys.argv[0]).name.startswith("pytest") or Path(sys.argv[0]).parent.name == "pytest"
+        ):
             argv = []
         else:
             argv = sys.argv[1:]
