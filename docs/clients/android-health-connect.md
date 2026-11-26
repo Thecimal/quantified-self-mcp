@@ -10,8 +10,10 @@ Health Connect's own **Settings → Health Connect → Manage data → Backup
 and restore** only produces an undocumented raw SQLite snapshot inside a
 zip, meant for restoring to another Android device — not a format this
 (or any third-party) tool parses. Google Takeout has no Health Connect
-entry either. You need an app that reads Health Connect through its
-public API and writes out a plain JSON file of records.
+entry either (though if you exported legacy **Google Fit** data via Google
+Takeout, use `--source google-fit` — see [Importing Health Data](../importing.md)).
+You need an app that reads Health Connect through its public API and writes out
+a plain JSON file of records.
 
 ## 1. Export from Health Connect to JSON
 

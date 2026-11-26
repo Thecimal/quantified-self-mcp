@@ -115,7 +115,8 @@ quantified-self-init-db --demo
 quantified-self-init-db export.xml                # Apple Health
 quantified-self-init-db whoop.json --source whoop # WHOOP Developer API (v2)
 quantified-self-init-db oura.json --source oura   # Oura Ring API (v2)
-quantified-self-init-db health_connect_export.zip # Android Health Connect
+quantified-self-init-db health_connect_export.json --source health-connect # Android Health Connect
+quantified-self-init-db takeout-fit.zip --source google-fit # Google Fit (Google Takeout)
 quantified-self-init-db your-health-data.csv      # CSV
 ```
 
@@ -152,8 +153,8 @@ Most health apps either trap your data in a closed cloud dashboard or feed raw n
 | **Provenance Tracking** | ❌ Opaque | ❌ None | ✅ **Multi-source origin stamps** |
 | **Atomic Snapshots** | ⚠️ Manual exports | ❌ None | ✅ **WAL-safe backup/restore** |
 
-### 🔒 100% Local & Private
-Your database lives on your machine in SQLite. No proprietary health cloud required. If you want a completely offline, air-gapped system, pair it with local models via **LM Studio** or **Ollama**.
+### 🔒 Local Storage & Privacy Controls
+Your database and MCP server run locally in SQLite with no proprietary health cloud or telemetry. Note that if you connect a cloud assistant (like Claude Desktop), the specific metrics returned by tool calls are sent to that LLM provider — for end-to-end local privacy, pair it with local models via **LM Studio** or **Ollama**.
 
 You can also redact specific sensitive metrics from being exposed to the AI:
 ```bash

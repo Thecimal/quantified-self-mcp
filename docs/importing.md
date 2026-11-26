@@ -15,8 +15,11 @@ quantified-self-init-db export.csv
 # From Apple Health
 quantified-self-init-db export.xml
 
-# From Android Health Connect JSON
+# From Android Health Connect JSON (or .zip containing JSON)
 quantified-self-init-db health-connect.json --source health-connect
+
+# From Google Fit (Google Takeout .zip, directory, CSV, or JSON)
+quantified-self-init-db takeout-google-fit.zip --source google-fit
 
 # From WHOOP Developer API JSON
 quantified-self-init-db whoop.json --source whoop
@@ -125,6 +128,25 @@ Files with standard Oura JSON signatures are also auto-detected.
 
 Each value is stored as an observation tagged with `source="Oura"` and provenance metadata.
 
+### 6. Google Fit / Google Takeout (`--source google-fit`)
+
+Export your Google Fit history from [Google Takeout](https://takeout.google.com/) (select **Fit**) and pass the downloaded `.zip`, the extracted `Takeout/Fit/` directory, `Daily activity metrics.csv`, `All Data/*.json`, or `All Sessions/*.json`:
+
+```bash
+quantified-self-init-db takeout-google-fit.zip --source google-fit --report
+```
+
+| Metric | Read from | Rule |
+| --- | --- | --- |
+| `steps` | `com.google.step_count.delta` / `Step count` | Summed per day |
+| `heart_rate` | `com.google.heart_rate.bpm` | Averaged per day |
+| `weight_kg` | `com.google.weight` / `Average weight (kg)` | Latest reading per day |
+| `sleep_hours` | `com.google.sleep.segment` / sleep sessions | Asleep stages (`2, 4, 5, 6`) summed per day |
+| `workout_minutes` | `All Sessions` / `com.google.active_minutes` / `Move Minutes count` | Active workouts summed per day |
+| `water_ml` | `com.google.hydration` | Liters converted to mL |
+
+When both granular `All Data` / `All Sessions` JSONs and `Daily activity metrics.csv` are present in the same Takeout archive, `Daily activity metrics.csv` only fills in days/metrics not already covered by `All Data` / `All Sessions` so nothing is double-counted.
+
 ---
 
 ## Import Options & CLI Flags
@@ -132,7 +154,7 @@ Each value is stored as an observation tagged with `source="Oura"` and provenanc
 | Flag | Description |
 | --- | --- |
 | `--demo` | Seed the database with 60 days of synthetic health data for instant testing without an external file. |
-| `--source {auto,csv,apple-health,health-connect,whoop,oura}` | Explicitly declare format. Defaults to auto-detection from file extension (`.xml` -> `apple-health`, otherwise `csv`). |
+| `--source {auto,csv,apple-health,health-connect,google-fit,whoop,oura}` | Explicitly declare format. Defaults to auto-detection from file extension (`.xml` -> `apple-health`, otherwise `csv`). |
 | `--replace` | Wipe existing tables before importing instead of incrementally appending/upserting. |
 | `--report` | Print detailed import metrics: date range, records imported, skipped records, and unmapped types. |
 | `--map COLUMN=HEADER` | Rename CSV columns to standard schema names (repeatable). |

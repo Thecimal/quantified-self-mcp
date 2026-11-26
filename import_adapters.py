@@ -45,11 +45,14 @@ Currently supported:
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import math
 import re
 import sys
 import xml.etree.ElementTree as ET
+import zipfile
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -453,6 +456,32 @@ def _hc_data_origin(metadata: Any) -> str | None:
     return name.strip() if isinstance(name, str) and name.strip() else None
 
 
+def _read_health_connect_json(path: Path) -> Any:
+    if path.suffix.lower() == ".zip":
+        try:
+            with zipfile.ZipFile(path) as zf:
+                json_names = [n for n in zf.namelist() if n.lower().endswith(".json") and not n.startswith("__MACOSX/")]
+                if not json_names:
+                    db_names = [n for n in zf.namelist() if n.lower().endswith(".db")]
+                    if db_names:
+                        sys.exit(
+                            f"Error: {path} appears to be a Health Connect Backup & Restore SQLite archive "
+                            f"({db_names[0]}), which is undocumented and not supported. Export Health Connect "
+                            "records to JSON instead (see docs/clients/android-health-connect.md)."
+                        )
+                    sys.exit(f"Error: {path} is a zip archive with no .json files.")
+                all_records: list[Any] = []
+                for name in sorted(json_names):
+                    payload = json.loads(zf.read(name).decode("utf-8"))
+                    recs = payload.get("records", payload) if isinstance(payload, dict) else payload
+                    if isinstance(recs, list):
+                        all_records.extend(recs)
+                return all_records
+        except zipfile.BadZipFile as exc:
+            sys.exit(f"Error: couldn't read {path} as Health Connect zip: {exc}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def adapt_health_connect(path: Path) -> AdaptedImport:
     """Parse a Health Connect record-JSON export (see the module
     docstring for exactly which export shape this expects) and aggregate
@@ -497,7 +526,7 @@ def adapt_health_connect(path: Path) -> AdaptedImport:
     stamped with the importer's name on import; no origin is invented for it.
     """
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = _read_health_connect_json(path)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         sys.exit(f"Error: couldn't read {path} as Health Connect JSON: {exc}")
     records = data.get("records", data) if isinstance(data, dict) else data
@@ -1029,6 +1058,372 @@ def adapt_oura(path: Path) -> AdaptedImport:
     )
 
 
+_GOOGLE_FIT_SOURCE = "Google Fit"
+# Google Fit sleep segment integer codes: 2=Sleep, 4=Light, 5=Deep, 6=REM (1=Awake, 3=Out-of-bed).
+_GF_ASLEEP_STAGES = {2, 4, 5, 6}
+_GF_IGNORED_ACTIVITIES = {"", "still", "in_vehicle", "unknown"}
+_GF_SLEEP_ACTIVITIES = {"sleep", "sleep.light", "sleep.deep", "sleep.rem"}
+_GF_DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)s$")
+_GF_DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})$")
+
+
+def _gf_nanos_to_dt(raw: Any, what: str) -> datetime:
+    try:
+        ns = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RowError(f"{what} has unparseable nanosecond timestamp {raw!r}") from exc
+    if ns <= 0:
+        raise RowError(f"{what} has non-positive nanosecond timestamp {raw!r}")
+    return datetime.fromtimestamp(ns / 1_000_000_000, tz=timezone.utc).astimezone()
+
+
+def _gf_iso_to_dt(raw: Any, what: str) -> datetime:
+    if not isinstance(raw, str) or not raw.strip():
+        raise RowError(f"{what} is missing timestamp")
+    try:
+        dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RowError(f"{what} has unparseable timestamp {raw!r}") from exc
+    return dt.astimezone() if dt.tzinfo is not None else dt
+
+
+def _gf_extract_value(point: dict[str, Any]) -> float | None:
+    """Extract the first numeric value from a Google Fit Data Point (`value` or `fitValue`)."""
+    items = point.get("value")
+    if items is None:
+        items = point.get("fitValue")
+    if not isinstance(items, list) or not items:
+        return None
+    first = items[0]
+    if not isinstance(first, dict):
+        return None
+    if "value" in first and isinstance(first["value"], dict):
+        first = first["value"]
+    if "intVal" in first and first["intVal"] is not None:
+        return _finite_float(first["intVal"], "Google Fit intVal")
+    if "fpVal" in first and first["fpVal"] is not None:
+        return _finite_float(first["fpVal"], "Google Fit fpVal")
+    return None
+
+
+def _gf_parse_csv_day(row: dict[str, str], fallback_day: str | None) -> str:
+    lowered = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
+    for key in ("date", "start time"):
+        raw = lowered.get(key)
+        if not raw:
+            continue
+        if len(raw) >= 10 and raw[4:5] == "-" and raw[7:8] == "-":
+            try:
+                return datetime.strptime(raw[:10], "%Y-%m-%d").date().isoformat()
+            except ValueError:
+                pass
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
+            try:
+                return datetime.strptime(raw, fmt).date().isoformat()
+            except ValueError:
+                continue
+        if fallback_day and ":" in raw:
+            return fallback_day
+    if fallback_day:
+        return fallback_day
+    raise RowError("Google Fit CSV row has no recognizable Date or Start time")
+
+
+def _gf_iter_sources(path: Path) -> tuple[list[tuple[str, str]], list[tuple[str, Any]]]:
+    """Return (csv_texts, json_payloads) from a Google Takeout zip, directory, or single file."""
+    csv_texts: list[tuple[str, str]] = []
+    json_payloads: list[tuple[str, Any]] = []
+
+    if path.is_dir():
+        for f in sorted(path.rglob("*")):
+            if not f.is_file():
+                continue
+            suf = f.suffix.lower()
+            if suf == ".csv":
+                csv_texts.append((f.name, f.read_text(encoding="utf-8-sig")))
+            elif suf == ".json":
+                try:
+                    json_payloads.append((f.name, json.loads(f.read_text(encoding="utf-8"))))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    print(f"Skipping unreadable JSON {f}: {exc}", file=sys.stderr)
+        return csv_texts, json_payloads
+
+    if path.suffix.lower() == ".zip":
+        try:
+            with zipfile.ZipFile(path) as zf:
+                for name in sorted(zf.namelist()):
+                    if name.endswith("/") or name.startswith("__MACOSX/"):
+                        continue
+                    low = name.lower()
+                    if low.endswith(".csv"):
+                        csv_texts.append((Path(name).name, zf.read(name).decode("utf-8-sig")))
+                    elif low.endswith(".json"):
+                        try:
+                            json_payloads.append((Path(name).name, json.loads(zf.read(name).decode("utf-8"))))
+                        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                            print(f"Skipping unreadable JSON {name} in {path}: {exc}", file=sys.stderr)
+        except zipfile.BadZipFile as exc:
+            sys.exit(f"Error: couldn't read {path} as Google Takeout zip: {exc}")
+        return csv_texts, json_payloads
+
+    if path.suffix.lower() == ".csv":
+        csv_texts.append((path.name, path.read_text(encoding="utf-8-sig")))
+        return csv_texts, json_payloads
+
+    if path.suffix.lower() == ".json":
+        try:
+            json_payloads.append((path.name, json.loads(path.read_text(encoding="utf-8"))))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            sys.exit(f"Error: couldn't read {path} as Google Fit JSON: {exc}")
+        return csv_texts, json_payloads
+
+    sys.exit(f"Error: unsupported Google Fit file type {path.suffix!r} (expected .zip, .csv, .json, or directory)")
+
+
+def adapt_google_fit(path: Path) -> AdaptedImport:
+    """Parse a Google Fit export from Google Takeout.
+
+    Accepts a Takeout `.zip` archive, an extracted `Takeout/Fit/` directory,
+    a `Daily activity metrics.csv` file, an `All Data/*.json` data-points file,
+    or an `All Sessions/*.json` session file.
+
+    Metrics extracted with source "Google Fit":
+    - steps: from `com.google.step_count.delta` or CSV `Step count`
+    - heart_rate: from `com.google.heart_rate.bpm` / `com.google.heart_rate.summary`
+    - weight_kg: from `com.google.weight` or CSV `Average weight (kg)`
+    - sleep_hours: from `com.google.sleep.segment` (asleep stages) or sleep sessions
+    - workout_minutes: from `All Sessions` active sessions, `com.google.active_minutes`, or CSV `Move Minutes count`
+    - water_ml: from `com.google.hydration` (liters converted to mL)
+    """
+    csv_texts, json_payloads = _gf_iter_sources(path)
+    if not csv_texts and not json_payloads:
+        raise RowError(f"no Google Fit CSV or JSON files found in {path}")
+
+    step_sum: dict[str, float] = defaultdict(float)
+    heart_rate_readings: dict[str, list[float]] = defaultdict(list)
+    weight_latest: dict[str, tuple[datetime, float]] = {}
+    sleep_seconds: dict[str, float] = defaultdict(float)
+    session_sleep_seconds: dict[str, float] = defaultdict(float)
+    session_workout_minutes: dict[str, float] = defaultdict(float)
+    active_minutes: dict[str, float] = defaultdict(float)
+    water_ml_sum: dict[str, float] = defaultdict(float)
+
+    csv_steps: dict[str, float] = defaultdict(float)
+    csv_weight: dict[str, float] = {}
+    csv_move_minutes: dict[str, float] = defaultdict(float)
+
+    observations: list[dict[str, Any]] = []
+    unsupported_types: defaultdict[str, int] = defaultdict(int)
+    skipped = 0
+
+    for name, payload in json_payloads:
+        if not isinstance(payload, dict):
+            continue
+        # Case 1: All Data/*.json ("Data Points" or "point")
+        points = payload.get("Data Points")
+        if points is None:
+            points = payload.get("point")
+        if isinstance(points, list):
+            for pt in points:
+                if not isinstance(pt, dict):
+                    skipped += 1
+                    continue
+                try:
+                    dtype = pt.get("dataTypeName") or payload.get("dataSourceId") or ""
+                    if ":" in dtype and not dtype.startswith("com.google."):
+                        # Extract dataTypeName from dataSourceId if needed
+                        parts = dtype.split(":")
+                        dtype = next((p for p in parts if p.startswith("com.google.")), dtype)
+                    start_dt = _gf_nanos_to_dt(pt.get("startTimeNanos"), dtype or name)
+                    day = start_dt.date().isoformat()
+                    ts = start_dt.isoformat()
+                    val = _gf_extract_value(pt)
+
+                    if dtype == "com.google.step_count.delta":
+                        if val is None:
+                            raise RowError("step_count.delta missing numeric value")
+                        _check_observation_bounds("steps", val, f"{name} steps")
+                        step_sum[day] += val
+                        observations.append({"timestamp": ts, "metric": "steps", "value": int(round(val)), "unit": "count", "source": _GOOGLE_FIT_SOURCE})
+                    elif dtype in ("com.google.heart_rate.bpm", "com.google.heart_rate.summary"):
+                        if val is None:
+                            raise RowError(f"{dtype} missing numeric value")
+                        _check_observation_bounds("heart_rate", val, f"{name} heart_rate")
+                        heart_rate_readings[day].append(val)
+                        observations.append({"timestamp": ts, "metric": "heart_rate", "value": int(round(val)), "unit": "bpm", "source": _GOOGLE_FIT_SOURCE})
+                    elif dtype == "com.google.weight":
+                        if val is None:
+                            raise RowError("weight missing numeric value")
+                        _check_observation_bounds("weight_kg", val, f"{name} weight_kg")
+                        prior = weight_latest.get(day)
+                        if prior is None or start_dt > prior[0]:
+                            weight_latest[day] = (start_dt, val)
+                        observations.append({"timestamp": ts, "metric": "weight_kg", "value": round(val, 2), "unit": "kg", "source": _GOOGLE_FIT_SOURCE})
+                    elif dtype == "com.google.sleep.segment":
+                        end_dt = _gf_nanos_to_dt(pt.get("endTimeNanos"), "sleep.segment end")
+                        dur_s = (end_dt - start_dt).total_seconds()
+                        if dur_s <= 0:
+                            raise RowError("sleep.segment end before start")
+                        stage = int(val) if val is not None else 2
+                        if stage in _GF_ASLEEP_STAGES:
+                            _check_observation_bounds("sleep_hours", dur_s / 3600, f"{name} sleep_hours")
+                            sleep_seconds[day] += dur_s
+                            observations.append({"timestamp": ts, "metric": "sleep_hours", "value": round(dur_s / 3600, 2), "unit": "hours", "source": _GOOGLE_FIT_SOURCE})
+                    elif dtype == "com.google.active_minutes":
+                        if val is None:
+                            raise RowError("active_minutes missing numeric value")
+                        _check_observation_bounds("workout_minutes", val, f"{name} workout_minutes")
+                        active_minutes[day] += val
+                    elif dtype == "com.google.hydration":
+                        if val is None:
+                            raise RowError("hydration missing numeric value")
+                        ml = val * 1000.0
+                        _check_observation_bounds("water_ml", ml, f"{name} water_ml")
+                        water_ml_sum[day] += ml
+                        observations.append({"timestamp": ts, "metric": "water_ml", "value": int(round(ml)), "unit": "ml", "source": _GOOGLE_FIT_SOURCE})
+                    elif dtype:
+                        unsupported_types[dtype] += 1
+                except (TypeError, ValueError, RowError) as exc:
+                    print(f"Skipping a Google Fit data point in {name}: {exc}", file=sys.stderr)
+                    skipped += 1
+            continue
+
+        # Case 2: All Sessions/*.json
+        if "fitnessActivity" in payload and ("startTime" in payload or "duration" in payload):
+            try:
+                activity = str(payload.get("fitnessActivity") or "").strip().lower()
+                if activity in _GF_IGNORED_ACTIVITIES:
+                    continue
+                start_dt = _gf_iso_to_dt(payload.get("startTime"), f"{name} startTime")
+                if payload.get("endTime"):
+                    end_dt = _gf_iso_to_dt(payload["endTime"], f"{name} endTime")
+                    dur_s = (end_dt - start_dt).total_seconds()
+                elif isinstance(payload.get("duration"), str):
+                    m = _GF_DURATION_RE.match(payload["duration"].strip())
+                    if not m:
+                        raise RowError(f"unparseable session duration {payload['duration']!r}")
+                    dur_s = float(m.group(1))
+                else:
+                    raise RowError("session missing endTime and duration")
+                if dur_s <= 0:
+                    raise RowError("session duration must be positive")
+                day = start_dt.date().isoformat()
+                ts = start_dt.isoformat()
+                if activity in _GF_SLEEP_ACTIVITIES:
+                    hrs = dur_s / 3600
+                    _check_observation_bounds("sleep_hours", hrs, f"{name} sleep_hours")
+                    session_sleep_seconds[day] += dur_s
+                else:
+                    mins = dur_s / 60
+                    _check_observation_bounds("workout_minutes", mins, f"{name} workout_minutes")
+                    session_workout_minutes[day] += mins
+                    observations.append({"timestamp": ts, "metric": "workout_minutes", "value": int(round(mins)), "unit": "minutes", "source": _GOOGLE_FIT_SOURCE})
+            except (TypeError, ValueError, RowError) as exc:
+                print(f"Skipping a Google Fit session in {name}: {exc}", file=sys.stderr)
+                skipped += 1
+
+    # Case 3: Daily activity metrics / Daily aggregations CSV
+    for name, text in csv_texts:
+        stem = Path(name).stem
+        fallback_day = stem if _GF_DATE_PREFIX_RE.match(stem) else None
+        reader = csv.DictReader(io.StringIO(text))
+        if not reader.fieldnames:
+            continue
+        for raw_row in reader:
+            try:
+                day = _gf_parse_csv_day(raw_row, fallback_day)
+                lowered = {k.strip().lower(): (v or "").strip() for k, v in raw_row.items() if k}
+                if lowered.get("step count"):
+                    steps_val = _finite_float(lowered["step count"], f"{name} Step count")
+                    _check_observation_bounds("steps", steps_val, f"{name} steps")
+                    csv_steps[day] += steps_val
+                weight_raw = lowered.get("average weight (kg)") or lowered.get("max weight (kg)") or lowered.get("min weight (kg)")
+                if weight_raw:
+                    w_val = _finite_float(weight_raw, f"{name} Weight")
+                    _check_observation_bounds("weight_kg", w_val, f"{name} weight_kg")
+                    csv_weight[day] = w_val
+                if lowered.get("move minutes count"):
+                    mm_val = _finite_float(lowered["move minutes count"], f"{name} Move Minutes count")
+                    _check_observation_bounds("workout_minutes", mm_val, f"{name} workout_minutes")
+                    csv_move_minutes[day] += mm_val
+            except (TypeError, ValueError, RowError) as exc:
+                print(f"Skipping a Google Fit CSV row in {name}: {exc}", file=sys.stderr)
+                skipped += 1
+
+    # Merge CSV and session fallbacks without double-counting All Data
+    for day, val in csv_steps.items():
+        if day not in step_sum:
+            step_sum[day] = val
+            observations.append({"timestamp": f"{day}T12:00:00", "metric": "steps", "value": int(round(val)), "unit": "count", "source": _GOOGLE_FIT_SOURCE})
+
+    for day, val in csv_weight.items():
+        if day not in weight_latest:
+            weight_latest[day] = (datetime.fromisoformat(f"{day}T12:00:00"), val)
+            observations.append({"timestamp": f"{day}T12:00:00", "metric": "weight_kg", "value": round(val, 2), "unit": "kg", "source": _GOOGLE_FIT_SOURCE})
+
+    for day, dur_s in session_sleep_seconds.items():
+        if day not in sleep_seconds:
+            sleep_seconds[day] = dur_s
+            observations.append({"timestamp": f"{day}T12:00:00", "metric": "sleep_hours", "value": round(dur_s / 3600, 2), "unit": "hours", "source": _GOOGLE_FIT_SOURCE})
+
+    workout_minutes: dict[str, float] = dict(session_workout_minutes)
+    for day, val in active_minutes.items():
+        if day not in workout_minutes:
+            workout_minutes[day] = val
+            observations.append({"timestamp": f"{day}T12:00:00", "metric": "workout_minutes", "value": int(round(val)), "unit": "minutes", "source": _GOOGLE_FIT_SOURCE})
+    for day, val in csv_move_minutes.items():
+        if day not in workout_minutes:
+            workout_minutes[day] = val
+            observations.append({"timestamp": f"{day}T12:00:00", "metric": "workout_minutes", "value": int(round(val)), "unit": "minutes", "source": _GOOGLE_FIT_SOURCE})
+
+    all_days = (
+        set(step_sum)
+        | set(heart_rate_readings)
+        | set(weight_latest)
+        | set(sleep_seconds)
+        | set(workout_minutes)
+        | set(water_ml_sum)
+    )
+    present_columns = [
+        col
+        for col, has_data in (
+            ("steps", bool(step_sum)),
+            ("sleep_hours", bool(sleep_seconds)),
+            ("heart_rate", bool(heart_rate_readings)),
+            ("weight_kg", bool(weight_latest)),
+            ("workout_minutes", bool(workout_minutes)),
+            ("water_ml", bool(water_ml_sum)),
+        )
+        if has_data
+    ]
+
+    rows: list[dict[str, Any]] = []
+    for day in sorted(all_days):
+        row: dict[str, Any] = {"date": day}
+        if day in step_sum:
+            row["steps"] = int(round(step_sum[day]))
+        if day in sleep_seconds:
+            row["sleep_hours"] = round(sleep_seconds[day] / 3600, 2)
+        if day in heart_rate_readings:
+            readings = heart_rate_readings[day]
+            row["heart_rate"] = int(round(sum(readings) / len(readings)))
+        if day in weight_latest:
+            row["weight_kg"] = round(weight_latest[day][1], 2)
+        if day in workout_minutes:
+            row["workout_minutes"] = int(round(workout_minutes[day]))
+        if day in water_ml_sum:
+            row["water_ml"] = int(round(water_ml_sum[day]))
+        rows.append(row)
+
+    return AdaptedImport(
+        rows=rows,
+        present_columns=present_columns,
+        skipped=skipped,
+        raw_measurements=observations,
+        unsupported_types=dict(unsupported_types),
+    )
+
+
 def detect_adapter(path: Path) -> str:
     """Best-effort guess at which adapter a source file needs, by file
     extension. Only used for --source auto (the CLI default) — an
@@ -1041,6 +1436,7 @@ def detect_adapter(path: Path) -> str:
 ADAPTERS: dict[str, Callable[[Path], AdaptedImport]] = {
     "apple-health": adapt_apple_health,
     "health-connect": adapt_health_connect,
+    "google-fit": adapt_google_fit,
     "whoop": adapt_whoop,
     "oura": adapt_oura,
 }
