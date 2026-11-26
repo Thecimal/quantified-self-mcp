@@ -21,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from logic import (  # noqa: E402
     connect_writable,
+    dataset_coverage,
     ensure_schema,
     insert_workout_session,
     record_import_finish,
@@ -35,6 +36,12 @@ WORKOUTS = [
     (5, "strength", 45, "high"),
     (9, "running", 35, "moderate"),
 ]
+
+# (avg, max) heart rate per WORKOUTS offset, for fixtures with session_heart_rates. Three-digit values that
+# occur in no id, date or count, so a copy of one in a tool result or an answer is unmistakable.
+WORKOUT_HEART_RATES = {1: (151, 183), 3: (126, 147), 5: (138, 169), 9: (129, 158)}
+
+PRIVATE_ONLY_OFFSET = 101  # permission_limited: the one day on which only a private metric has data
 
 
 def _steps(o: int) -> float:
@@ -55,6 +62,12 @@ def _rhr(o: int) -> float:
 
 def _weight(o: int) -> float:
     return round(78 + o * 0.03, 2)
+
+
+def _private_weight(o: int) -> float:
+    """Moves exactly with sleep_hours (r = 1), so a tool that lets weight_kg into a correlation would surface
+    it, and takes values no other metric does."""
+    return round(80 + _sleep(o) * 0.37, 3)
 
 
 def _mood(o: int) -> float:
@@ -97,6 +110,13 @@ def _conflicting(today: date) -> list[Row]:
     )
 
 
+def _permission_limited(today: date) -> list[Row]:
+    """`complete`, plus one weight reading on a day (PRIVATE_ONLY_OFFSET days back) that has no other metric:
+    where a tool counts days with data across all metrics, that day shows when the private metric was logged."""
+    rows = [row for row in _complete(today) if row[1] != "weight_kg"]
+    return rows + _series(today, "weight_kg", [*range(90), PRIVATE_ONLY_OFFSET], _private_weight)
+
+
 @dataclass(frozen=True)
 class Fixture:
     name: str
@@ -105,6 +125,8 @@ class Fixture:
     private_fields: str = ""
     workouts: bool = False
     import_status: str | None = None  # "succeeded" | "failed" | None (no import recorded)
+    session_heart_rates: bool = False  # workouts carry WORKOUT_HEART_RATES (needs workouts=True)
+    import_coverage: bool = False  # the recorded import carries the dataset span, as init_db.py records it
 
 
 FIXTURES: dict[str, Fixture] = {
@@ -139,9 +161,14 @@ FIXTURES: dict[str, Fixture] = {
         ),
         Fixture(
             "permission_limited",
-            "complete data with weight_kg configured as private",
-            _complete,
-            private_fields="weight_kg",
+            "complete data with weight_kg and heart_rate configured as private; workout sessions carry heart "
+            "rate; one day holds only a private weight reading; the recorded import carries the dataset span",
+            _permission_limited,
+            private_fields="weight_kg,heart_rate",
+            workouts=True,
+            import_status="succeeded",
+            session_heart_rates=True,
+            import_coverage=True,
         ),
         Fixture("import_failed", "complete data whose latest import failed", _complete, import_status="failed"),
     )
@@ -159,19 +186,29 @@ def build_fixture(fixture: Fixture, db_path: Path, today: date) -> None:
         conn.commit()
         if fixture.workouts:
             for offset, activity, minutes, intensity in WORKOUTS:
+                avg_hr, max_hr = WORKOUT_HEART_RATES[offset] if fixture.session_heart_rates else (None, None)
                 insert_workout_session(
                     conn,
                     (today - timedelta(days=offset)).isoformat(),
                     activity,
                     minutes,
                     intensity=intensity,
+                    avg_heart_rate=avg_hr,
+                    max_heart_rate=max_hr,
                     source="daily-log",
                 )
         if fixture.import_status:
-            import_id = record_import_start(conn, "csv", Path("health.csv"))
+            span = dataset_coverage(conn) if fixture.import_coverage else None
+            import_id = record_import_start(conn, "csv", Path("health.csv"), coverage_before=span)
             if fixture.import_status == "succeeded":
                 record_import_finish(
-                    conn, import_id, "succeeded", rows_loaded=90, rows_skipped=0, measurements_written=450
+                    conn,
+                    import_id,
+                    "succeeded",
+                    rows_loaded=90,
+                    rows_skipped=0,
+                    measurements_written=450,
+                    coverage_after=span,
                 )
             else:
                 record_import_finish(conn, import_id, "failed", error="RuntimeError: disk on fire")

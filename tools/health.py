@@ -207,9 +207,17 @@ def register_health_tools(
         except ValueError as exc:
             raise _tool_error(ERR_INVALID_RANGE, str(exc)) from exc
 
+        # Same as read_health_data: private metrics are left out of the query, so a day that only has a
+        # private metric is not exported as an all-blank row (or counted in rows_exported), which would
+        # reveal when the private metric was logged. Private columns are still written, blank.
+        public_metrics = [m for m in metric_columns if m not in PRIVATE_FIELDS]
         try:
             with readonly_connection(db_path) as conn:
-                rows = daily_metrics_wide(conn, metric_columns, start.isoformat(), end.isoformat())
+                rows = (
+                    daily_metrics_wide(conn, public_metrics, start.isoformat(), end.isoformat())
+                    if public_metrics
+                    else []
+                )
         except db_error_types() as exc:
             logger.error("Database error reading %s: %s", db_path, exc)
             if _is_locked_error(exc):

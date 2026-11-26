@@ -32,6 +32,28 @@ from logic import (
 from source_coverage import stale_metrics
 
 MAX_STALE_AFTER_DAYS = 3660
+
+_IMPORT_COVERAGE_FIELDS = (
+    "coverage_before_start",
+    "coverage_before_end",
+    "coverage_after_start",
+    "coverage_after_end",
+)
+
+
+def _without_private_span(record, private_fields):
+    """An import record with its recorded dataset span withheld when any metric is private.
+
+    The span is stored at import time over every metric, so its first or last day can be a day that
+    only has a private metric — revealing when it was logged — and it cannot be recomputed without
+    the private metrics after the fact. The rest of the record (status, counts, source) is kept;
+    get_data_status.coverage is the span that already excludes private metrics.
+    """
+    if not private_fields or record is None:
+        return record
+    return {**record, **dict.fromkeys(_IMPORT_COVERAGE_FIELDS)}
+
+
 MAX_IMPORTS_RETURNED = 50
 
 
@@ -168,6 +190,7 @@ def register_status_tools(
                 )
         except db_error_types() as exc:
             raise _database_error(exc) from exc
+        status["latest_import"] = _without_private_span(status["latest_import"], private_fields)
         return DataStatusResult(**status)
 
     @mcp.tool(
@@ -202,6 +225,8 @@ def register_status_tools(
                 imports = list_imports(conn, limit=limit)
         except db_error_types() as exc:
             raise _database_error(exc) from exc
-        return GetImportStatusResult(imports=[ImportRecord(**record) for record in imports])
+        return GetImportStatusResult(
+            imports=[ImportRecord(**_without_private_span(record, private_fields)) for record in imports]
+        )
 
     return get_data_status, get_import_status

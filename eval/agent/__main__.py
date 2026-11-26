@@ -23,7 +23,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m eval.agent", description=__doc__)
     ap.add_argument("--scenarios", type=Path, default=SCENARIO_DIR)
     ap.add_argument("--coverage", action="store_true", help="print the tool coverage matrix and exit (no model needed)")
-    ap.add_argument("--strict", action="store_true", help="with --coverage: exit 1 if any tool has no scenario")
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="with --coverage: exit 1 if a tool, or a permission-sensitive tool's permission scenario, is missing",
+    )
     ap.add_argument("--model", default=os.environ.get("ANTHROPIC_MODEL"), help="model id (or $ANTHROPIC_MODEL)")
     ap.add_argument("--id", action="append", dest="ids", help="run only this scenario id (repeatable)")
     ap.add_argument("--limit", type=int, default=None)
@@ -40,7 +44,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.coverage:
         print(format_matrix(matrix))
-        return 1 if args.strict and matrix["gaps"]["represented"] else 0
+        perm = matrix["permission"]
+        incomplete = matrix["gaps"]["represented"] or perm["gaps"] or perm["unclassified"]
+        return 1 if args.strict and incomplete else 0
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key or not args.model:

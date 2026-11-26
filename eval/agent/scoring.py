@@ -4,7 +4,8 @@ Routing, arguments and execution come from the tool calls. Interpretation and
 grounding come from the final answer (eval/agent/answers.py) and are scored only
 for scenarios that carry an `answer` spec; every other scenario leaves them as
 None ("not scored"), and the summary reports that as NOT_SCORED rather than
-counting it as passed.
+counting it as passed. The permission layer (eval/agent/permissions.py) is scored for every scenario whose
+fixture configures private fields.
 """
 
 from __future__ import annotations
@@ -15,10 +16,12 @@ from typing import Any
 
 from eval.agent.answers import score_answer
 from eval.agent.loop import Trace
+from eval.agent.permissions import CRITICAL_CODES as PERMISSION_CRITICAL_CODES
+from eval.agent.permissions import score_permission
 from eval.agent.scenarios import WRITE_TOOLS, Scenario, resolve
 
-LAYERS = ("routing", "arguments", "execution", "interpretation", "grounding")
-CRITICAL_CODES = frozenset({"tool_hallucination", "forbidden_tool_called"})
+LAYERS = ("routing", "arguments", "execution", "interpretation", "grounding", "permission")
+CRITICAL_CODES = frozenset({"tool_hallucination", "forbidden_tool_called"}) | PERMISSION_CRITICAL_CODES
 
 
 @dataclass
@@ -28,6 +31,7 @@ class Score:
     execution: bool
     interpretation: bool | None = None
     grounding: bool | None = None
+    permission: bool | None = None  # None: the fixture configures no private fields
     failures: list[dict[str, str]] = field(default_factory=list)
     critical: list[str] = field(default_factory=list)
 
@@ -114,12 +118,18 @@ def score_trace(scenario: Scenario, trace: Trace, readonly: dict[str, bool], tod
     answer = score_answer(resolve(scenario.answer, today), trace, today)
     failures.extend(answer.failures)
 
+    # permission boundary (every scenario on a fixture with private fields)
+    permitted = score_permission(scenario.permission, scenario.fixture, trace, today)
+    failures.extend(permitted.failures)
+    critical.extend(permitted.critical)
+
     return Score(
         routing=routing,
         arguments=arguments,
         execution=execution,
         interpretation=answer.interpretation,
         grounding=answer.grounding,
+        permission=permitted.verdict,
         failures=failures,
         critical=sorted(set(critical)),
     )

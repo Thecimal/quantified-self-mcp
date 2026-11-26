@@ -9,6 +9,7 @@ from typing import Any
 from eval.agent.scoring import LAYERS
 
 THRESHOLDS = {"routing": 0.95, "arguments": 0.95, "execution": 0.98, "interpretation": 0.95, "grounding": 0.95}
+THRESHOLDS["permission"] = 1.0  # a permission failure is a privacy failure: no tolerated rate
 
 
 def summarize(results: list[Any], coverage: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -51,6 +52,7 @@ def write_run(out_dir: Path, results: list[Any], summary: dict[str, Any]) -> Non
             "passed": r.score.passed,
             "tool_scores": {k: r.score.layers()[k] for k in ("routing", "arguments", "execution")},
             "answer_scores": {k: r.score.layers()[k] for k in ("interpretation", "grounding")},
+            "permission_score": r.score.permission,
             "tools_called": r.trace.called_tools(),
             "failures": r.score.failures,
             "critical": r.score.critical,
@@ -58,7 +60,7 @@ def write_run(out_dir: Path, results: list[Any], summary: dict[str, Any]) -> Non
         rows.append(json.dumps(record))
         if not r.score.passed:
             failures.append(json.dumps(record))
-        extra = {k: record[k] for k in ("tool_scores", "answer_scores", "failures", "critical")}
+        extra = {k: record[k] for k in ("tool_scores", "answer_scores", "permission_score", "failures", "critical")}
         trace = {**r.trace.to_dict(), **extra}
         trace_path = out_dir / "traces" / f"{r.scenario.id}.json"
         trace_path.write_text(json.dumps(trace, indent=2, default=str), encoding="utf-8")

@@ -16,6 +16,7 @@ import yaml
 
 from eval.agent.answers import validate_spec
 from eval.agent.fixtures import FIXTURES
+from eval.agent.permissions import validate_permission_spec
 
 SCENARIO_DIR = Path(__file__).parent / "scenarios"
 KINDS = ("should_use", "should_not_use", "argument", "permission", "interpretation", "grounding")
@@ -36,6 +37,9 @@ class Scenario:
     expect_error: bool = False
     # What the final answer must and must not say (see eval/agent/answers.py); empty: the answer is not scored.
     answer: dict[str, Any] = field(default_factory=dict)
+    # Extra permission expectations (see eval/agent/permissions.py): `public` lists data that must stay available.
+    # The leak checks themselves run for every scenario whose fixture configures private fields.
+    permission: dict[str, Any] = field(default_factory=dict)
 
 
 def placeholders(today: date) -> dict[str, str]:
@@ -46,6 +50,7 @@ def placeholders(today: date) -> dict[str, str]:
         "d7": (today - timedelta(days=7)).isoformat(),
         "d14": (today - timedelta(days=14)).isoformat(),
         "d30": (today - timedelta(days=30)).isoformat(),
+        "d120": (today - timedelta(days=120)).isoformat(),
     }
 
 
@@ -85,6 +90,10 @@ def validate_scenarios(scenarios: list[Scenario], registered: set[str] | None = 
         if s.kind in ("interpretation", "grounding") and not s.answer:
             problems.append(f"{s.id}: an {s.kind} scenario needs an answer spec")
         problems.extend(f"{s.id}: {problem}" for problem in validate_spec(s.answer) if s.answer)
+        private = bool(s.fixture in FIXTURES and FIXTURES[s.fixture].private_fields)
+        if (s.kind == "permission" or s.permission) and not private:
+            problems.append(f"{s.id}: a permission scenario needs a fixture with private_fields")
+        problems.extend(f"{s.id}: {problem}" for problem in validate_permission_spec(s.permission))
         if s.kind == "should_use" and s.tool not in s.must_call:
             problems.append(f"{s.id}: a should_use scenario must list its own tool {s.tool!r} in must_call")
         if registered is not None:
