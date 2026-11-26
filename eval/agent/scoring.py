@@ -119,9 +119,9 @@ def score_trace(scenario: Scenario, trace: Trace, readonly: dict[str, bool], tod
     failures.extend(answer.failures)
 
     # permission boundary (every scenario on a fixture with private fields)
-    permitted = score_permission(scenario.permission, scenario.fixture, trace, today)
-    failures.extend(permitted.failures)
-    critical.extend(permitted.critical)
+    permission = score_permission(scenario.permission, scenario.fixture, trace, today)
+    failures.extend(permission.failures)
+    critical.extend(permission.critical)
 
     return Score(
         routing=routing,
@@ -129,7 +129,7 @@ def score_trace(scenario: Scenario, trace: Trace, readonly: dict[str, bool], tod
         execution=execution,
         interpretation=answer.interpretation,
         grounding=answer.grounding,
-        permission=permitted.verdict,
+        permission=permission.verdict,
         failures=failures,
         critical=sorted(set(critical)),
     )
